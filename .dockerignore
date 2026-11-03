@@ -1,0 +1,12 @@
+# Never in the image: local state, env files, builds, the Mac app's output.
+.git
+.data
+.env*
+!.env.example
+node_modules
+.next
+dist-desktop
+vendor
+envs
+coverage
+*.pem
