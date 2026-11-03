@@ -31,6 +31,10 @@ jobs:
         run: npx tsc --noEmit -p .
       - name: Typecheck Bops Cloud
         run: npx tsc -p cloud/tsconfig.json --noEmit
+      - name: Typecheck 1on1 Realtors tools
+        run: npm run realty:typecheck
+      - name: 1on1 Realtors tools tests (WhatsApp reader, inbox sorter, login gate)
+        run: npm run realty:test
       - name: Lint
         run: npm run lint
       - name: Secret scan (whole history)
