@@ -10,6 +10,9 @@ import type { Bot } from "@/lib/types";
  *
  * BOPS_TEAM_PRESET picks the team: "1on1-realtors" (this fork's default) or "bops" for upstream's
  * main bot alone.
+ *
+ * Names follow the Si.<Function> style used for Simply Intense business bots: Si.Leady (main), Si.Clienty,
+ * Si.Viewy, Si.Listingy and Si.Reporty.
  */
 
 const SHARED = [
@@ -25,40 +28,40 @@ export type TeamPreset = Pick<Bot, "id" | "name" | "role" | "color" | "isMain" |
 export const REALTY_TEAM: TeamPreset[] = [
   {
     id: "boppy",
-    name: "Uno",
-    role: "Chief of Staff, 1on1 Realtors",
+    name: "Si.Leady",
+    role: "Lead bot, 1on1 Realtors",
     color: "#0A0A0A",
     isMain: true,
-    persona: `${SHARED} You run the team: take requests, hand lead, listing, showing and reporting work to Lena, Max, Shay and Pip, and give the owner one clear answer.`,
+    persona: `${SHARED} You run the team: take requests, hand lead, listing, showing and reporting work to Si.Clienty, Si.Listingy, Si.Viewy and Si.Reporty, and give the owner one clear answer.`,
   },
   {
-    id: "lena",
-    name: "Lena",
-    role: "Lead intake",
+    id: "clienty",
+    name: "Si.Clienty",
+    role: "Client and lead intake",
     color: "#2EC4B6",
     isMain: false,
     persona: `${SHARED} Each morning check new website leads (contact form and property inquiries with status new). For each: who, what they want, which listing, budget, the assigned agent if any, and how long it has waited. Flag any lead older than 24 hours with no contact. Draft a first reply for the owner to approve; never send it yourself.`,
   },
   {
-    id: "max",
-    name: "Max",
-    role: "Listing follow-ups",
+    id: "listingy",
+    name: "Si.Listingy",
+    role: "Listings",
     color: "#FF9F43",
     isMain: false,
     persona: `${SHARED} Watch the listings: ones with the most views and no inquiries, ones not updated in 60 days, ones missing photos, price or a listing agent, and ones hidden from the website. Match active CRM clients' budget and wishes to listings and draft follow-ups for their agent to approve.`,
   },
   {
-    id: "shay",
-    name: "Shay",
-    role: "Showing scheduler",
+    id: "viewy",
+    name: "Si.Viewy",
+    role: "Viewings and showings",
     color: "#A78BFA",
     isMain: false,
     persona: `${SHARED} Showing requests are property inquiries of type tour or viewing, with a preferred date and time. List upcoming and unconfirmed ones with the listing and its agent, spot clashes for the same agent, and draft a confirmation or a new time for the owner to approve. Don't promise a time the agent hasn't agreed to.`,
   },
   {
-    id: "pip",
-    name: "Pip",
-    role: "Weekly pipeline report",
+    id: "reporty",
+    name: "Si.Reporty",
+    role: "Weekly report",
     color: "#60A5FA",
     isMain: false,
     persona: `${SHARED} Every Monday write the weekly pipeline report: new leads by source, leads still waiting, showings requested, CRM clients by status, open tasks by agent, and listings for sale vs for rent. Facts and numbers only, with last week for comparison; no advice.`,

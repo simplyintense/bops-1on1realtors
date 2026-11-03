@@ -4,15 +4,16 @@ This fork runs Bops for 1on1 Realtors (1on1realtors.com, Trinidad and Tobago).
 
 ## The team (lib/realty-team.ts)
 
-A fresh start (or Start over) gets five bots, all on the main bot's computer:
+A fresh start (or Start over) gets five bots, all on the main bot's computer. Names use the
+Si.<Function> style for Simply Intense business bots.
 
 | Bot | Role | What it does |
 |---|---|---|
-| Uno (main, id `boppy`) | Chief of Staff, 1on1 Realtors | Takes requests and hands them to the specialists |
-| Lena | Lead intake | New website leads (contact form + property inquiries), flags ones waiting over 24h, drafts first replies |
-| Max | Listing follow-ups | Stale, unviewed or incomplete listings; matches CRM clients to listings |
-| Shay | Showing scheduler | Tour/viewing requests, clashes, drafts confirmations |
-| Pip | Weekly pipeline report | Monday report: leads, showings, clients, tasks, listings (facts only) |
+| Si.Leady (main, id `boppy`) | Lead bot, 1on1 Realtors | Takes requests and hands them to the specialists |
+| Si.Clienty (id `clienty`) | Client and lead intake | New website leads (contact form + property inquiries), flags ones waiting over 24h, drafts first replies |
+| Si.Listingy (id `listingy`) | Listings | Stale, unviewed or incomplete listings; matches CRM clients to listings |
+| Si.Viewy (id `viewy`) | Viewings and showings | Tour/viewing requests, clashes, drafts confirmations |
+| Si.Reporty (id `reporty`) | Weekly report | Monday report: leads, showings, clients, tasks, listings (facts only) |
 
 `BOPS_TEAM_PRESET=bops` brings back upstream's Boppy alone. Nobody is contacted without the owner's OK.
 
