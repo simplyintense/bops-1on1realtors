@@ -130,6 +130,46 @@ The bot login's `admin` role can't read `crm_clients` (RLS: super admin or the o
 `docs/1on1-crm-readonly.sql` is a **draft, not applied** read-only view for the bot only. Until it's
 applied, dedupe skips `crm_clients` and says so.
 
+## Lead flow v1 (realty/flow/, dry run only)
+
+Every new inquiry (website contact form, property inquiry, WhatsApp) is acknowledged to the client at once,
+routed to one agent, and that agent is alerted with listing matches. If they don't accept in time, one backup
+gets it. If the backup misses too, it becomes an admin exception. Admin sees only exceptions and one daily
+report; nothing waits for admin. **Nothing is sent**: every message is appended to `.data/realty/outbox.jsonl`
+and printed. The outbox has no transport.
+
+Run the demo on a simulated day against the fixture CRM (`realty/fixtures/crm.json`, made-up people):
+
+```sh
+npm run realty:demo     # resets .data/realty/outbox.jsonl and lead-flow-state.json first
+npm run realty:test
+npm run realty:typecheck
+```
+
+Routing: the listing's agent if the inquiry names a listing; otherwise the agents who cover the area and
+listing type, the one with fewest open leads (lower agent id on a tie). Each lead gets at most two offers:
+the assigned agent, then one backup. A pass moves it on at once. The routing rules are in `realty/flow/route.ts`.
+
+Config (environment, all optional):
+
+- `ONEON1_LEAD_TIMEOUT_MINUTES`: answer window per agent, default `15` (1 to 240).
+- `ONEON1_MARKET_SEARCH_URL` and `ONEON1_MARKET_SEARCH_TOKEN`: both needed, or the search is off. When on, the
+  flow calls `search_market_listings` on tt-market-search (Streamable HTTP) for buyers and renters with criteria,
+  and lists other agencies' hits as co-broke candidates in the agent's alert. Our own listings are dropped.
+  Each request times out after `ONEON1_MARKET_SEARCH_TIMEOUT_MS` (default 4000); on failure the alert says
+  "not checked" and the flow carries on. It sends the server's own arguments (`listing_type`, `area`,
+  `beds_min`, and `price_max` only for a TTD budget, since the index mixes TTD and USD). Checked against a
+  local tt-market-search server on 12 Nov 2026.
+
+Not yet, before this can go live:
+
+- A live CRM adapter for the `CrmSource` interface (`realty/flow/source.ts`), reading through the read-only
+  connector in `realty/crm.ts`, plus a source of new inquiries (poll or webhook).
+- A timer that calls `tick()` (the flow has none yet; the demo advances the clock by hand).
+- Parsing agents' replies (ACCEPT / PASS) from WhatsApp or email. The demo calls `respond()` directly.
+- Real transports, each approved by the owner, starting with admin only.
+- Hosting and a single state store (the CLI writes a JSON file; the hosted app doesn't use it yet).
+
 ## Not done yet
 
 - Not deployed; DNS not changed; nothing tested against the live CRM, Drive, Gmail or Google sign-in.

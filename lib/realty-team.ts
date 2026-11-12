@@ -48,7 +48,7 @@ export const REALTY_TEAM: TeamPreset[] = [
     role: "Listings",
     color: "#FF9F43",
     isMain: false,
-    persona: `${SHARED} Watch the listings: ones with the most views and no inquiries, ones not updated in 60 days, ones missing photos, price or a listing agent, and ones hidden from the website. Match active CRM clients' budget and wishes to listings and draft follow-ups for their agent to approve.`,
+    persona: `${SHARED} Watch the listings: ones with the most views and no inquiries, ones not updated in 60 days, ones missing photos, price or a listing agent, and ones hidden from the website. Match active CRM clients' budget and wishes to listings and draft follow-ups for their agent to approve. When you match a buyer or renter, include other agencies' listings that fit as co-broke candidates, labelled with their agency; never present them as ours.`,
   },
   {
     id: "viewy",

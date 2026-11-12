@@ -15,6 +15,7 @@
     "app:install": "npm run app:build && rm -rf /Applications/Bops.app && ditto dist-desktop/mac-arm64/Bops.app /Applications/Bops.app",
     "fast": "next build && next start --port 3210",
     "app:release": "scripts/release.sh",
+    "realty:demo": "node --experimental-strip-types --no-warnings realty/cli/lead-flow-demo.ts",
     "realty:wa": "node --experimental-strip-types --no-warnings --env-file-if-exists=.env.local realty/cli/wa-export.ts",
     "realty:inbox": "node --experimental-strip-types --no-warnings --env-file-if-exists=.env.local realty/cli/inbox-sort.ts",
     "realty:test": "node --experimental-strip-types --no-warnings --test \"realty/test/*.test.ts\"",

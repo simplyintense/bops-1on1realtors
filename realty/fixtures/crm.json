@@ -1,0 +1,64 @@
+{
+  "_note": "Made-up fixture for the lead flow. Agents, listings and inquiries are fictional; phones are 555 numbers and emails are example.com. Not 1on1's data.",
+  "agents": [
+    { "id": 1, "name": "Ava Sample", "email": "ava.sample@example.com", "phone": "+1 868 555 0101", "areas": ["Port of Spain", "Woodbrook", "St. Ann's"], "listingTypes": ["sale", "rent"] },
+    { "id": 2, "name": "Bram Demo", "email": "bram.demo@example.com", "phone": "+1 868 555 0102", "areas": ["Maraval", "Woodbrook", "Diego Martin", "St. James"], "listingTypes": ["sale", "rent"] },
+    { "id": 3, "name": "Cora Example", "email": "cora.example@example.com", "phone": "+1 868 555 0103", "areas": ["Chaguanas", "Couva", "Arima"], "listingTypes": ["sale"] },
+    { "id": 4, "name": "Dev Placeholder", "email": "dev.placeholder@example.com", "phone": "+1 868 555 0104", "areas": ["Arima", "Tunapuna"], "listingTypes": ["rent"] },
+    { "id": 5, "name": "Eli Mockfield", "email": "eli.mockfield@example.com", "phone": "+1 868 555 0105", "areas": ["San Fernando", "Point Fortin"], "listingTypes": ["sale", "rent"] }
+  ],
+  "listings": [
+    { "id": "L-101", "title": "Two-bedroom apartment, Woodbrook", "listingType": "rent", "area": "Woodbrook", "price": 8500, "currency": "TTD", "beds": 2, "baths": 2, "agentId": 1, "status": "active", "url": "https://example.com/listings/L-101" },
+    { "id": "L-102", "title": "Townhouse, St. Ann's", "listingType": "rent", "area": "St. Ann's", "price": 12000, "currency": "TTD", "beds": 3, "baths": 2, "agentId": 1, "status": "active", "url": "https://example.com/listings/L-102" },
+    { "id": "L-103", "title": "Two-bedroom flat, Woodbrook", "listingType": "rent", "area": "Woodbrook", "price": 7000, "currency": "TTD", "beds": 2, "baths": 1, "agentId": 2, "status": "active", "url": "https://example.com/listings/L-103" },
+    { "id": "L-104", "title": "Family home, Maraval", "listingType": "sale", "area": "Maraval", "price": 2900000, "currency": "TTD", "beds": 4, "baths": 3, "agentId": 2, "status": "active", "url": "https://example.com/listings/L-104" },
+    { "id": "L-105", "title": "Bungalow, Diego Martin", "listingType": "sale", "area": "Diego Martin", "price": 1650000, "currency": "TTD", "beds": 3, "baths": 2, "agentId": 2, "status": "active", "url": "https://example.com/listings/L-105" },
+    { "id": "L-106", "title": "Townhouse, Chaguanas", "listingType": "sale", "area": "Chaguanas", "price": 1250000, "currency": "TTD", "beds": 3, "baths": 2, "agentId": 3, "status": "active", "url": "https://example.com/listings/L-106" },
+    { "id": "L-107", "title": "Residential land, Couva", "listingType": "sale", "area": "Couva", "price": 780000, "currency": "TTD", "beds": 0, "baths": 0, "agentId": 3, "status": "active", "url": "https://example.com/listings/L-107" },
+    { "id": "L-108", "title": "Apartment, Arima", "listingType": "rent", "area": "Arima", "price": 6500, "currency": "TTD", "beds": 2, "baths": 1, "agentId": 4, "status": "active", "url": "https://example.com/listings/L-108" },
+    { "id": "L-109", "title": "Three-bedroom house, Arima", "listingType": "sale", "area": "Arima", "price": 1480000, "currency": "TTD", "beds": 3, "baths": 2, "agentId": 3, "status": "active", "url": "https://example.com/listings/L-109" },
+    { "id": "L-110", "title": "Apartment, San Fernando", "listingType": "rent", "area": "San Fernando", "price": 5500, "currency": "TTD", "beds": 2, "baths": 1, "agentId": 5, "status": "active", "url": "https://example.com/listings/L-110" },
+    { "id": "L-111", "title": "Townhouse, Port of Spain", "listingType": "sale", "area": "Port of Spain", "price": 1900000, "currency": "TTD", "beds": 3, "baths": 2, "agentId": 1, "status": "sold", "url": "https://example.com/listings/L-111" }
+  ],
+  "inquiries": [
+    {
+      "ref": "web-0412",
+      "source": "property_inquiry",
+      "name": "Sam Fixture",
+      "phone": "+1 868 555 0201",
+      "email": "sam.fixture@example.com",
+      "listingId": "L-101",
+      "listingType": "rent",
+      "area": "Woodbrook",
+      "budget": { "max": 9000, "currency": "TTD" },
+      "beds": 2,
+      "message": "Is the two-bedroom in Woodbrook still available? Could we see it this week?"
+    },
+    {
+      "ref": "web-0413",
+      "source": "website_contact",
+      "name": "Pat Fixture",
+      "phone": "+1 868 555 0202",
+      "email": "pat.fixture@example.com",
+      "listingId": null,
+      "listingType": "sale",
+      "area": "Scarborough, Tobago",
+      "budget": null,
+      "beds": 4,
+      "message": "Looking for a villa to buy in Scarborough."
+    },
+    {
+      "ref": "wa-0007",
+      "source": "whatsapp",
+      "name": "Lee Fixture",
+      "phone": "+1 868 555 0203",
+      "email": null,
+      "listingId": null,
+      "listingType": "sale",
+      "area": "Arima",
+      "budget": { "max": 1500000, "currency": "TTD" },
+      "beds": 3,
+      "message": "Looking to buy a 3-bed house in Arima, budget about 1.5M."
+    }
+  ]
+}
