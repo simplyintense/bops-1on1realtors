@@ -52,6 +52,20 @@ One instance only on either host: the state is a file on the volume, which two i
 (Upstream's Postgres mode, `BOPS_DATABASE_URL`, is for Bops Cloud's own multi-user hosting and isn't
 used here.)
 
+### Public demo on Vercel (demo data only)
+
+A free Vercel project imported from this repo (framework Next.js, default `npm run build`) serves only the
+demo page, `/realty-demo`: the bot team and the lead flow's simulated day on the fixture CRM (made-up people),
+run in memory on each visit. Every other page redirects there and every other API call answers 403, so nobody
+on the open web can sign the server in to Orgo, add keys or reach anything that sends. `/api/health` stays open.
+
+- Demo mode (`publicDemo` in lib/gate.ts) is on whenever `VERCEL` is set (Vercel sets it), or with
+  `ONEON1_PUBLIC_DEMO=1`. `ONEON1_PUBLIC_DEMO=0` turns it off; only do that with the login gate on and real hosting decided.
+- No environment variables are needed. Optional: `ONEON1_LEAD_TIMEOUT_MINUTES` (answer window shown, default 15).
+  Don't add Orgo, OpenAI, CRM, Gmail, AgentMail, phone or market-search keys to the demo project.
+- On Vercel, `.data/` resolves to `/tmp/.data` (lib/server/user-paths.ts): only `/tmp` is writable there, and it doesn't last.
+- Same flow locally: `npm run build && VERCEL=1 npm start`, then open `/realty-demo`.
+
 ### The login gate (lib/gate.ts, proxy.ts, app/api/gate/*)
 
 `BOPS_LOGIN_GATE=google` (set in the image) puts Google sign-in in front of every page and API call.

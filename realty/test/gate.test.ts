@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { emailAllowed, emailFromIdToken, gateConfig, makeSession, parseAllowlist, readSession, readValue, safeNext, signValue } from "../../lib/gate.ts";
+import { demoRoute, emailAllowed, emailFromIdToken, gateConfig, makeSession, parseAllowlist, publicDemo, readSession, readValue, safeNext, signValue } from "../../lib/gate.ts";
 
 /** The hosted login gate (lib/gate.ts). */
 
@@ -60,4 +60,23 @@ test("redirects after sign-in stay on the site", () => {
   assert.equal(safeNext("//evil.example"), "/");
   assert.equal(safeNext("https://evil.example"), "/");
   assert.equal(safeNext("/\\evil.example"), "/");
+});
+
+test("public demo: on with ONEON1_PUBLIC_DEMO=1 or on Vercel, off only on purpose", () => {
+  assert.equal(publicDemo({}), false);
+  assert.equal(publicDemo({ ONEON1_PUBLIC_DEMO: "1" }), true);
+  assert.equal(publicDemo({ VERCEL: "1" }), true);
+  assert.equal(publicDemo({ VERCEL: "1", ONEON1_PUBLIC_DEMO: "0" }), false);
+});
+
+test("public demo: only the demo page, its assets and health; every other API call refused", () => {
+  assert.equal(demoRoute("/realty-demo"), "pass");
+  assert.equal(demoRoute("/api/health"), "pass");
+  assert.equal(demoRoute("/_next/static/chunks/a.js"), "pass");
+  assert.equal(demoRoute("/logos/gmail.svg"), "pass");
+  assert.equal(demoRoute("/"), "demo");
+  assert.equal(demoRoute("/pip"), "demo");
+  for (const p of ["/api/state", "/api/auth/start", "/api/keys", "/api/mail", "/api/phone/agentphone", "/api/gate/login", "/api/apps/call", "/api/health/x", "/api/logo.svg"]) {
+    assert.equal(demoRoute(p), "deny", p);
+  }
 });

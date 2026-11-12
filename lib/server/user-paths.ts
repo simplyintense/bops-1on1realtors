@@ -16,7 +16,8 @@ import { join } from "node:path";
 // such calls carry /*turbopackIgnore: true*/, and the release refuses a build that ships anything
 // but the server (scripts/release.sh).
 const cwd = process.cwd.bind(process);
-export const dataRoot = () => join(cwd(), ".data");
+// 1on1 Realtors fork: on Vercel only /tmp is writable (and it doesn't last), so .data goes there.
+export const dataRoot = () => join(process.env.VERCEL ? "/tmp" : cwd(), ".data");
 /** The one state file every build before this one kept, whoever was signed in. */
 export const legacyStateFile = () => join(dataRoot(), "state.json");
 

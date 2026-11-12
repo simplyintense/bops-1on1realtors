@@ -188,3 +188,32 @@ export function randomState(): string {
   crypto.getRandomValues(b);
   return b64url(b);
 }
+
+/* ---------------- Public demo (Vercel) ---------------- */
+
+/** The 1on1 Realtors demo page (app/realty-demo): fixture data only, rendered on the server. */
+export const DEMO_PAGE = "/realty-demo";
+
+/**
+ * Public demo mode: the server shows only the demo page, so nobody on the open web can sign this server
+ * in to an Orgo account, add keys or reach any API that could send. On when ONEON1_PUBLIC_DEMO=1, and
+ * by default on Vercel (VERCEL is set there) unless ONEON1_PUBLIC_DEMO=0 turns it off on purpose.
+ */
+export function publicDemo(env: Env = process.env): boolean {
+  const v = (env.ONEON1_PUBLIC_DEMO ?? "").trim();
+  if (v === "1") return true;
+  if (v === "0") return false;
+  return !!env.VERCEL;
+}
+
+/**
+ * What public demo mode does with a path: "pass" (the demo page, its assets, the health check),
+ * "demo" (any other page: redirect to the demo) or "deny" (any other API call: 403).
+ */
+export function demoRoute(path: string): "pass" | "demo" | "deny" {
+  if (path === DEMO_PAGE || path === "/api/health" || path.startsWith("/_next/")) return "pass";
+  if (path.startsWith("/api/")) return "deny";
+  // Static files from public/ that a page may load (icons, logos).
+  if (/\.(svg|png|jpg|jpeg|webp|ico|woff2?)$/i.test(path) && !path.includes("..")) return "pass";
+  return "demo";
+}

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { GATE_COOKIE, GATE_OPEN_PATHS, gateConfig, readSession } from "@/lib/gate";
+import { DEMO_PAGE, demoRoute, GATE_COOKIE, GATE_OPEN_PATHS, gateConfig, publicDemo, readSession } from "@/lib/gate";
 
 /**
  * Who may call Bops' API. The server answers on every address the Mac has, but only the app on this
@@ -86,7 +86,18 @@ async function gate(request: NextRequest): Promise<NextResponse | null> {
   return NextResponse.redirect(login);
 }
 
+/** Public demo mode (lib/gate.ts): only the demo page; other pages go to it, other API calls are refused. */
+function demo(request: NextRequest): NextResponse | null {
+  if (!publicDemo()) return null;
+  const route = demoRoute(request.nextUrl.pathname);
+  if (route === "pass") return null;
+  if (route === "deny") return NextResponse.json({ error: "Not available in the demo." }, { status: 403 });
+  return NextResponse.redirect(new URL(DEMO_PAGE, request.url));
+}
+
 export async function proxy(request: NextRequest) {
+  const demoed = demo(request);
+  if (demoed) return demoed;
   const gated = await gate(request);
   if (gated) return gated;
   const path = request.nextUrl.pathname;
