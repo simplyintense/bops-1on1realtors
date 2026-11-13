@@ -146,11 +146,12 @@ applied, dedupe skips `crm_clients` and says so.
 
 ## Lead flow v1 (realty/flow/, dry run only)
 
-Every new inquiry (website contact form, property inquiry, WhatsApp) is acknowledged to the client at once,
-routed to one agent, and that agent is alerted with listing matches. If they don't accept in time, one backup
-gets it. If the backup misses too, it becomes an admin exception. Admin sees only exceptions and one daily
-report; nothing waits for admin. **Nothing is sent**: every message is appended to `.data/realty/outbox.jsonl`
-and printed. The outbox has no transport.
+Every new inquiry (website contact form, property inquiry, WhatsApp) is acknowledged to the client at once
+(from the brand, "1 On 1 Realty"), routed to one agent, and that agent is alerted with listing matches.
+Matches wait for the agent's approval before a client message is even drafted. If the agent doesn't accept
+in time, one backup gets it. If the backup misses too, it becomes an admin exception, and admin can reassign
+it. Daily and weekly reports go to admin. **Nothing is sent**: every message is recorded in the dry-run
+outbox (the demo CLI also appends it to `.data/realty/outbox.jsonl` and prints it). The outbox has no transport.
 
 Run the demo on a simulated day against the fixture CRM (`realty/fixtures/crm.json`, made-up people):
 
@@ -166,7 +167,17 @@ the assigned agent, then one backup. A pass moves it on at once. The routing rul
 
 Config (environment, all optional):
 
-- `ONEON1_LEAD_TIMEOUT_MINUTES`: answer window per agent, default `15` (1 to 240).
+- `ONEON1_ACK_SENDER_NAME`: who client messages (acknowledgement, approved matches) come from. Default
+  `1 On 1 Realty`. Always the brand, never an individual agent.
+- `ONEON1_BUSINESS_HOURS` (`08:00-17:00`) and `ONEON1_BUSINESS_DAYS` (`mon-fri`): the hours the answer window
+  counts in, Port of Spain time. **PLACEHOLDER**: until Wendy/Crystal confirm the real hours, the default is
+  Monday to Friday 08:00-17:00, and every report and `deskView` carries `hours.placeholder: true`. It turns
+  false only when both are set and valid.
+- `ONEON1_LEAD_TIMEOUT_MINUTES`: answer window per agent, default `15` (1 to 240), counted in business time
+  (an inquiry at 16:50 Thursday is due 08:05 Friday).
+- `ONEON1_CRM_URL`, `ONEON1_CRM_ANON_KEY`, `ONEON1_CRM_BOT_EMAIL`, `ONEON1_CRM_BOT_PASSWORD`: the live CRM,
+  read through `realty/flow/live-crm.ts` (`crmSourceFromEnv`, read-only; it takes a fallback source, e.g. the
+  fixture, for when they aren't set). `ONEON1_CRM_WRITES` stays off for the lead flow: it never writes to the CRM.
 - `ONEON1_MARKET_SEARCH_URL` and `ONEON1_MARKET_SEARCH_TOKEN`: both needed, or the search is off. When on, the
   flow calls `search_market_listings` on tt-market-search (Streamable HTTP) for buyers and renters with criteria,
   and lists other agencies' hits as co-broke candidates in the agent's alert. Our own listings are dropped.
@@ -175,14 +186,54 @@ Config (environment, all optional):
   `beds_min`, and `price_max` only for a TTD budget, since the index mixes TTD and USD). Checked against a
   local tt-market-search server on 12 Nov 2026.
 
+Matches and management-only messages:
+
+- Listing matches go to the agent's alert (internal) and wait in an approval queue
+  (`flow.pendingApprovals()`). Only `approveMatches(id, selectedIds)` records a client message, and only as a
+  dry-run `client_match` from the brand. `rejectMatches(id)` (or an empty selection) records nothing.
+- A management-only message (complaints, commissions/invoicing, price or contract changes, compliance
+  documents, unusual deals; `realty/flow/management.ts`) is never acted on: no acknowledgement, no routing,
+  only an admin exception whose reason starts `management-only:`.
+
+Reports: `sendDailyReport()` (every lead the flow holds) and `sendWeeklyReport()` (leads received in the 7
+days up to now) go to admin as one dry-run email each. Besides per-agent responsiveness, exceptions and open
+leads, they count enquiries by property kind and channel, list management-only leads, and list our active
+listings missing information a client needs (with the missing field names).
+
+### Portable core and the staff desk (planned on Lovable)
+
+The staff back office is planned on **Lovable** (Vite/React + Supabase), not as a Next.js app. The lead-flow
+core is plain TypeScript with no Next.js and no Node-only imports, so it can run in a Supabase (Deno) edge
+function, a browser bundle or Node alike:
+
+- Portable: `realty/flow/{engine,flow,hours,listing-audit,live-crm,management,market-search,match,messages,
+  outbox,report,route,source,taxonomy,desk,env,demo-day}.ts` and `realty/crm.ts`. No `node:*`, no `next/*`,
+  no bare `process` (`env.ts` `runtimeEnv()` reads `globalThis.process?.env` if there is one, else `{}`; on
+  Deno pass `Deno.env.toObject()` to the `*FromEnv(env)` helpers). `realty/test/desk.test.ts` checks this.
+- Injected: the CRM source (`CrmSource`; `FixtureCrm.from(data)` or the fetch-based `LiveCrmSource`), the clock,
+  the outbox (`Outbox`; `DryRunOutbox({ clock, append?, print? })` hands each message to `append` as one
+  JSONL line), and state (`persist(snapshot)` / `snapshot`).
+- Node-only helpers live in `realty/node/jsonl.ts`: `appendJsonl` / `jsonlAppender(file)` for the CLI's
+  outbox file, and `loadFixtureCrm()` for the fixture JSON.
+- `deskView(input)` (`realty/flow/desk.ts`) is the JSON contract a UI reads: `generatedAt`, `dryRun: true`,
+  `ackSender`, `hours` (with `placeholder`), `slaMinutes`, `queue` (`open`, `escalations`, `exceptions`,
+  `overdue`: each lead's state, deadline, agent, channel, kind, management flags), pending `approvals` with
+  their candidates, `missingFields`, `summary` (`daily`, `weekly`, `tally`), `managementOnly`, the dry-run
+  `outbox`, and `log`. `flowDesk(flow)` builds it from a running `LeadFlow`. Pure: no clock, no I/O.
+- Timeouts move on only when the host calls `flow.tick()` (it returns how many offers ran out). There is no
+  timer in the flow and none in `instrumentation.ts`; the Lovable/Supabase side would call it on a schedule
+  (e.g. a cron'd edge function every minute) and persist the snapshot.
+
+The Next `/realty-demo` page stays the public fixture demo only. There is no Next staff UI and no
+`/api/realty/*` route for the desk.
+
 Not yet, before this can go live:
 
-- A live CRM adapter for the `CrmSource` interface (`realty/flow/source.ts`), reading through the read-only
-  connector in `realty/crm.ts`, plus a source of new inquiries (poll or webhook).
-- A timer that calls `tick()` (the flow has none yet; the demo advances the clock by hand).
+- A source of new inquiries (poll or webhook) and wiring the live CRM source into a hosted flow.
+- A scheduler that calls `tick()`, and a state store for the snapshot (Supabase table on the Lovable side).
 - Parsing agents' replies (ACCEPT / PASS) from WhatsApp or email. The demo calls `respond()` directly.
 - Real transports, each approved by the owner, starting with admin only.
-- Hosting and a single state store (the CLI writes a JSON file; the hosted app doesn't use it yet).
+- Confirmed business hours from Wendy/Crystal (the placeholder is in use until then).
 
 ## Not done yet
 
