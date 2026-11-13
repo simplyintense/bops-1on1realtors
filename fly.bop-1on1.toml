@@ -5,7 +5,7 @@
 #   fly deploy -c fly.bop-1on1.toml
 app = "bop-1on1realtors"
 # Miami: the closest Fly region to Trinidad and Tobago.
-primary_region = "mia"
+primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"
