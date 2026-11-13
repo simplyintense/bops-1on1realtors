@@ -76,7 +76,7 @@ test("public demo: only the demo page, its assets and health; every other API ca
   assert.equal(demoRoute("/logos/gmail.svg"), "pass");
   assert.equal(demoRoute("/"), "demo");
   assert.equal(demoRoute("/pip"), "demo");
-  for (const p of ["/api/state", "/api/auth/start", "/api/keys", "/api/mail", "/api/phone/agentphone", "/api/gate/login", "/api/apps/call", "/api/health/x", "/api/logo.svg", "/api/intake/periskope", "/api/intake/periskope/opt-out", "/api/intake/periskope/consent"]) {
+  for (const p of ["/api/state", "/api/auth/start", "/api/keys", "/api/mail", "/api/phone/agentphone", "/api/gate/login", "/api/apps/call", "/api/health/x", "/api/logo.svg", "/api/intake/periskope", "/api/intake/periskope/opt-out", "/api/intake/periskope/consent", "/api/realty/areas/alias"]) {
     assert.equal(demoRoute(p), "deny", p);
   }
 });

@@ -74,8 +74,10 @@ export type AlertContext = {
   agent: FlowAgent;
   reason: string;
   listing: Listing | null;
-  ours: Listing[];
-  coBroke: CoBrokeHit[];
+  /** Our listings that fit, each with the tier reason (areas.ts), e.g. "same area: Woodbrook". */
+  ours: { listing: Listing; reason: string }[];
+  /** Other agencies' hits that fit, with the same kind of reason. */
+  coBroke: { hit: CoBrokeHit; reason: string }[];
   coBrokeNote: string;
   /** Set for a backup: the agent who didn't pick the lead up in time. */
   backupOf: FlowAgent | null;
@@ -84,8 +86,9 @@ export type AlertContext = {
 
 const listingLine = (l: Listing) => `${l.title} · ${money(l.price, l.currency)}${l.beds ? ` · ${l.beds} bed` : ""} · ${l.area} (${l.id})`;
 
-const coBrokeLine = (h: CoBrokeHit) =>
-  [h.title, h.price !== null && h.currency ? money(h.price, h.currency) : null, h.beds ? `${h.beds} bed` : null, h.area, `via ${h.source}`].filter(Boolean).join(" · ") + (h.url ? ` ${h.url}` : "");
+/** The link, if any, comes before the reason so the line reads as a link then a note. */
+const coBrokeLine = (h: CoBrokeHit, reason: string) =>
+  [h.title, h.price !== null && h.currency ? money(h.price, h.currency) : null, h.beds ? `${h.beds} bed` : null, h.area, `via ${h.source}`].filter(Boolean).join(" · ") + (h.url ? ` ${h.url}` : "") + ` · ${reason}`;
 
 /** The agent's alert: the lead, why they got it, our listings that fit, co-broke candidates, how to answer. */
 export function agentAlert(c: AlertContext): Draft {
@@ -105,10 +108,10 @@ export function agentAlert(c: AlertContext): Draft {
     `Why you: ${c.reason}.`,
     "",
     "Our listings that fit:",
-    ...(c.ours.length ? c.ours.map((l) => `  - ${listingLine(l)}`) : ["  - none in the CRM right now"]),
+    ...(c.ours.length ? c.ours.map((m) => `  - ${listingLine(m.listing)} · ${m.reason}`) : ["  - none in the CRM right now"]),
     "",
     `Other agencies' listings (co-broke candidates, ${c.coBrokeNote}):`,
-    ...(c.coBroke.length ? c.coBroke.map((h) => `  - ${coBrokeLine(h)}`) : ["  - none to show"]),
+    ...(c.coBroke.length ? c.coBroke.map((m) => `  - ${coBrokeLine(m.hit, m.reason)}`) : ["  - none to show"]),
     "",
     `Reply ACCEPT ${c.lead.id} by ${c.answerBy} to take it. If you can't, reply PASS ${c.lead.id} and it goes to someone else.`,
   ];

@@ -1,3 +1,5 @@
+import { areaKey, lookupAll, type AreaLookup } from "./areas.ts";
+import { aggregatePairs, type AreaLearningStats, type AreaPair } from "./area-learning.ts";
 import type { Lead, LogEntry } from "./engine.ts";
 import type { LeadFlow, MatchApproval, MatchCandidate } from "./flow.ts";
 import type { BusinessHours } from "./hours.ts";
@@ -14,6 +16,10 @@ import { enquiryChannel, enquiryKind, enquiryTally, type EnquiryChannel, type En
  * edge function or an API route. Field names here are the contract: keep them stable.
  *
  * Nothing in a DeskView is ever sent. The outbox is the dry-run record; there is no transport.
+ *
+ * Areas: the lookups (areas.ts lookupAll, from flowDesk) say which inquiry and listing areas the directory
+ * doesn't recognise. Those leads are flagged (unmappedArea, with the suggestions), and the unmapped areas
+ * are listed for staff to map. Learning stats count the approve/reject records; they don't change tiers.
  */
 
 export type DeskInput = {
@@ -31,6 +37,10 @@ export type DeskInput = {
   /** Already dry-run (dryRun: true). */
   outbox: OutboxMessage[];
   log?: LogEntry[];
+  /** Lookups for the inquiry and listing areas (lookupAll). Unset: nothing is flagged as unmapped. */
+  areaLookups?: AreaLookup[];
+  /** The approve/reject area records (area-learning.ts). */
+  areaPairs?: AreaPair[];
 };
 
 /** One lead as the desk lists it. */
@@ -59,6 +69,18 @@ export type DeskLead = {
   managementFlags: ManagementFlag[];
   /** The lead's pending match approval, if any. */
   pendingApprovalId: string | null;
+  /** The inquiry's area isn't one the directory recognises: staff should map it. */
+  unmappedArea: boolean;
+  /** What the directory thinks the area might be (empty unless unmappedArea). */
+  suggestions: string[];
+};
+
+/** An area the directory doesn't recognise, with how often it appears (inquiries and active listings). */
+export type UnmappedArea = {
+  text: string;
+  occurrences: number;
+  from: ("inquiry" | "listing")[];
+  suggestions: string[];
 };
 
 export type DeskApproval = {
@@ -106,6 +128,10 @@ export type DeskView = {
   missingFields: MissingDocs[];
   summary: { daily: DailyReport; weekly: WeeklyReport; tally: EnquiryTally };
   managementOnly: ManagementOnlyRow[];
+  /** Areas staff should map: the count of distinct unmapped areas, and the most common ones (up to 10). */
+  unmappedAreas: { count: number; examples: UnmappedArea[] };
+  /** Approve/reject records by signal, tier and area pair. Data only: tiers don't change from it yet. */
+  areaLearning: AreaLearningStats;
   outbox: DeskMessage[];
   log: LogEntry[];
 };
@@ -119,12 +145,20 @@ export function deskView(input: DeskInput): DeskView {
   const leads = structuredClone(input.leads);
   const name = (id: number) => input.agents.find((a) => a.id === id)?.name ?? `agent ${id}`;
   const pending = input.approvals.filter((a) => a.status === "pending");
+  const lookups = new Map((input.areaLookups ?? []).map((x) => [areaKey(x.query), x] as const));
+  // A lookup that didn't map the text (low confidence or unknown): the area is unmapped.
+  const unmappedOf = (text: string | null | undefined): AreaLookup | null => {
+    if (!text) return null;
+    const x = lookups.get(areaKey(text));
+    return x && !x.mapped ? x : null;
+  };
 
   const deskLead = (l: Lead): DeskLead => {
     const last = l.attempts.at(-1);
     const open = last && last.response === null ? last : null;
     const holder = open ? open.agentId : l.acceptedBy;
     const listing = l.inquiry.listingId ? input.listings.find((x) => x.id === l.inquiry.listingId) : undefined;
+    const unmapped = unmappedOf(l.inquiry.area);
     return {
       leadId: l.id,
       client: l.inquiry.name,
@@ -144,6 +178,8 @@ export function deskView(input: DeskInput): DeskView {
       exception: l.exception,
       managementFlags: managementOnlyFlags(l),
       pendingApprovalId: pending.find((a) => a.leadId === l.id)?.id ?? null,
+      unmappedArea: unmapped !== null,
+      suggestions: unmapped?.suggestions ?? [],
     };
   };
 
@@ -178,6 +214,8 @@ export function deskView(input: DeskInput): DeskView {
       tally: enquiryTally(leads, input.listings),
     },
     managementOnly: managementOnlyLeads(leads),
+    unmappedAreas: unmappedAreas(leads, input.listings, unmappedOf),
+    areaLearning: aggregatePairs(input.areaPairs ?? []),
     outbox: input.outbox.map((m) => ({
       id: m.id,
       at: m.at,
@@ -194,14 +232,43 @@ export function deskView(input: DeskInput): DeskView {
   };
 }
 
+/** The distinct unmapped areas across inquiries (every lead) and active listings, most common first. */
+function unmappedAreas(leads: Lead[], listings: Listing[], unmappedOf: (text: string | null | undefined) => AreaLookup | null): { count: number; examples: UnmappedArea[] } {
+  const tally = new Map<string, UnmappedArea>();
+  const add = (text: string, from: "inquiry" | "listing", lookup: AreaLookup) => {
+    const k = areaKey(text);
+    let e = tally.get(k);
+    if (!e) {
+      e = { text: text.trim(), occurrences: 0, from: [], suggestions: [...lookup.suggestions] };
+      tally.set(k, e);
+    }
+    e.occurrences += 1;
+    if (!e.from.includes(from)) e.from.push(from);
+  };
+  for (const l of leads) {
+    const u = unmappedOf(l.inquiry.area);
+    if (l.inquiry.area && u) add(l.inquiry.area, "inquiry", u);
+  }
+  for (const l of listings) {
+    if (l.status !== "active") continue;
+    const u = unmappedOf(l.area);
+    if (u) add(l.area, "listing", u);
+  }
+  const examples = [...tally.values()].sort((a, b) => b.occurrences - a.occurrences || a.text.localeCompare(b.text)).slice(0, 10);
+  return { count: tally.size, examples };
+}
+
 /**
  * deskView over a running LeadFlow: its leads, approvals, log, outbox and settings. Agents and listings
- * come from the flow's CRM source unless given. Reads only; it doesn't tick or change the flow.
+ * come from the flow's CRM source unless given. Area lookups come from the flow's resolver (cached), so a
+ * market-backed flow asks the market once per distinct area. Reads only; it doesn't tick or change the flow.
  */
 export async function flowDesk(flow: LeadFlow, extra: { listings?: Listing[]; agents?: FlowAgent[] } = {}): Promise<DeskView> {
   const [listings, agents] = await Promise.all([extra.listings ?? flow.crm.listings(), extra.agents ?? flow.crm.agents()]);
   const snap = flow.snapshot();
   const { hours, ackSender, timeoutMs } = flow.settings;
+  const areaTexts = [...snap.leads.flatMap((l) => (l.inquiry.area ? [l.inquiry.area] : [])), ...listings.filter((l) => l.status === "active").map((l) => l.area)];
+  const areaLookups = await lookupAll(flow.areaResolver, areaTexts);
   return deskView({
     now: flow.engine.now,
     hours,
@@ -213,5 +280,7 @@ export async function flowDesk(flow: LeadFlow, extra: { listings?: Listing[]; ag
     agents,
     outbox: flow.messages,
     log: snap.log,
+    areaLookups,
+    areaPairs: flow.areaPairs(),
   });
 }

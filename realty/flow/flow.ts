@@ -1,6 +1,8 @@
 import { agentsTried, FlowError, LeadEngine, type Attempt, type Clock, type EngineSnapshot, type Inquiry, type Lead } from "./engine.ts";
 import { businessHoursFromEnv, type BusinessHours } from "./hours.ts";
-import { hasCriteria, marketCriteria, matchOurListings } from "./match.ts";
+import { CachedAreaResolver, ExactAreaFallback, type AreaResolver, type MatchTier } from "./areas.ts";
+import { pairFor, type AreaLearning, type AreaPair, type LearnSignal } from "./area-learning.ts";
+import { hasCriteria, marketCriteria, rankCoBroke, rankOurListings, type Ranked } from "./match.ts";
 import type { CoBrokeHit, MarketSearch } from "./market-search.ts";
 import { managementFlags } from "./management.ts";
 import { ackSenderFromEnv, adminException, agentAlert, clientAck, clientMatch, localClock, localTime } from "./messages.ts";
@@ -23,6 +25,7 @@ import { runtimeEnv } from "./env.ts";
  *                            → ack client → route → alert the agent (or admin exception if unroutable)
  *                            → match candidates queued for the agent's approval
  *   approveMatches(id, …)  → dry-run client_match for the chosen candidates; rejectMatches(id) → nothing
+ *                            either way, each candidate's area pair is recorded (area-learning.ts), never bulk
  *   tick()                 → offers past their deadline: backup agent, or admin exception if the backup missed too
  *   respond(id, agent, …)  → accept (done) or pass (straight to the backup)
  *   reassign(id, agent)    → admin hands an exception (or a closed offer) to an agent who hasn't had it
@@ -52,10 +55,17 @@ export type FlowOptions = {
    * time. The host wires the Periskope purge here (realty/node/periskope-intake.ts); it may call forgetLeads().
    */
   onTick?: (now: Date) => void | Promise<void>;
+  /** How areas are matched. Unset: exact text (ExactAreaFallback), which is today's behaviour. Wrapped in a per-flow cache. */
+  areas?: AreaResolver;
+  /** Where the approve/reject records go, and how they're sent to market-mcp. Unset: nothing is recorded. */
+  areaLearning?: AreaLearning;
 };
 
-/** A listing the agent may send the client: ours from the CRM, or another agency's (co-broke). */
-export type MatchCandidate = { id: string; kind: "ours"; listing: Listing } | { id: string; kind: "cobroke"; hit: CoBrokeHit };
+/** A listing the agent may send the client: ours from the CRM, or another agency's (co-broke). tier and reason say why it's here (internal). */
+export type MatchCandidate = (
+  | { id: string; kind: "ours"; listing: Listing }
+  | { id: string; kind: "cobroke"; hit: CoBrokeHit }
+) & { tier: MatchTier; reason: string };
 
 export type MatchApproval = {
   id: string;
@@ -91,18 +101,44 @@ export class LeadFlow {
   private readonly sender: string;
   private readonly approvals: MatchApproval[];
   private readonly hours: BusinessHours;
+  private readonly areas: AreaResolver;
+  private readonly learning: AreaLearning | null;
+  private readonly learnSends: Promise<void>[] = [];
 
   constructor(o: FlowOptions) {
     this.o = o;
     this.sender = o.ackSender?.trim() || ackSenderFromEnv();
     this.approvals = structuredClone(o.snapshot?.approvals ?? []);
+    // Snapshots from before tiers: their candidates are exact-text matches, tagged as such.
+    for (const a of this.approvals) {
+      for (const c of a.candidates) {
+        if (!(c as Partial<MatchCandidate>).tier) Object.assign(c, { tier: "any", reason: "no area recorded (before tiers)" });
+      }
+    }
     this.hours = o.hours ?? businessHoursFromEnv();
+    this.areas = new CachedAreaResolver(o.areas ?? new ExactAreaFallback());
+    this.learning = o.areaLearning ?? null;
     this.engine = new LeadEngine({ timeoutMs: o.timeoutMs, clock: o.clock, hours: this.hours }, o.snapshot);
   }
 
   /** The CRM source the flow reads (read-only). */
   get crm(): CrmSource {
     return this.o.crm;
+  }
+
+  /** The area resolver the flow matches with (cached). The desk uses it for its unmapped-areas list. */
+  get areaResolver(): AreaResolver {
+    return this.areas;
+  }
+
+  /** Every area pair recorded so far (empty without an area learning store). */
+  areaPairs(): AreaPair[] {
+    return this.learning?.store.pairs() ?? [];
+  }
+
+  /** Resolves once every learn_area_neighbour send started so far has finished (or failed). Nothing else waits on it. */
+  async learningSent(): Promise<void> {
+    await Promise.all(this.learnSends.splice(0));
   }
 
   /** Every dry-run message recorded so far (a copy). */
@@ -205,13 +241,16 @@ export class LeadFlow {
 
     this.o.outbox.record(clientMatch(this.engine.lead(a.leadId), picks.map((c) => (c.kind === "ours" ? { listing: c.listing } : { hit: c.hit })), this.sender));
     this.decide(a, "approved", picks.map((c) => c.id));
+    // Only the picks are approved. The candidates left out are not rejected: nobody decided about them.
+    this.learn(a, picks, "approved");
     return structuredClone(a);
   }
 
-  /** Nothing goes to the client. */
+  /** Nothing goes to the client. Every candidate's area pair is recorded as rejected. */
   rejectMatches(approvalId: string, opts: { actorAgentId?: number } = {}): MatchApproval {
     const a = this.pending(approvalId, opts.actorAgentId);
     this.decide(a, "rejected", []);
+    this.learn(a, a.candidates, "rejected");
     return structuredClone(a);
   }
 
@@ -275,32 +314,36 @@ export class LeadFlow {
     const listings = await this.o.crm.listings();
     const lead = this.engine.lead(leadId);
     const { hits, note } = await this.coBroke(lead.inquiry);
-    const ours = matchOurListings(lead.inquiry, listings);
-    // Internal: the agent sees the matches. Nothing about them goes to the client from here.
+    const ours = await rankOurListings(lead.inquiry, listings, this.areas);
+    // Other agencies' hits are ranked here too: the search server's area filter isn't a geography check.
+    const coBroke = await rankCoBroke(lead.inquiry, hits, this.areas);
+    // If the ranking dropped some hits, the note says how many fit.
+    const coBrokeNote = hits.length && coBroke.length !== hits.length ? `${coBroke.length} of ${hits.length} from other agencies fit` : note;
+    // Internal: the agent sees the matches and why each is here. Nothing about them goes to the client from here.
     this.o.outbox.record(
       agentAlert({
         lead,
         agent,
         reason,
         listing: this.listingFor(lead.inquiry, listings),
-        ours,
-        coBroke: hits,
-        coBrokeNote: note,
+        ours: ours.map((r) => ({ listing: r.item, reason: r.reason })),
+        coBroke: coBroke.map((r) => ({ hit: r.item, reason: r.reason })),
+        coBrokeNote,
         backupOf,
         answerBy: this.answerBy(attempt),
       }),
     );
-    this.queueMatches(leadId, agent.id, ours, hits);
+    this.queueMatches(leadId, agent.id, ours, coBroke);
   }
 
   /**
    * One pending approval per lead. A new offer (backup, reassign) hands it to that agent with fresh
    * candidates; once decided, the lead isn't queued again. No candidates, nothing queued.
    */
-  private queueMatches(leadId: string, agentId: number, ours: Listing[], hits: CoBrokeHit[]) {
+  private queueMatches(leadId: string, agentId: number, ours: Ranked<Listing>[], hits: Ranked<CoBrokeHit>[]) {
     const candidates: MatchCandidate[] = [
-      ...ours.map((listing): MatchCandidate => ({ id: `ours:${listing.id}`, kind: "ours", listing })),
-      ...hits.map((hit, i): MatchCandidate => ({ id: `cobroke:${i + 1}`, kind: "cobroke", hit })),
+      ...ours.map((r): MatchCandidate => ({ id: `ours:${r.item.id}`, kind: "ours", listing: r.item, tier: r.tier, reason: r.reason })),
+      ...hits.map((r, i): MatchCandidate => ({ id: `cobroke:${i + 1}`, kind: "cobroke", hit: r.item, tier: r.tier, reason: r.reason })),
     ];
     const existing = this.approvals.find((a) => a.leadId === leadId);
     if (existing && existing.status !== "pending") return;
@@ -327,6 +370,23 @@ export class LeadFlow {
     a.decidedAt = this.engine.now.toISOString();
     a.selectedIds = selectedIds;
     this.save();
+  }
+
+  /**
+   * One explicit decision, recorded per candidate: the pair of areas, the tier, the signal. Local write first;
+   * then, if there's a sender, learn_area_neighbour in the background (never throws into the approve path).
+   */
+  private learn(a: MatchApproval, candidates: MatchCandidate[], signal: LearnSignal) {
+    if (!this.learning) return;
+    const inquiryArea = this.engine.lead(a.leadId).inquiry.area;
+    const at = this.engine.now.toISOString();
+    for (const c of candidates) {
+      const listingArea = c.kind === "ours" ? c.listing.area : c.hit.area;
+      const pair = pairFor(inquiryArea, listingArea, c.tier, signal, at);
+      if (!pair) continue;
+      this.learning.store.add(pair);
+      if (this.learning.send) this.learnSends.push(this.learning.send(pair).catch(() => undefined));
+    }
   }
 
   private async coBroke(inq: Inquiry): Promise<{ hits: CoBrokeHit[]; note: string }> {

@@ -1,11 +1,12 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Inquiry, Lead } from "../flow/engine.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "../flow/flow.ts";
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
+import { areaWiringFromEnv, AreaStore } from "./area-store.ts";
 import { marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
 import { DryRunOutbox } from "../flow/outbox.ts";
 import {
@@ -39,6 +40,7 @@ import { PeriskopeStore, type LeadRow, type MarketOutboxRow, type SeenRow } from
  * Files under root (default .data/realty/periskope, 0700 dir, 0600 files):
  *   seen.jsonl, opt-out.jsonl, consent.jsonl, market-outbox.jsonl, leads.jsonl,
  *   flow-state.json (the lead flow's snapshot), outbox.jsonl (dry-run client/agent messages).
+ * The area aliases and pair records are a sibling store: areas/ next to root (realty/node/area-store.ts).
  *
  * One intake or staff change runs at a time in this process (exclusive below). Across several processes
  * that isn't locked, so run one server per root.
@@ -58,17 +60,27 @@ export type IntakeOptions = {
   crm?: CrmSource | null;
   /** Injected for tests. Never a live call in tests. */
   fetch?: typeof fetch;
+  /** The area aliases and pair records. Default: "areas" next to root (.data/realty/areas). */
+  areasRoot?: string;
 };
 
 export type Reply = { status: number; body: Record<string, unknown> };
 const reply = (status: number, body: Record<string, unknown>): Reply => ({ status, body });
 
-type Ctx = { env: Env; now: Date; root: string; store: PeriskopeStore; crm: CrmSource | null; fetch: typeof fetch };
+type Ctx = { env: Env; now: Date; root: string; store: PeriskopeStore; areas: AreaStore; crm: CrmSource | null; fetch: typeof fetch };
 
 function context(o: IntakeOptions): Ctx {
   const env = o.env ?? runtimeEnv();
   const root = o.root ?? join(process.cwd(), ".data", "realty", "periskope");
-  return { env, now: o.now?.() ?? new Date(), root, store: new PeriskopeStore(root), crm: o.crm !== undefined ? o.crm : liveCrm(env), fetch: o.fetch ?? fetch };
+  return {
+    env,
+    now: o.now?.() ?? new Date(),
+    root,
+    store: new PeriskopeStore(root),
+    areas: new AreaStore(o.areasRoot ?? join(dirname(root), "areas")),
+    crm: o.crm !== undefined ? o.crm : liveCrm(env),
+    fetch: o.fetch ?? fetch,
+  };
 }
 
 function liveCrm(env: Env): CrmSource | null {
@@ -213,11 +225,14 @@ async function flushMarketOutboxUnlocked(c: Ctx): Promise<{ attempted: number; s
 /* ---------------- The lead flow, kept in a file ---------------- */
 
 function openFlow(c: Ctx, crm: CrmSource, onTick?: (now: Date) => void | Promise<void>): LeadFlow {
+  const areas = areaWiringFromEnv(c.areas, c.env, c.fetch);
   return new LeadFlow({
     crm,
     clock: () => c.now,
     outbox: new DryRunOutbox({ clock: () => c.now, append: (line) => appendJsonl(join(c.root, "outbox.jsonl"), line) }),
     market: marketFrom(c.env),
+    areas: areas.areas,
+    areaLearning: areas.areaLearning,
     timeoutMs: timeoutMsFromEnv(c.env),
     hours: businessHoursFromEnv(c.env),
     admin: ADMIN,
