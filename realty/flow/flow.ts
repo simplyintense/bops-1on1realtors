@@ -1,7 +1,8 @@
-import { agentsTried, LeadEngine, type Clock, type EngineSnapshot, type Inquiry, type Lead } from "./engine.ts";
+import { agentsTried, FlowError, LeadEngine, type Attempt, type Clock, type EngineSnapshot, type Inquiry, type Lead } from "./engine.ts";
+import { businessHoursFromEnv, type BusinessHours } from "./hours.ts";
 import { hasCriteria, marketCriteria, matchOurListings } from "./match.ts";
 import type { CoBrokeHit, MarketSearch } from "./market-search.ts";
-import { adminException, agentAlert, clientAck, localClock } from "./messages.ts";
+import { adminException, agentAlert, clientAck, localClock, localTime } from "./messages.ts";
 import type { DryRunOutbox } from "./outbox.ts";
 import { dailyReport, reportText, type DailyReport } from "./report.ts";
 import { chooseAgent, inquiryProblem, openLoad } from "./route.ts";
@@ -15,6 +16,7 @@ import type { CrmSource, FlowAgent, Listing } from "./source.ts";
  *   receive(inquiry)       → ack client → route → alert the agent (or admin exception if unroutable)
  *   tick()                 → offers past their deadline: backup agent, or admin exception if the backup missed too
  *   respond(id, agent, …)  → accept (done) or pass (straight to the backup)
+ *   reassign(id, agent)    → admin hands an exception (or a closed offer) to an agent who hasn't had it
  *   sendDailyReport()      → one report to admin
  */
 
@@ -25,6 +27,8 @@ export type FlowOptions = {
   /** Null when ONEON1_MARKET_SEARCH_* aren't set. */
   market: MarketSearch | null;
   timeoutMs: number;
+  /** Deadlines count business time in these hours. Unset: businessHoursFromEnv() (the PLACEHOLDER unless env is set). */
+  hours?: BusinessHours;
   admin: { name: string; address: string };
   /** Called after every change with the whole state (the CLI writes it to a JSON file). */
   persist?: (snapshot: EngineSnapshot) => void;
@@ -43,7 +47,7 @@ export class LeadFlow {
 
   constructor(o: FlowOptions) {
     this.o = o;
-    this.engine = new LeadEngine({ timeoutMs: o.timeoutMs, clock: o.clock }, o.snapshot);
+    this.engine = new LeadEngine({ timeoutMs: o.timeoutMs, clock: o.clock, hours: o.hours ?? businessHoursFromEnv() }, o.snapshot);
   }
 
   async receive(inq: Inquiry): Promise<Lead> {
@@ -81,6 +85,25 @@ export class LeadFlow {
     return this.engine.lead(lead.id);
   }
 
+  /**
+   * Admin hands a lead to a specific agent: an exception, or an outstanding lead whose offer has closed.
+   * Refused (FlowError) while an offer is still open (unless the lead is in exception), for an agent who
+   * already had it, and for an agent not in the CRM. The agent's alert goes to the dry-run outbox only;
+   * nothing is sent and nothing is written to the CRM.
+   */
+  async reassign(leadId: string, agentId: number): Promise<Lead> {
+    const agents = await this.o.crm.agents();
+    const agent = agents.find((a) => a.id === agentId);
+    if (!agent) throw new FlowError(`agent ${agentId} isn't in the CRM`);
+    const before = this.engine.lead(leadId);
+    const lastClosed = before.attempts.at(-1);
+    const previous = lastClosed ? (agents.find((a) => a.id === lastClosed.agentId) ?? null) : null;
+    const attempt = this.engine.reassign(leadId, agentId);
+    await this.alert(leadId, agent, "admin reassigned it to you", previous, attempt);
+    this.save();
+    return this.engine.lead(leadId);
+  }
+
   async sendDailyReport(): Promise<DailyReport> {
     const agents = await this.o.crm.agents();
     const report = dailyReport(this.engine.all(), agents, this.engine.now);
@@ -110,6 +133,10 @@ export class LeadFlow {
 
   private async offer(leadId: string, agent: FlowAgent, reason: string, backupOf: FlowAgent | null) {
     const attempt = backupOf ? this.engine.escalate(leadId, agent.id) : this.engine.assign(leadId, agent.id);
+    await this.alert(leadId, agent, reason, backupOf, attempt);
+  }
+
+  private async alert(leadId: string, agent: FlowAgent, reason: string, backupOf: FlowAgent | null, attempt: Attempt) {
     const listings = await this.o.crm.listings();
     const lead = this.engine.lead(leadId);
     const { hits, note } = await this.coBroke(lead.inquiry);
@@ -123,7 +150,7 @@ export class LeadFlow {
         coBroke: hits,
         coBrokeNote: note,
         backupOf,
-        answerBy: localClock(attempt.deadline),
+        answerBy: this.answerBy(attempt),
       }),
     );
   }
@@ -139,6 +166,12 @@ export class LeadFlow {
     this.o.outbox.record(adminException(lead, await this.attemptLines(lead), this.engine.now.toISOString(), this.o.admin));
     this.save();
     return lead;
+  }
+
+  /** "09:15" when the deadline is today; "Fri 13 Nov, 08:05" when business hours push it to another day. */
+  private answerBy(attempt: Attempt): string {
+    const sameDay = localTime(attempt.deadline).slice(0, -5) === localTime(attempt.assignedAt).slice(0, -5);
+    return sameDay ? localClock(attempt.deadline) : localTime(attempt.deadline);
   }
 
   private listingFor(inq: Inquiry, listings: Listing[]): Listing | null {

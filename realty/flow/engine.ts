@@ -10,12 +10,19 @@
  *                                │  (timeout or pass)
  *                                ↓
  *                            exception   (also: unroutable, bad data, no way to reach the client)
+ *                                │  reassign (admin picks an agent who hasn't had it)
+ *                                ↓
+ *                            escalated   (and on round again: accept, or back to exception)
  *
- * Each agent who is offered a lead is one Attempt with a deadline. Two attempts at most: the assigned
- * agent, then one backup. Time comes from an injected clock, so tests and the demo can run it on a
- * simulated day.
+ * Each agent who is offered a lead is one Attempt with a deadline. The automatic flow makes two attempts
+ * at most: the assigned agent, then one backup. Only a person (admin) adds more, via reassign. Time
+ * comes from an injected clock, so tests and the demo can run it on a simulated day.
+ *
+ * Deadlines count business time (hours.ts) when the engine is given business hours: 15 minutes from
+ * 16:50 Thursday is 08:05 Friday. Without hours they are plain wall-clock time.
  */
 
+import { addBusinessMs, type BusinessHours } from "./hours.ts";
 import type { EnquiryChannel, PropertyKind } from "./taxonomy.ts";
 
 export type Clock = () => Date;
@@ -75,13 +82,20 @@ export class FlowError extends Error {}
 
 const iso = (d: Date) => d.toISOString();
 
+export type EngineOptions = {
+  timeoutMs: number;
+  clock: Clock;
+  /** Count deadlines in business time. Unset: wall-clock (LeadFlow always sets it). */
+  hours?: BusinessHours;
+};
+
 export class LeadEngine {
   private leads = new Map<string, Lead>();
   private log: LogEntry[] = [];
   private seq = 0;
-  private readonly opts: { timeoutMs: number; clock: Clock };
+  private readonly opts: EngineOptions;
 
-  constructor(opts: { timeoutMs: number; clock: Clock }, snapshot?: EngineSnapshot) {
+  constructor(opts: EngineOptions, snapshot?: EngineSnapshot) {
     this.opts = opts;
     if (snapshot) {
       for (const l of snapshot.leads) this.leads.set(l.id, l);
@@ -96,6 +110,10 @@ export class LeadEngine {
 
   get timeoutMs(): number {
     return this.opts.timeoutMs;
+  }
+
+  get hours(): BusinessHours | null {
+    return this.opts.hours ?? null;
   }
 
   lead(id: string): Lead {
@@ -159,6 +177,30 @@ export class LeadEngine {
     return this.offer(lead, backupId);
   }
 
+  /**
+   * A person (admin) hands the lead to a specific agent. Allowed from exception, or from assigned/escalated
+   * once the open attempt is closed. A live offer is never taken back: with an attempt still open it is
+   * refused, except in exception, where any open attempt is closed as a pass first. An agent who already
+   * had the lead is refused. The lead ends up escalated with the exception cleared.
+   */
+  reassign(id: string, agentId: number): Attempt {
+    const lead = this.lead(id);
+    this.requireState(lead, ["assigned", "escalated", "exception"], "reassign");
+    const open = this.openAttempt(lead);
+    if (open && lead.state !== "exception") throw new FlowError(`${id} is still waiting on agent ${open.agentId}; it can't be reassigned until that offer closes`);
+    if (agentsTried(lead).includes(agentId)) throw new FlowError(`agent ${agentId} already had ${id}`);
+    const at = iso(this.now);
+    if (open) {
+      open.respondedAt = at;
+      open.response = "pass";
+      this.record(lead, at, `agent ${open.agentId}'s offer closed by admin`);
+    }
+    this.record(lead, at, `reassigned by admin to agent ${agentId}${lead.exception ? ` (was exception: ${lead.exception})` : ""}`);
+    lead.state = "escalated";
+    lead.exception = null;
+    return this.offer(lead, agentId);
+  }
+
   /** An agent's answer to their open attempt. Late or stray answers are refused. */
   respond(id: string, agentId: number, response: "accept" | "pass"): Lead {
     const lead = this.lead(id);
@@ -206,7 +248,7 @@ export class LeadEngine {
     const attempt: Attempt = {
       agentId,
       assignedAt: iso(at),
-      deadline: iso(new Date(at.getTime() + this.opts.timeoutMs)),
+      deadline: iso(this.opts.hours ? addBusinessMs(at, this.opts.timeoutMs, this.opts.hours) : new Date(at.getTime() + this.opts.timeoutMs)),
       respondedAt: null,
       response: null,
     };

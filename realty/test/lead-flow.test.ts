@@ -3,8 +3,9 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FlowError, type Inquiry } from "../flow/engine.ts";
+import { FlowError, LeadEngine, type Inquiry } from "../flow/engine.ts";
 import { LeadFlow, timeoutMsFromEnv } from "../flow/flow.ts";
+import { PLACEHOLDER_BUSINESS_HOURS } from "../flow/hours.ts";
 import { marketConfigFromEnv, type MarketSearch } from "../flow/market-search.ts";
 import { DryRunOutbox, type OutboxMessage } from "../flow/outbox.ts";
 import { dailyReport, median, reportText } from "../flow/report.ts";
@@ -18,8 +19,8 @@ import { FixtureCrm } from "../flow/source.ts";
 const MIN = 60_000;
 const START = Date.parse("2026-11-12T13:00:00Z"); // 09:00 Port of Spain
 
-function world(opts: { market?: MarketSearch | null; file?: string } = {}) {
-  let now = START;
+function world(opts: { market?: MarketSearch | null; file?: string; start?: number } = {}) {
+  let now = opts.start ?? START;
   const clock = () => new Date(now);
   const outbox = new DryRunOutbox({ clock, file: opts.file });
   const flow = new LeadFlow({
@@ -28,11 +29,16 @@ function world(opts: { market?: MarketSearch | null; file?: string } = {}) {
     outbox,
     market: opts.market ?? null,
     timeoutMs: 15 * MIN,
+    hours: PLACEHOLDER_BUSINESS_HOURS,
     admin: { name: "Admin", address: "admin@example.com" },
   });
   return {
     flow,
     outbox,
+    /** Jump to a Port of Spain local time, e.g. "2026-11-13T08:05". */
+    atLocal: (s: string) => {
+      now = Date.parse(`${s}:00-04:00`);
+    },
     at: (minutesFromStart: number) => {
       now = START + minutesFromStart * MIN;
     },
@@ -262,4 +268,125 @@ test("the outbox only writes: every message is a dry run, it lands in the JSONL 
   } finally {
     restore();
   }
+});
+
+// ── Business-hours SLA ────────────────────────────────────────────────────────────────────────────
+
+test("deadlines inside hours stay 15 wall-clock minutes (09:00 → 09:15)", async () => {
+  const w = world();
+  const lead = await w.flow.receive(inq());
+  assert.equal(lead.attempts[0].deadline, "2026-11-12T13:15:00.000Z");
+});
+
+test("late afternoon: an inquiry at 16:50 Thursday isn't due until 08:05 Friday, then escalates", async () => {
+  const w = world({ start: Date.parse("2026-11-12T16:50:00-04:00") });
+  const lead = await w.flow.receive(inq());
+  assert.equal(lead.attempts[0].deadline, "2026-11-13T12:05:00.000Z", "10 business minutes Thursday, 5 Friday");
+  assert.match(w.outbox.messages.at(-1)!.text, /Reply ACCEPT L001 by Fri 13 Nov, 08:05/, "the alert names the day when it rolls over");
+
+  w.atLocal("2026-11-12T17:00");
+  assert.equal(await w.flow.tick(), 0, "close of business: nothing expires");
+  w.atLocal("2026-11-12T23:59");
+  assert.equal(await w.flow.tick(), 0, "overnight: nothing expires");
+  w.atLocal("2026-11-13T08:04");
+  assert.equal(await w.flow.tick(), 0);
+  w.atLocal("2026-11-13T08:05");
+  assert.equal(await w.flow.tick(), 1);
+  const after = w.flow.engine.lead(lead.id);
+  assert.equal(after.state, "escalated");
+  assert.equal(after.attempts[1].agentId, 2, "Bram is the Woodbrook rent backup");
+  assert.equal(after.attempts[1].deadline, "2026-11-13T12:20:00.000Z");
+  assert.equal(w.outbox.messages.at(-1)?.kind, "backup_alert");
+});
+
+test("LeadEngine without hours keeps plain wall-clock deadlines", () => {
+  const e = new LeadEngine({ timeoutMs: 15 * MIN, clock: () => new Date("2026-11-12T20:50:00Z") });
+  const l = e.receive(inq());
+  e.acknowledge(l.id);
+  assert.equal(e.assign(l.id, 1).deadline, "2026-11-12T21:05:00.000Z");
+});
+
+// ── Admin reassignment (dry run) ─────────────────────────────────────────────────────────────────
+
+/** A sale with no listing or area: Ava, Bram, Cora and Eli all cover it. */
+const anySale = () => inq({ ref: "web-77", listingId: null, listingType: "sale", area: null, budget: null, beds: null });
+
+test("reassign: after Ava and Bram both time out, admin hands the exception to Cora", async () => {
+  const w = world();
+  const lead = await w.flow.receive(anySale());
+  assert.equal(lead.attempts[0].agentId, 1, "Ava first (fewest open, lowest id)");
+  await assert.rejects(() => w.flow.reassign(lead.id, 3), /still waiting on agent 1/, "a live offer can't be yanked");
+
+  w.advance(15);
+  await w.flow.tick();
+  assert.equal(w.flow.engine.lead(lead.id).attempts[1].agentId, 2, "Bram is the automatic backup");
+  w.advance(15);
+  await w.flow.tick();
+  assert.equal(w.flow.engine.lead(lead.id).state, "exception");
+  const sentBefore = w.outbox.messages.length;
+
+  await assert.rejects(() => w.flow.reassign(lead.id, 1), /agent 1 already had/, "Ava already had it");
+  await assert.rejects(() => w.flow.reassign(lead.id, 99), /isn't in the CRM/);
+  assert.equal(w.outbox.messages.length, sentBefore, "refusals send nothing");
+
+  w.advance(5);
+  const after = await w.flow.reassign(lead.id, 3);
+  assert.equal(after.state, "escalated");
+  assert.equal(after.exception, null, "the exception is cleared");
+  assert.deepEqual(after.attempts.map((a) => [a.agentId, a.response]), [[1, "timeout"], [2, "timeout"], [3, null]]);
+  assert.equal(after.attempts[2].deadline, new Date(w.now + 15 * MIN).toISOString(), "a fresh 15-minute window");
+
+  const alert = w.outbox.messages.at(-1)!;
+  assert.equal(w.outbox.messages.length, sentBefore + 1, "one message: Cora's alert");
+  assert.equal(alert.kind, "backup_alert");
+  assert.equal(alert.to.name, "Cora Example");
+  assert.equal(alert.dryRun, true);
+  assert.match(alert.text, /Why you: admin reassigned it to you\./);
+  assert.ok(w.flow.engine.events().some((e) => e.leadId === lead.id && /reassigned by admin to agent 3/.test(e.event)));
+
+  await assert.rejects(() => w.flow.reassign(lead.id, 5), /still waiting on agent 3/, "Cora's offer is live");
+  await w.flow.respond(lead.id, 3, "accept");
+  assert.equal(w.flow.engine.lead(lead.id).acceptedBy, 3);
+  await assert.rejects(() => w.flow.reassign(lead.id, 5), /can't reassign .* while it is accepted/);
+});
+
+test("reassign: if the reassigned agent also misses, it's back to admin, who can reassign again", async () => {
+  const w = world();
+  const lead = await w.flow.receive(anySale());
+  w.advance(15);
+  await w.flow.tick();
+  w.advance(15);
+  await w.flow.tick();
+  await w.flow.reassign(lead.id, 3);
+  w.advance(15);
+  assert.equal(await w.flow.tick(), 1);
+  const back = w.flow.engine.lead(lead.id);
+  assert.equal(back.state, "exception", "no automatic backup after an admin reassignment");
+  assert.match(back.exception ?? "", /Cora Example didn't respond in time/);
+  assert.equal(w.outbox.messages.at(-1)?.kind, "admin_exception");
+  await w.flow.reassign(lead.id, 5);
+  assert.equal(w.flow.engine.lead(lead.id).attempts.at(-1)?.agentId, 5);
+});
+
+test("reassign: an unroutable exception goes to the chosen agent as a plain new-lead alert", async () => {
+  const w = world();
+  const lead = await w.flow.receive(inq({ listingId: null, listingType: "sale", area: "Scarborough, Tobago", budget: null, beds: 4 }));
+  assert.equal(lead.state, "exception");
+  const after = await w.flow.reassign(lead.id, 5);
+  assert.equal(after.state, "escalated");
+  assert.equal(w.outbox.messages.at(-1)?.kind, "agent_alert");
+  assert.equal(w.outbox.messages.at(-1)?.to.name, "Eli Mockfield");
+});
+
+test("engine: reassigning an exception that still has an open offer closes that offer as a pass first", () => {
+  let now = START;
+  const e = new LeadEngine({ timeoutMs: 15 * MIN, clock: () => new Date(now), hours: PLACEHOLDER_BUSINESS_HOURS });
+  const l = e.receive(inq());
+  e.acknowledge(l.id);
+  e.assign(l.id, 1);
+  assert.throws(() => e.reassign(l.id, 2), FlowError, "not in exception: a live offer is refused");
+  e.raise(l.id, "client called the office directly");
+  now += 2 * MIN;
+  e.reassign(l.id, 2);
+  assert.deepEqual(e.lead(l.id).attempts.map((a) => [a.agentId, a.response]), [[1, "pass"], [2, null]]);
 });
