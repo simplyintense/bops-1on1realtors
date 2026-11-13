@@ -4,6 +4,7 @@ import { crmSourceFromEnv, LiveCrmSource } from "../flow/live-crm.ts";
 import { missingListingFields } from "../flow/listing-audit.ts";
 import { chooseAgent } from "../flow/route.ts";
 import { FixtureCrm } from "../flow/source.ts";
+import { loadFixtureCrm } from "../node/jsonl.ts";
 
 /**
  * The read-only live CRM adapter against a fake Supabase (auth + PostgREST GETs). The fetch global is
@@ -121,7 +122,7 @@ test("factory: no or incomplete CRM env gives the fixture CRM", async () => {
   const restore = offline();
   try {
     for (const env of [{}, { ...ENV, ONEON1_CRM_BOT_PASSWORD: "" }, { ...ENV, ONEON1_CRM_URL: "https://evil.example.com" }]) {
-      const src = crmSourceFromEnv(env);
+      const src = crmSourceFromEnv(env, undefined, () => loadFixtureCrm());
       assert.ok(src instanceof FixtureCrm);
       assert.equal((await src.agents())[0].name, "Ava Sample");
     }

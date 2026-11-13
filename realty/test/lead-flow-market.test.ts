@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { LeadFlow } from "../flow/flow.ts";
 import { hitsFromToolResult, MarketSearch, rpcResult, sseMessages, type MarketCriteria } from "../flow/market-search.ts";
 import { DryRunOutbox } from "../flow/outbox.ts";
-import { FixtureCrm } from "../flow/source.ts";
+import { loadFixtureCrm } from "../node/jsonl.ts";
 
 /** The co-broke client against a stubbed fetch: SSE and JSON replies, auth, session, filtering, failure. */
 
@@ -118,7 +118,7 @@ test("the agent's alert lists other agencies' candidates, and not our own listin
   const clock = () => new Date("2026-11-12T13:00:00Z");
   const outbox = new DryRunOutbox({ clock });
   const flow = new LeadFlow({
-    crm: FixtureCrm.load(),
+    crm: loadFixtureCrm(),
     clock,
     outbox,
     market: new MarketSearch(cfg, fetcher),

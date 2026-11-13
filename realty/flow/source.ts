@@ -1,12 +1,11 @@
-import { readFileSync } from "node:fs";
 import type { Agent } from "../agents.ts";
 import type { Currency, Inquiry, ListingType } from "./engine.ts";
 import type { PropertyKind } from "./taxonomy.ts";
 
 /**
  * What the lead flow reads from the CRM: agents (with the areas and listing types they cover), our
- * listings and new inquiries. Only the fixture version is built (fixtures/crm.json, made-up people and
- * listings). The live read-only CRM (realty/crm.ts) can implement the same interface later.
+ * listings and new inquiries. FixtureCrm.from(data) is the fixture (fixtures/crm.json, made-up people);
+ * LiveCrmSource (live-crm.ts) is the read-only live adapter. No file access in this module.
  */
 
 export type FlowAgent = Agent & { areas: string[]; listingTypes: ListingType[] };
@@ -46,7 +45,7 @@ export interface CrmSource {
   inquiries(): Promise<Inquiry[]>;
 }
 
-type Fixture = { agents: FlowAgent[]; listings: Listing[]; inquiries: Inquiry[] };
+export type Fixture = { agents: FlowAgent[]; listings: Listing[]; inquiries: Inquiry[] };
 
 export class FixtureCrm implements CrmSource {
   private readonly data: Fixture;
@@ -55,8 +54,7 @@ export class FixtureCrm implements CrmSource {
     this.data = data;
   }
 
-  static load(file = new URL("../fixtures/crm.json", import.meta.url)): FixtureCrm {
-    const data = JSON.parse(readFileSync(file, "utf8")) as Fixture;
+  static from(data: Fixture): FixtureCrm {
     return new FixtureCrm(data);
   }
 

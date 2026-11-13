@@ -1,6 +1,7 @@
 import type { Agent } from "./agents.ts";
 import type { CrmContact } from "./dedupe.ts";
 import type { CrmWrite, Proposal } from "./proposals.ts";
+import { runtimeEnv } from "./flow/env.ts";
 
 /**
  * The 1on1 CRM (Supabase project behind 1on1realtors.com) for the CLI tools, over its REST API, signed
@@ -15,7 +16,7 @@ import type { CrmWrite, Proposal } from "./proposals.ts";
 
 type Env = { url: string; anon: string; email: string; password: string };
 
-export function crmEnv(env: Record<string, string | undefined> = process.env): Env | null {
+export function crmEnv(env: Record<string, string | undefined> = runtimeEnv()): Env | null {
   const url = env.ONEON1_CRM_URL?.trim().replace(/\/+$/, "");
   const anon = env.ONEON1_CRM_ANON_KEY?.trim();
   const email = env.ONEON1_CRM_BOT_EMAIL?.trim();
@@ -24,7 +25,7 @@ export function crmEnv(env: Record<string, string | undefined> = process.env): E
   return { url, anon, email, password };
 }
 
-export const writesOn = (env: Record<string, string | undefined> = process.env) => env.ONEON1_CRM_WRITES === "1";
+export const writesOn = (env: Record<string, string | undefined> = runtimeEnv()) => env.ONEON1_CRM_WRITES === "1";
 
 export class Crm {
   private e: Env;
@@ -105,7 +106,7 @@ export class Crm {
   }
 
   /** One approved proposal's row. Refuses unless ONEON1_CRM_WRITES=1 and the proposal is approved and unblocked. */
-  async apply(p: Proposal, env: Record<string, string | undefined> = process.env): Promise<string> {
+  async apply(p: Proposal, env: Record<string, string | undefined> = runtimeEnv()): Promise<string> {
     if (!writesOn(env)) throw new Error("CRM writes are off (ONEON1_CRM_WRITES isn't 1)");
     if (!p.approved) throw new Error(`proposal ${p.id} isn't approved`);
     if (p.blockers.length) throw new Error(`proposal ${p.id} is blocked: ${p.blockers.join("; ")}`);

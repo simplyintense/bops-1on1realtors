@@ -1,7 +1,7 @@
-import { LeadFlow } from "./flow.ts";
+import { LeadFlow, type FlowSnapshot } from "./flow.ts";
 import type { MarketSearch } from "./market-search.ts";
 import { DryRunOutbox, type OutboxMessage } from "./outbox.ts";
-import type { EngineSnapshot, Lead } from "./engine.ts";
+import type { Lead } from "./engine.ts";
 import type { DailyReport } from "./report.ts";
 import type { CrmSource } from "./source.ts";
 
@@ -17,10 +17,10 @@ export type DemoDayOptions = {
   crm: CrmSource;
   timeoutMs: number;
   market: MarketSearch | null;
-  /** Where the outbox also appends its JSONL (the CLI); omitted, it stays in memory (the web page). */
-  outboxFile?: string;
+  /** Gets each outbox message as one JSONL line (the CLI appends it to a file); omitted, it stays in memory (the web page). */
+  outboxAppend?: (line: string) => void;
   print?: (line: string) => void;
-  persist?: (snapshot: EngineSnapshot) => void;
+  persist?: (snapshot: FlowSnapshot) => void;
   /** Called as each step of the story happens, after the flow has acted on it. */
   onStep?: (step: DemoStep) => void;
   /** Called as each step starts, before the flow acts on it (the CLI prints the narration first). */
@@ -37,7 +37,7 @@ export const DEMO_ADMIN = { name: "Admin (fixture)", address: "admin.fixture@exa
 export async function runDemoDay(o: DemoDayOptions): Promise<DemoDay> {
   let now = demoAt("09:00");
   const clock = () => now;
-  const outbox = new DryRunOutbox({ clock, file: o.outboxFile, print: o.print });
+  const outbox = new DryRunOutbox({ clock, append: o.outboxAppend, print: o.print });
   const flow = new LeadFlow({ crm: o.crm, clock, outbox, market: o.market, timeoutMs: o.timeoutMs, admin: DEMO_ADMIN, persist: o.persist });
   const steps: DemoStep[] = [];
 

@@ -3,11 +3,11 @@ import { test } from "node:test";
 import type { Inquiry } from "../flow/engine.ts";
 import { matchOurListings } from "../flow/match.ts";
 import { chooseAgent, inquiryProblem } from "../flow/route.ts";
-import { FixtureCrm } from "../flow/source.ts";
+import { loadFixtureCrm } from "../node/jsonl.ts";
 
 /** Routing rules for leads, on the fixture CRM: listing agent, area and type cover, load, and no match. */
 
-const crm = FixtureCrm.load();
+const crm = loadFixtureCrm();
 const agents = await crm.agents();
 const listings = await crm.listings();
 const noLoad = () => 0;

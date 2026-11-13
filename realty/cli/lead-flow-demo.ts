@@ -1,10 +1,10 @@
 import { rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { FixtureCrm } from "../flow/source.ts";
 import { timeoutMsFromEnv } from "../flow/flow.ts";
 import { marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
 import { localClock, localTime } from "../flow/messages.ts";
 import { runDemoDay } from "../flow/demo-day.ts";
+import { jsonlAppender, loadFixtureCrm } from "../node/jsonl.ts";
 
 /**
  * The lead flow on a simulated day, against the fixture CRM. Nothing is sent: every message goes to
@@ -31,10 +31,10 @@ console.log(`Market search: ${market ? "on" : "off (set ONEON1_MARKET_SEARCH_URL
 console.log(`Every message is written to ${outboxFile} and printed below.`);
 
 const day = await runDemoDay({
-  crm: FixtureCrm.load(),
+  crm: loadFixtureCrm(),
   timeoutMs,
   market,
-  outboxFile,
+  outboxAppend: jsonlAppender(outboxFile),
   print: (line) => console.log(line),
   persist: (snap) => writeFileSync(stateFile, JSON.stringify(snap, null, 2), { mode: 0o600 }),
   onStepStart: (at, text) => console.log(`\n${localClock(at.toISOString())}  ${text}`),

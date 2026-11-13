@@ -1,3 +1,4 @@
+import { runtimeEnv } from "./env.ts";
 /**
  * Co-broke candidates: other agencies' listings from the tt-market-search MCP server, through its
  * `search_market_listings` tool. Off unless ONEON1_MARKET_SEARCH_URL and ONEON1_MARKET_SEARCH_TOKEN are
@@ -34,7 +35,7 @@ const PROTOCOL = "2025-03-26";
 const TOOL = "search_market_listings";
 const MAX_HITS = 5;
 
-export function marketConfigFromEnv(env: Record<string, string | undefined> = process.env): MarketConfig | null {
+export function marketConfigFromEnv(env: Record<string, string | undefined> = runtimeEnv()): MarketConfig | null {
   const url = env.ONEON1_MARKET_SEARCH_URL?.trim();
   const token = env.ONEON1_MARKET_SEARCH_TOKEN?.trim();
   if (!url || !token) return null;

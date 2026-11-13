@@ -9,7 +9,7 @@ import { PLACEHOLDER_BUSINESS_HOURS } from "../flow/hours.ts";
 import { marketConfigFromEnv, type MarketSearch } from "../flow/market-search.ts";
 import { DryRunOutbox, type OutboxMessage } from "../flow/outbox.ts";
 import { dailyReport, median, reportText } from "../flow/report.ts";
-import { FixtureCrm } from "../flow/source.ts";
+import { jsonlAppender, loadFixtureCrm } from "../node/jsonl.ts";
 
 /**
  * The lead flow end to end on a fake clock, against the fixture CRM, with an in-memory outbox. The
@@ -22,9 +22,9 @@ const START = Date.parse("2026-11-12T13:00:00Z"); // 09:00 Port of Spain
 function world(opts: { market?: MarketSearch | null; file?: string; start?: number } = {}) {
   let now = opts.start ?? START;
   const clock = () => new Date(now);
-  const outbox = new DryRunOutbox({ clock, file: opts.file });
+  const outbox = new DryRunOutbox({ clock, append: opts.file ? jsonlAppender(opts.file) : undefined });
   const flow = new LeadFlow({
-    crm: FixtureCrm.load(),
+    crm: loadFixtureCrm(),
     clock,
     outbox,
     market: opts.market ?? null,
@@ -185,7 +185,7 @@ test("responsiveness: accepted and timed out counts, and the median time to a fi
   w.advance(6);
   await w.flow.respond(two.id, 3, "accept");
 
-  const agents = await FixtureCrm.load().agents();
+  const agents = await loadFixtureCrm().agents();
   const r = dailyReport(w.flow.engine.all(), agents, new Date(w.now));
   const row = (id: number) => r.agents.find((a) => a.agentId === id)!;
   assert.deepEqual([row(1).received, row(1).timedOut, row(1).accepted], [1, 1, 0]);

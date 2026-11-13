@@ -22,6 +22,8 @@ const KIND: Record<string, string> = {
   backup_alert: "Backup agent alert",
   admin_exception: "Admin exception",
   daily_report: "Daily report",
+  client_match: "Approved listings for the client",
+  weekly_report: "Weekly report",
 };
 
 export default async function RealtyDemo() {

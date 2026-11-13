@@ -1,3 +1,4 @@
+import { runtimeEnv } from "./env.ts";
 /**
  * Business hours for the agent-reply SLA (Wendy/Crystal: an agent answers within 15 minutes during
  * business hours). Offer deadlines count only business time: an inquiry at 16:50 with a 15-minute window
@@ -82,7 +83,7 @@ export function parseDays(text: string): number[] | null {
  * valid replaces that part of the placeholder; an unset or unreadable value keeps the placeholder's.
  * `placeholder` is false only when BOTH are set and valid.
  */
-export function businessHoursFromEnv(env: Record<string, string | undefined> = process.env): BusinessHours {
+export function businessHoursFromEnv(env: Record<string, string | undefined> = runtimeEnv()): BusinessHours {
   const hours = env.ONEON1_BUSINESS_HOURS ? parseHours(env.ONEON1_BUSINESS_HOURS) : null;
   const days = env.ONEON1_BUSINESS_DAYS ? parseDays(env.ONEON1_BUSINESS_DAYS) : null;
   return {

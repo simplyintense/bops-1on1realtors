@@ -3,7 +3,8 @@ import { test } from "node:test";
 import type { Inquiry } from "../flow/engine.ts";
 import { missingListingFields } from "../flow/listing-audit.ts";
 import { MANAGEMENT_ONLY, managementFlags } from "../flow/management.ts";
-import { FixtureCrm, type Listing } from "../flow/source.ts";
+import type { Listing } from "../flow/source.ts";
+import { loadFixtureCrm } from "../node/jsonl.ts";
 import {
   channelFromSource,
   enquiryChannel,
@@ -87,7 +88,7 @@ test("enquiryChannel and enquiryKind prefer what's set, else derive, else null",
 });
 
 test("enquiryTally: counts by kind and channel, unknowns are not invented", async () => {
-  const crm = FixtureCrm.load();
+  const crm = loadFixtureCrm();
   const leads = (await crm.inquiries()).map((i) => ({ inquiry: i }));
   leads.push({ inquiry: inquiry({ channel: "facebook", propertyKind: "land" }) });
   leads.push({ inquiry: inquiry() });
@@ -130,7 +131,7 @@ test("missingListingFields: a complete listing has nothing missing", () => {
 });
 
 test("missingListingFields: a sparse fixture listing (L-101) is flagged for everything it doesn't hold", async () => {
-  const l101 = (await FixtureCrm.load().listings()).find((l) => l.id === "L-101")!;
+  const l101 = (await loadFixtureCrm().listings()).find((l) => l.id === "L-101")!;
   assert.deepEqual(missingListingFields(l101), [
     "exact_location_directions",
     "utilities_parking_amenities",

@@ -1,7 +1,8 @@
 import { Crm, crmEnv } from "../crm.ts";
 import type { Currency, Inquiry, ListingType } from "./engine.ts";
-import { FixtureCrm, type CrmSource, type FlowAgent, type Listing } from "./source.ts";
+import type { CrmSource, FlowAgent, Listing } from "./source.ts";
 import { channelFromSource, propertyKindFromCrm } from "./taxonomy.ts";
+import { runtimeEnv } from "./env.ts";
 
 /**
  * The lead flow's CrmSource over the live 1on1 CRM, read-only. Every request goes through Crm.read /
@@ -34,9 +35,17 @@ const PROPERTY_COLS = [
   "neighborhood", "hoa_fees", "property_taxes", "status",
 ].join(",");
 
-export function crmSourceFromEnv(env: Record<string, string | undefined> = process.env, fetcher?: typeof fetch): CrmSource {
+/**
+ * The live read-only CRM when ONEON1_CRM_* are all set (and valid); otherwise `fallback()` (the CLI and
+ * tests pass loadFixtureCrm from realty/node/jsonl.ts). No fallback and no CRM env is an error: this
+ * module stays free of file access, so it can't load the fixture itself.
+ */
+export function crmSourceFromEnv(env: Record<string, string | undefined> = runtimeEnv(), fetcher?: typeof fetch, fallback?: () => CrmSource): CrmSource {
   const e = crmEnv(env);
-  if (!e) return FixtureCrm.load();
+  if (!e) {
+    if (fallback) return fallback();
+    throw new Error("ONEON1_CRM_* isn't set (or isn't valid) and no fallback CRM source was given");
+  }
   return new LiveCrmSource(new Crm(e, fetcher));
 }
 

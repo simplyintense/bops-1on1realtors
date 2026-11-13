@@ -3,6 +3,7 @@ import type { Channel, Draft } from "./outbox.ts";
 import type { Inquiry, Lead } from "./engine.ts";
 import type { CoBrokeHit } from "./market-search.ts";
 import type { FlowAgent, Listing } from "./source.ts";
+import { runtimeEnv } from "./env.ts";
 
 /**
  * The words the flow sends, in plain English for Trinidad clients and agents. Short, no jargon, no
@@ -37,7 +38,14 @@ const wants = (inq: Inquiry) => {
   return [size, kind, where].filter(Boolean).join(" ") || "(no criteria given)";
 };
 
-export function clientAck(inq: Inquiry, listing: Listing | null): Draft {
+export const DEFAULT_ACK_SENDER = "1 On 1 Realty";
+
+/** ONEON1_ACK_SENDER_NAME, default "1 On 1 Realty". The brand clients hear from, never an individual agent. */
+export function ackSenderFromEnv(env: Record<string, string | undefined> = runtimeEnv()): string {
+  return env.ONEON1_ACK_SENDER_NAME?.trim() || DEFAULT_ACK_SENDER;
+}
+
+export function clientAck(inq: Inquiry, listing: Listing | null, sender: string = DEFAULT_ACK_SENDER): Draft {
   const { channel, address } = clientChannel(inq);
   const about = listing
     ? `"${listing.title}"`
@@ -50,10 +58,11 @@ export function clientAck(inq: Inquiry, listing: Listing | null): Draft {
     kind: "client_ack",
     channel,
     to: { name: inq.name, address },
+    from: { name: sender },
     leadId: null,
     subject: channel === "email" ? "We've got your enquiry" : null,
     text: [
-      `Hi ${firstName(inq.name)}, thanks for getting in touch with 1on1 Realtors about ${about}.`,
+      `Hi ${firstName(inq.name)}, thanks for getting in touch with ${sender} about ${about}.`,
       "We've got your enquiry and one of our agents will be in touch shortly.",
       "If it's urgent, just reply here.",
     ].join("\n"),
@@ -110,6 +119,31 @@ export function agentAlert(c: AlertContext): Draft {
     leadId: c.lead.id,
     subject: null,
     text: lines.filter((l): l is string => l !== null).join("\n"),
+  };
+}
+
+/**
+ * The proposed message to the client about listings an agent approved. From the brand, not the agent.
+ * Other agencies' listings are described without their source or link: the agent arranges those.
+ */
+export function clientMatch(lead: Lead, picks: { listing?: Listing; hit?: CoBrokeHit }[], sender: string = DEFAULT_ACK_SENDER): Draft {
+  const inq = lead.inquiry;
+  const { channel, address } = clientChannel(inq);
+  const hitLine = (h: CoBrokeHit) => [h.title, h.price !== null && h.currency ? money(h.price, h.currency) : null, h.beds ? `${h.beds} bed` : null, h.area].filter(Boolean).join(" · ");
+  const line = (p: { listing?: Listing; hit?: CoBrokeHit }) =>
+    p.listing ? `  - ${listingLine(p.listing)}${p.listing.url ? ` ${p.listing.url}` : ""}` : p.hit ? `  - ${hitLine(p.hit)}` : null;
+  return {
+    kind: "client_match",
+    channel,
+    to: { name: inq.name, address },
+    from: { name: sender },
+    leadId: lead.id,
+    subject: channel === "email" ? "Properties that may suit you" : null,
+    text: [
+      `Hi ${firstName(inq.name)}, it's ${sender} again. Following your enquiry, here ${picks.length === 1 ? "is a property" : "are some properties"} that may suit you:`,
+      ...picks.map(line).filter((l): l is string => l !== null),
+      "Reply here if you'd like to view any of them.",
+    ].join("\n"),
   };
 }
 
