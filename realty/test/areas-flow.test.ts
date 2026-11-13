@@ -36,6 +36,8 @@ const ENV = { ONEON1_MARKET_SEARCH_URL: "http://127.0.0.1:8787/mcp", ONEON1_MARK
 /** The market-ingest write (staff aliases). Both are needed for a live post. */
 const INGEST_URL = "https://market.example/functions/v1/market-ingest";
 const INGEST_ENV = { ONEON1_MARKET_WRITE_URL: INGEST_URL, ONEON1_MARKET_INGEST_TOKEN: "ingest-test-token-not-real-0123" };
+/** Alias posts also need the alias flag (market-ingest does not accept kind alias yet). */
+const ALIAS_ENV = { ...INGEST_ENV, ONEON1_MARKET_ALIAS_WRITE: "1" };
 
 const PLACES: Place[] = [
   { name: "Westmoorings", region: "North West", neighbours: ["Glencoe", "Maraval"] },
@@ -308,7 +310,7 @@ test("a staff mapping is posted to market-ingest as kind alias (write URL, beare
   const ingest = fakeIngest();
   const fake = fakeMarket();
   const store = new AreaStore(freshDir());
-  const row = await mapAreaAlias({ alias: "  Westmoring ", canonical: "Westmoorings" }, { store, env: INGEST_ENV, fetcher: ingest.fetcher, now: new Date(START) });
+  const row = await mapAreaAlias({ alias: "  Westmoring ", canonical: "Westmoorings" }, { store, env: ALIAS_ENV, fetcher: ingest.fetcher, now: new Date(START) });
   assert.equal(row.ok && row.row.market, "sent");
   assert.deepEqual(ingest.posts, [{ url: INGEST_URL, auth: `Bearer ${INGEST_ENV.ONEON1_MARKET_INGEST_TOKEN}`, body: { kind: "alias", alias: "Westmoring", canonical: "Westmoorings" } }]);
   assert.deepEqual(fake.calls, [], "the alias is not a market-mcp call");
@@ -340,10 +342,35 @@ test("a staff mapping is a dry run unless both the write URL and the ingest toke
   assert.equal(l.region, null);
 });
 
+test("the alias flag gates the post: write URL and token set, but only 1 or true (trimmed, any case for true) sends; the rest stay dry-run with the mapping kept", async () => {
+  const ingest = fakeIngest();
+  const store = new AreaStore(freshDir());
+  for (const flag of [undefined, "", "0", "yes", "false", "on"]) {
+    const env = flag === undefined ? INGEST_ENV : { ...INGEST_ENV, ONEON1_MARKET_ALIAS_WRITE: flag };
+    const r = await mapAreaAlias({ alias: `Off ${String(flag)}`, canonical: "Westmoorings" }, { store, env, fetcher: ingest.fetcher });
+    assert.equal(r.ok && r.row.market, "dry-run", `flag ${JSON.stringify(flag)}`);
+  }
+  assert.equal(ingest.posts.length, 0, "no POST while the flag is off");
+  const local = await areasFromEnv(store, {}, ingest.fetcher).lookup("off yes");
+  assert.equal(local.canonical, "Westmoorings", "local mapping still works");
+
+  for (const flag of ["1", "true", "TRUE", " true "]) {
+    const r = await mapAreaAlias({ alias: `On ${flag.trim()}`, canonical: "Westmoorings" }, { store, env: { ...INGEST_ENV, ONEON1_MARKET_ALIAS_WRITE: flag }, fetcher: ingest.fetcher });
+    assert.equal(r.ok && r.row.market, "sent", `flag ${JSON.stringify(flag)}`);
+  }
+  assert.equal(ingest.posts.length, 4, "one POST per enabled flag value");
+  assert.deepEqual(ingest.posts.map((p) => p.body), [
+    { kind: "alias", alias: "On 1", canonical: "Westmoorings" },
+    { kind: "alias", alias: "On true", canonical: "Westmoorings" },
+    { kind: "alias", alias: "On TRUE", canonical: "Westmoorings" },
+    { kind: "alias", alias: "On true", canonical: "Westmoorings" },
+  ]);
+});
+
 test("a failed ingest post keeps the mapping and marks the row failed; the request still succeeds", async () => {
   const ingest = fakeIngest(503);
   const store = new AreaStore(freshDir());
-  const row = await mapAreaAlias({ alias: "Westmoring", canonical: "Westmoorings" }, { store, env: INGEST_ENV, fetcher: ingest.fetcher });
+  const row = await mapAreaAlias({ alias: "Westmoring", canonical: "Westmoorings" }, { store, env: ALIAS_ENV, fetcher: ingest.fetcher });
   assert.equal(row.ok && row.row.market, "failed");
   assert.equal(ingest.posts.length, 1, "one attempt");
   assert.deepEqual(store.aliasRows().map((r) => [r.alias, r.market]), [["Westmoring", "failed"]]);

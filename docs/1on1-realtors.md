@@ -278,8 +278,9 @@ calls a `learn_` tool. A staff alias goes to market-ingest instead, as one POST:
 
 - `POST ONEON1_MARKET_WRITE_URL` with `Authorization: Bearer ONEON1_MARKET_INGEST_TOKEN` and the flat body
   `{ "kind": "alias", "alias": "Westmoring", "canonical": "Westmoorings" }` (`aliasItem` in `realty/flow/periskope.ts`).
-- **Dry run** (no network) unless both `ONEON1_MARKET_WRITE_URL` and `ONEON1_MARKET_INGEST_TOKEN` are set. The market
-  search URL and token don't switch it on.
+- **Dry run** (no network) unless `ONEON1_MARKET_WRITE_URL`, `ONEON1_MARKET_INGEST_TOKEN` and `ONEON1_MARKET_ALIAS_WRITE`
+  (`1` or `true`) are all set. The market search URL and token don't switch it on. The flag is alias-only: market-ingest
+  does not accept `kind: "alias"` yet. The write URL and token alone still post listings, requests and groups, but not aliases.
 - One attempt, no retry. A success gives `market: "sent"`; a failure gives `market: "failed"`. The mapping is kept
   either way, and the request still succeeds.
 
@@ -362,6 +363,7 @@ Config:
 - `PERISKOPE_REQUEST_RETENTION_DAYS`: default `60` (buyer requests and their seen metadata).
 - `PERISKOPE_LISTING_RETENTION_DAYS`: default `90` (WhatsApp co-broke listings and their seen metadata).
 - `ONEON1_MARKET_WRITE_URL` and `ONEON1_MARKET_INGEST_TOKEN`: both needed, or the adapter stays off.
+- `ONEON1_MARKET_ALIAS_WRITE`: `1` or `true` to let staff aliases post (`kind: "alias"`). Off by default; see Geography matching.
 
 `purgeExpiredPeriskope` is callable on its own and from `LeadFlow.tick()` via `onTick`.
 
