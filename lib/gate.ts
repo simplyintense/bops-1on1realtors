@@ -71,6 +71,8 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/phone/openai",
   "/api/channels/slack/events",
   "/api/cloud/event",
+  // Periskope's WhatsApp group webhook (realty/node/periskope-intake.ts), checked by its HMAC signature. Its staff paths (opt-out, consent) stay gated.
+  "/api/intake/periskope",
 ]);
 
 /** A redirect target that stays on this site. */

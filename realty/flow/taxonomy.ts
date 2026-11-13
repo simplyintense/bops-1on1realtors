@@ -52,7 +52,7 @@ export function channelFromSource(source: Inquiry["source"], hint?: string | nul
     if (named.length === 1) return named[0][0];
   }
   if (source === "website_contact" || source === "property_inquiry") return "website";
-  if (source === "whatsapp") return "whatsapp";
+  if (source === "whatsapp" || source === "periskope-group") return "whatsapp";
   return null;
 }
 

@@ -34,7 +34,7 @@ export type Inquiry = {
   /** The reference in the source system (a contact-form row, a WhatsApp message), so a person can find it. */
   ref: string;
   /** Where it came in. WhatsApp leads come from the export reader or a live chat. */
-  source: "website_contact" | "property_inquiry" | "whatsapp";
+  source: "website_contact" | "property_inquiry" | "whatsapp" | "periskope-group";
   name: string;
   phone: string | null;
   email: string | null;
@@ -255,6 +255,13 @@ export class LeadEngine {
     lead.attempts.push(attempt);
     this.record(lead, attempt.assignedAt, `offered to agent ${agentId} (answer by ${attempt.deadline})`);
     return attempt;
+  }
+
+  /** Drops leads and their log lines (a purge or an opt-out). Unknown ids are ignored; nothing is logged about it. */
+  forget(ids: string[]): void {
+    const gone = new Set(ids);
+    for (const id of gone) this.leads.delete(id);
+    this.log = this.log.filter((e) => !gone.has(e.leadId));
   }
 
   private requireState(lead: Lead, states: LeadState[], action: string) {

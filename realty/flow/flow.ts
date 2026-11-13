@@ -47,6 +47,11 @@ export type FlowOptions = {
   persist?: (snapshot: FlowSnapshot) => void;
   /** An engine snapshot from before the approval queue (no `approvals`) still loads. */
   snapshot?: FlowSnapshot;
+  /**
+   * Called by tick() after the timeouts are handled and before the state is saved, with the same clock
+   * time. The host wires the Periskope purge here (realty/node/periskope-intake.ts); it may call forgetLeads().
+   */
+  onTick?: (now: Date) => void | Promise<void>;
 };
 
 /** A listing the agent may send the client: ours from the CRM, or another agency's (co-broke). */
@@ -65,6 +70,14 @@ export type MatchApproval = {
 };
 
 export type FlowSnapshot = EngineSnapshot & { approvals?: MatchApproval[] };
+
+/** The snapshot without these leads, their log lines and their match approvals. For a host that keeps the snapshot in a file. */
+export function forgetLeadsIn(snapshot: FlowSnapshot, leadIds: string[]): FlowSnapshot {
+  const engine = new LeadEngine({ timeoutMs: 0, clock: () => new Date(0) }, snapshot);
+  engine.forget(leadIds);
+  const gone = new Set(leadIds);
+  return { ...engine.snapshot(), approvals: (snapshot.approvals ?? []).filter((a) => !gone.has(a.leadId)) };
+}
 
 /** ONEON1_LEAD_TIMEOUT_MINUTES, default 15, between 1 and 240. */
 export function timeoutMsFromEnv(env: Record<string, string | undefined> = runtimeEnv()): number {
@@ -120,12 +133,21 @@ export class LeadFlow {
     return this.engine.lead(lead.id);
   }
 
-  /** Applies timeouts. Returns how many offers ran out. */
+  /** Applies timeouts, then onTick (if given), then saves. Returns how many offers ran out. */
   async tick(): Promise<number> {
     const expired = this.engine.expire();
     for (const { lead } of expired) await this.missed(lead.id);
+    await this.o.onTick?.(this.engine.now);
     this.save();
     return expired.length;
+  }
+
+  /** Removes leads, their log lines and their match approvals (a purge or an opt-out). Saves. */
+  forgetLeads(leadIds: string[]): void {
+    const gone = new Set(leadIds);
+    this.engine.forget(leadIds);
+    for (let i = this.approvals.length - 1; i >= 0; i--) if (gone.has(this.approvals[i].leadId)) this.approvals.splice(i, 1);
+    this.save();
   }
 
   /** An agent's answer. Accept is final; pass goes straight to the backup (or admin, if it was the backup). */

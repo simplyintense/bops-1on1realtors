@@ -148,7 +148,12 @@ export function clientMatch(lead: Lead, picks: { listing?: Listing; hit?: CoBrok
 }
 
 export function sourceLabel(inq: Inquiry): string {
-  return { website_contact: "the website contact form", property_inquiry: "a property inquiry on the website", whatsapp: "WhatsApp" }[inq.source];
+  return {
+    website_contact: "the website contact form",
+    property_inquiry: "a property inquiry on the website",
+    whatsapp: "WhatsApp",
+    "periskope-group": "a WhatsApp group",
+  }[inq.source];
 }
 
 export function adminException(lead: Lead, attempts: string[], now: string, admin: { name: string; address: string }): Draft {
