@@ -16,6 +16,8 @@
  * simulated day.
  */
 
+import type { EnquiryChannel, PropertyKind } from "./taxonomy.ts";
+
 export type Clock = () => Date;
 
 export type ListingType = "sale" | "rent";
@@ -36,6 +38,10 @@ export type Inquiry = {
   budget: { max: number; currency: Currency } | null;
   beds: number | null;
   message: string;
+  /** Finer than source (facebook, instagram, referral...). Unset: derived from source (taxonomy.ts). */
+  channel?: EnquiryChannel | null;
+  /** Unset: taken from the listing, then from listingType (taxonomy.ts). */
+  propertyKind?: PropertyKind | null;
 };
 
 export type LeadState = "received" | "acknowledged" | "assigned" | "escalated" | "accepted" | "exception";

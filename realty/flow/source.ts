@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Agent } from "../agents.ts";
 import type { Currency, Inquiry, ListingType } from "./engine.ts";
+import type { PropertyKind } from "./taxonomy.ts";
 
 /**
  * What the lead flow reads from the CRM: agents (with the areas and listing types they cover), our
@@ -22,6 +23,21 @@ export type Listing = {
   agentId: number;
   status: "active" | "sold" | "withdrawn";
   url: string;
+  // Optional detail for the listing audit (listing-audit.ts). Missing means the field is flagged.
+  propertyKind?: PropertyKind;
+  address?: string | null;
+  /** A Google Maps link or written directions. */
+  directions?: string | null;
+  /** HOA, taxes or other fees; 0 counts as present. */
+  fees?: number | null;
+  squareFeet?: string | number | null;
+  lotSize?: string | number | null;
+  /** Utilities, parking, amenities. */
+  amenities?: string[] | string | null;
+  furnishing?: string | null;
+  /** No CRM column for this: it stays flagged until someone fills it in. */
+  viewingArrangements?: string | null;
+  photoCount?: number;
 };
 
 export interface CrmSource {
