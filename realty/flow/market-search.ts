@@ -1,3 +1,4 @@
+import type { ToolCaller } from "./areas.ts";
 import { runtimeEnv } from "./env.ts";
 /**
  * Co-broke candidates: other agencies' listings from the tt-market-search MCP server, through its
@@ -124,7 +125,13 @@ export function toolArguments(c: MarketCriteria): Record<string, string | number
   return args;
 }
 
-export class MarketSearch {
+/**
+ * The Streamable HTTP JSON-RPC client for tt-market-search. One callTool(name, args) is initialize, the
+ * initialized notice, then tools/call. Failures (HTTP, JSON-RPC, a tool error, a timeout) throw; the callers
+ * decide what that means (MarketSearch: a note; the area resolver: fall back to exact text). Shared by
+ * search_market_listings, resolve_area, learn_area_alias and learn_area_neighbour.
+ */
+export class MarketClient implements ToolCaller {
   private readonly cfg: MarketConfig;
   private readonly fetcher: typeof fetch;
 
@@ -133,25 +140,14 @@ export class MarketSearch {
     this.fetcher = fetcher;
   }
 
-  /** Never throws. Returns the candidates and a one-line note for the agent's alert. */
-  async search(c: MarketCriteria): Promise<{ hits: CoBrokeHit[]; note: string }> {
-    try {
-      const hits = await this.call(c);
-      return { hits, note: hits.length ? `${hits.length} from other agencies` : "none found at other agencies" };
-    } catch (err) {
-      const timedOut = (err as Error).name === "TimeoutError" || (err as Error).name === "AbortError";
-      return { hits: [], note: `other agencies not checked (${timedOut ? "timed out" : "unavailable"})` };
-    }
-  }
-
-  private async call(c: MarketCriteria): Promise<CoBrokeHit[]> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     const init = await this.post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "1on1-lead-flow", version: "1" } } }, null);
     rpcResult(init.text, 1);
     await this.post({ jsonrpc: "2.0", method: "notifications/initialized" }, init.session);
-    const call = await this.post({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: TOOL, arguments: toolArguments(c) } }, init.session);
-    const result = rpcResult(call.text, 2) as { isError?: boolean };
+    const call = await this.post({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } }, init.session);
+    const result = rpcResult(call.text, 2) as { isError?: boolean } | undefined;
     if (result?.isError) throw new Error("tool error");
-    return hitsFromToolResult(result);
+    return result;
   }
 
   private async post(body: object, session: string | null): Promise<{ text: string; session: string | null }> {
@@ -170,5 +166,24 @@ export class MarketSearch {
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return { text: await r.text(), session: r.headers.get("mcp-session-id") ?? session };
+  }
+}
+
+export class MarketSearch {
+  private readonly client: MarketClient;
+
+  constructor(cfg: MarketConfig, fetcher: typeof fetch = fetch) {
+    this.client = new MarketClient(cfg, fetcher);
+  }
+
+  /** Never throws. Returns the candidates and a one-line note for the agent's alert. */
+  async search(c: MarketCriteria): Promise<{ hits: CoBrokeHit[]; note: string }> {
+    try {
+      const hits = hitsFromToolResult(await this.client.callTool(TOOL, toolArguments(c)));
+      return { hits, note: hits.length ? `${hits.length} from other agencies` : "none found at other agencies" };
+    } catch (err) {
+      const timedOut = (err as Error).name === "TimeoutError" || (err as Error).name === "AbortError";
+      return { hits: [], note: `other agencies not checked (${timedOut ? "timed out" : "unavailable"})` };
+    }
   }
 }
