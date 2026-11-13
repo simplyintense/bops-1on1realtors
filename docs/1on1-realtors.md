@@ -182,7 +182,7 @@ Config (environment, all optional):
   fixture, for when they aren't set). `ONEON1_CRM_WRITES` stays off for the lead flow: it never writes to the CRM.
 - `ONEON1_MARKET_SEARCH_URL` and `ONEON1_MARKET_SEARCH_TOKEN`: both needed, or the search is off. When on, the
   flow calls `search_market_listings` on tt-market-search (Streamable HTTP) for buyers and renters with criteria
-  (and `resolve_area` for area names, and the two learn tools; see "Geography matching"),
+  (and `resolve_area` for area names; see "Geography matching"),
   and lists other agencies' hits as co-broke candidates in the agent's alert. Our own listings are dropped.
   Each request times out after `ONEON1_MARKET_SEARCH_TIMEOUT_MS` (default 4000); on failure the alert says
   "not checked" and the flow carries on. It sends the server's own arguments (`listing_type`, `area`,
@@ -210,22 +210,28 @@ Area matching is by tier, not by exact text alone. For a buyer or renter who nam
 | same-region | `same region: North West` | both are in the same region |
 | excluded | `excluded: Tobago vs Trinidad`, or `excluded` | anything else; dropped |
 
-Candidates are ranked by tier, then by price (as before). Budget, beds, type, status and "not the listing
+Candidates are ranked by tier, then, inside the neighbour tier, by the neighbour's market weight (higher first), then by price. Budget, beds, type, status and "not the listing
 asked about" are checked as before. Co-broke hits are filtered and ranked the same way, client-side: the search
 server's area filter is not trusted as a geography check.
 
 **Regions** (exact strings): `Port of Spain`, `North West`, `East–West Corridor`, `Central`, `South`, `Tobago`.
 
-**The Tobago/Trinidad rule.** A region of `Tobago` is Tobago; every other region is Trinidad. A Tobago area
-never matches a Trinidad one, even if a neighbour list says so. The island check runs first, so a wrong
-neighbour list can't cross islands. A region the code doesn't know isn't claimed for either island.
+**The Tobago/Trinidad rule.** The island is market-mcp's `island` (`"Tobago"` or `"Trinidad"`). When that's absent,
+it comes from the region: `Tobago` is Tobago, every other region is Trinidad. A Tobago area never matches a
+Trinidad one, even if a neighbour list says so. The island check runs first, so a wrong neighbour list can't cross
+islands. A region the code doesn't know, with no island, isn't claimed for either island.
+
+**Neighbour weights.** market-mcp gives each neighbour a weight. Inside the neighbour tier, a higher weight ranks
+first, then the cheaper price. If two areas list each other, the higher of the two weights is used. A neighbour
+named with no weight counts as 0. The weight is on the ranked row; the alert shows only the reason.
 
 **Where the names come from, in order** (`CompositeAreaResolver`, one per flow, cached per flow):
 
 1. Local staff aliases (`.data/realty/areas/aliases.jsonl`). An alias's canonical name is then looked up on the
-   market for its region and neighbours.
-2. `resolve_area` on market-mcp, when `ONEON1_MARKET_SEARCH_URL` and `_TOKEN` are both set. A high-confidence
-   answer maps the text. A low-confidence answer, or no area, is **unmapped**.
+   market for its region, island and neighbours.
+2. `resolve_area` on market-mcp, when `ONEON1_MARKET_SEARCH_URL` and `_TOKEN` are both set. A confidence of 0.8 or
+   more maps the text. A confidence below 0.8, or `area: null` (unresolved), is **unmapped**, and the answer's
+   suggestions go to the desk.
 3. Exact text (case and spacing only, no region, no neighbours). This is used only when the market is down,
    times out, or isn't set. A timeout or error starts a 60-second cooldown, so a slow market doesn't stall every
    area in an alert. An unmapped answer from a working market stays unmapped; identical text still matches
@@ -235,7 +241,7 @@ With the market off, matching is today's exact text, and the alert's reasons rea
 
 **Unmapped areas.** An inquiry area or an active CRM listing area the resolver doesn't recognise is unmapped.
 - On the desk (`deskView`): `unmappedAreas` gives `count` (distinct areas) and up to 10 `examples` (`text`,
-  `occurrences`, `from`: inquiry and/or listing, and `suggestions` from a low-confidence answer). Each lead has
+  `occurrences`, `from`: inquiry and/or listing, and `suggestions` from an unmapped answer). Each lead has
   `unmappedArea: true` and `suggestions` when its inquiry area is unmapped. This is a missing-field flag on the
   lead. It is not a management exception, and it doesn't go on Wendy's listing missing-fields list.
 - Staff map an alias once with the staff-only API below.
@@ -249,7 +255,8 @@ POST /api/realty/areas/alias     { "alias": "Westmoring", "canonical": "Westmoor
 ```
 
 The row goes to `.data/realty/areas/aliases.jsonl` (0700 directory, 0600 file). The last row for an alias wins.
-Local aliases are checked first on every resolve. The handler is `mapAreaAlias` (`realty/node/area-store.ts`), and
+The same mapping is posted to market-ingest (see "Market calls" below), and the row's `market` field records the
+outcome. Local aliases are checked first on every resolve. The handler is `mapAreaAlias` (`realty/node/area-store.ts`), and
 the gate is `staffAccess` (`realty/node/periskope-intake.ts`).
 
 **Learning (data collection only; no tier changes yet).** Only an explicit staff or agent decision records anything:
@@ -261,29 +268,33 @@ the gate is `staffAccess` (`realty/node/periskope-intake.ts`).
   with no inquiry area, no listing area, or tier `any` are not recorded.
 - The desk's `areaLearning` counts records by signal, by tier and by pair.
 - Nothing is sent on receive, on `tick()`, or in bulk. Nothing replays history.
+- Learning is local only. It makes no market call and changes no tier or weight. Automatic neighbour-weight changes
+  wait until Miles approves them. The TODO in `realty/flow/area-learning.ts` marks the future market-ingest
+  `kind: "neighbour"`.
 
-**market-mcp tools, and the dry-run rule.** Both learn tools are dry-run unless `ONEON1_MARKET_SEARCH_URL` and
-`ONEON1_MARKET_SEARCH_TOKEN` are both set. The dry run is the local record, and nothing is called. When live, each
-call is one `tools/call`, with no retry loop, and a failure keeps the local record (for a staff alias, the row says
-`market: "failed"`). A failure never reaches the approve/reject path or the alias request. The same MCP client
-(`MarketClient.callTool` in `realty/flow/market-search.ts`) does all four calls.
+**Market calls.** The flow calls market-mcp for two things only, through the same MCP client
+(`MarketClient.callTool` in `realty/flow/market-search.ts`): `search_market_listings` and `resolve_area`. It never
+calls a `learn_` tool. A staff alias goes to market-ingest instead, as one POST:
 
-- `learn_area_alias` (after a staff mapping): `{ alias, canonical }`.
-- `learn_area_neighbour` (per approve/reject record): `{ inquiryArea, listingArea, tier, signal }`, where `tier` is
-  `same-area`, `neighbour` or `same-region`, and `signal` is `approved` or `rejected`.
+- `POST ONEON1_MARKET_WRITE_URL` with `Authorization: Bearer ONEON1_MARKET_INGEST_TOKEN` and the flat body
+  `{ "kind": "alias", "alias": "Westmoring", "canonical": "Westmoorings" }` (`aliasItem` in `realty/flow/periskope.ts`).
+- **Dry run** (no network) unless both `ONEON1_MARKET_WRITE_URL` and `ONEON1_MARKET_INGEST_TOKEN` are set. The market
+  search URL and token don't switch it on.
+- One attempt, no retry. A success gives `market: "sent"`; a failure gives `market: "failed"`. The mapping is kept
+  either way, and the request still succeeds.
 
-**Assumed market-mcp shapes (Builder to confirm).** Nothing here has been checked against a live market-mcp.
-If the tool shapes differ, change only `areaFromToolResult` (areas.ts) and the two argument objects above.
+**Confirmed market-mcp shape (from Builder, tt-market-search).** The flow reads it in `areaFromToolResult` and
+`neighbourList` (`realty/flow/areas.ts`).
 
-- `resolve_area`, args `{ text }`. Response, tolerant (`area` or `canonical`; `confidence` as `"high"`/`"low"` or a
-  number, where a number below 0.8 is low; absent means high only when `area` and `region` are both there):
-  `{ area, region, municipality?, neighbours: string[], confidence?, suggestions?: string[] }`.
-  The JSON may be the second text block of the result, or `structuredContent`.
-- `learn_area_alias`, args `{ alias, canonical }`.
-- `learn_area_neighbour`, args `{ inquiryArea, listingArea, tier, signal: "approved" | "rejected" }`.
+- `resolve_area`, args `{ text }`. Response: `{ area, island, region, municipality, neighbours: [{ area, weight }],
+  confidence, suggestions }`, where `confidence` is always a number from 0 to 1. A plain name in `neighbours` is
+  accepted with weight 0 (for fixtures). The JSON may be the second text block of the result, or `structuredContent`.
+- An unrecognised name: `{ area: null, unresolved: true, suggestions }`. That's unmapped, and `suggestions` go to the
+  desk.
+- A string `"high"` or `"low"` confidence is also read, for old fixtures only.
 
-**Not used:** `kind=alias` on market-ingest. The alias and neighbour data go through the market-mcp tools above, not
-through the market-ingest outbox.
+**Not used by the flow:** the `candidates` field, `learn_area_alias` and `learn_area_neighbour` (the neighbour shape
+there is now `{ areaA, areaB, delta }`).
 
 Reports: `sendDailyReport()` (every lead the flow holds) and `sendWeeklyReport()` (leads received in the 7
 days up to now) go to admin as one dry-run email each. Besides per-agent responsiveness, exceptions and open
@@ -330,7 +341,8 @@ answers 200 quickly. Bops never posts or replies to WhatsApp and never calls the
 
 A buyer request is taken into the existing lead flow (`source: periskope-group`, `channel: whatsapp`)
 so the SLA, missing-field flags, matching and approval queue run unchanged, and is also queued for
-market-ingest as `kind: "request"`. A co-broke listing is queued as `kind: "listing"`. Chatter is
+market-ingest as `kind: "request"`. A co-broke listing is queued as `kind: "listing"`. A staff area alias is
+posted as `kind: "alias"` (see Geography matching). Chatter is
 dropped. Nothing stores the raw message text: only the buyer brief or listing details (budget, area,
 type, beds) and the posting agent's business name and number.
 

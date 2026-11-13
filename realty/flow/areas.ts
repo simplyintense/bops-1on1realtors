@@ -1,15 +1,18 @@
 /**
  * Geography for matching: which area names are the same place, which are neighbours, and which share a
  * region. Portable: no node:*, no next, no bare process. The place directory is Builder's (market-mcp's
- * resolve_area and the staff aliases); this file holds no gazetteer of its own.
+ * resolve_area); this file holds no gazetteer of its own. Staff aliases are local (AliasTable) and go to
+ * market-ingest, not here.
  *
- * Regions are the six strings in REGIONS. Tobago is its own island: region "Tobago" is Tobago, every
- * other region is Trinidad, and a Tobago area never matches a Trinidad one, even when a neighbour list
- * says it does (areaTier checks the islands before anything else).
+ * Regions are the six strings in REGIONS. The island is the resolver's `island` ("Tobago" or "Trinidad"); only
+ * when that's absent is it read from the region (region "Tobago" is Tobago, every other region is Trinidad).
+ * A Tobago area never matches a Trinidad one, even when a neighbour list says it does (areaTier checks the
+ * islands before anything else).
  *
- * Tiers, best first: same-area, neighbour, same-region. Anything else is excluded. A text the resolver
- * doesn't map (resolve() is null) matches only identical text, so exact matching still works when the
- * directory is silent.
+ * Tiers, best first: same-area, neighbour, same-region. Anything else is excluded. A neighbour hit carries the
+ * weight market-mcp gave that neighbour (0 when the list has only names), and the ranking sorts by it inside
+ * the tier. A text the resolver doesn't map (resolve() is null) matches only identical text, so exact matching
+ * still works when the directory is silent.
  *
  * Resolvers. Each has lookup(text) for the desk (the answer with suggestions and the original query) and
  * resolve(text) for matching (the canonical area, or null if empty, unmapped or low confidence):
@@ -21,10 +24,11 @@
  *   MemoryAreaResolver     an in-memory place list, for tests.
  *   CachedAreaResolver     wraps any resolver and keeps the answers that came back (errors are not kept).
  *
- * Assumed market-mcp shapes, for Builder to confirm (docs/1on1-realtors.md):
+ * market-mcp shapes (confirmed by Builder; see docs/1on1-realtors.md):
  *   resolve_area  args { text }
- *                 → { area | canonical, region, municipality?, neighbours?: string[],
- *                     confidence?: "high" | "low" | number, suggestions?: string[] }
+ *                 → { area, island, region, municipality, neighbours: [{ area, weight }], confidence: 0 to 1,
+ *                     suggestions }
+ *                 an unrecognised name: { area: null, unresolved: true, suggestions }
  */
 
 export const REGIONS = ["Port of Spain", "North West", "East–West Corridor", "Central", "South", "Tobago"] as const;
@@ -38,8 +42,11 @@ export const TIER_RANK: Record<MatchTier, number> = { "same-area": 0, neighbour:
 /** A numeric confidence below this is low, and low means unmapped. */
 export const LOW_CONFIDENCE = 0.8;
 
-/** What matching uses: the canonical area, its region (or null) and its neighbours. */
-export type AreaMatch = { canonical: string; region: Region | null; neighbours: string[] };
+/** A neighbouring area and the weight market-mcp gives it (0 when the list named it without one). */
+export type Neighbour = { area: string; weight: number };
+
+/** What matching uses: the canonical area, its region and island (either may be null) and its neighbours. */
+export type AreaMatch = { canonical: string; region: Region | null; island: Island | null; neighbours: Neighbour[] };
 
 /** What the desk uses: the answer for one query, with suggestions when the directory wasn't sure. */
 export type AreaLookup = {
@@ -49,11 +56,12 @@ export type AreaLookup = {
   mapped: boolean;
   canonical: string | null;
   region: Region | null;
+  island: Island | null;
   municipality: string | null;
-  neighbours: string[];
+  neighbours: Neighbour[];
   /** The confidence level the answer carried; null when there was no area to judge. */
   confidence: "high" | "low" | null;
-  /** Other names the directory thinks may be meant (from a low-confidence answer). */
+  /** Other names the directory thinks may be meant (from an unmapped answer). */
   suggestions: string[];
   /** alias: a staff mapping. market: resolve_area. exact: text only. none: nothing to look up. */
   source: "alias" | "market" | "exact" | "none";
@@ -93,33 +101,38 @@ export function islandOf(region: string | null | undefined): Island | null {
   return r === "Tobago" ? "Tobago" : "Trinidad";
 }
 
-/** False only when both regions are known and on different islands. An unknown region never rules a match out here. */
-export function islandsCompatible(a: string | null | undefined, b: string | null | undefined): boolean {
-  const x = islandOf(a);
-  const y = islandOf(b);
-  return x === null || y === null || x === y;
+/** The island as market-mcp names it ("Tobago" or "Trinidad", any case), or null. */
+export function parseIsland(value: unknown): Island | null {
+  const k = typeof value === "string" ? areaKey(value) : "";
+  return k === "tobago" ? "Tobago" : k === "trinidad" ? "Trinidad" : null;
 }
 
 export function blankLookup(query: string, over: Partial<AreaLookup> = {}): AreaLookup {
-  return { query, mapped: false, canonical: null, region: null, municipality: null, neighbours: [], confidence: null, suggestions: [], source: "none", ...over };
+  return { query, mapped: false, canonical: null, region: null, island: null, municipality: null, neighbours: [], confidence: null, suggestions: [], source: "none", ...over };
 }
 
 /** The thin form matching uses: the canonical area, or null when it isn't mapped. */
 export function matchOf(l: AreaLookup): AreaMatch | null {
-  return l.mapped && l.canonical ? { canonical: l.canonical, region: l.region, neighbours: l.neighbours } : null;
+  return l.mapped && l.canonical ? { canonical: l.canonical, region: l.region, island: l.island, neighbours: l.neighbours } : null;
 }
 
 /** One side of a tier check: the text (as entered or as in the CRM) and what the resolver made of it. */
 export type AreaRef = { text: string; match: AreaMatch | null };
 
-/** The tier, or "excluded", with the reason the agent sees. */
-export type AreaVerdict = { tier: MatchTier | "excluded"; reason: string };
+/** The tier, or "excluded", with the reason the agent sees. weight is set only for a neighbour hit. */
+export type AreaVerdict = { tier: MatchTier | "excluded"; reason: string; weight?: number };
+
+/** The weight a neighbour list gives an area (by key), or null when the list doesn't name it. */
+function weightTo(list: Neighbour[], key: string): number | null {
+  return list.find((n) => areaKey(n.area) === key)?.weight ?? null;
+}
 
 /**
  * How a listing's area fits the inquiry's. Order of checks:
- *  1. Islands: both regions known and on different islands is excluded (listing first: "excluded: Tobago vs Trinidad").
+ *  1. Islands: both known and different is excluded (listing first: "excluded: Tobago vs Trinidad").
  *  2. Same canonical area: "same area: Westmoorings".
- *  3. Neighbours, on one island only, either list: "nearby: Glencoe for Westmoorings" (listing named first).
+ *  3. Neighbours, on one island only, either list (the higher weight when both name each other):
+ *     "nearby: Glencoe for Westmoorings" (listing named first).
  *  4. Same region, on one island: "same region: North West".
  *  5. Unmapped on either side: identical text is the same area; anything else is excluded.
  */
@@ -128,26 +141,26 @@ export function areaTier(inquiry: AreaRef | null, listing: AreaRef): AreaVerdict
   const a = inquiry.match;
   const b = listing.match;
   if (a && b) {
-    if (!islandsCompatible(a.region, b.region)) return { tier: "excluded", reason: `excluded: ${islandOf(b.region)} vs ${islandOf(a.region)}` };
+    if (a.island && b.island && a.island !== b.island) return { tier: "excluded", reason: `excluded: ${b.island} vs ${a.island}` };
     const ka = areaKey(a.canonical);
     const kb = areaKey(b.canonical);
     if (ka === kb) return { tier: "same-area", reason: `same area: ${a.canonical}` };
-    const island = islandOf(a.region);
-    const sameIsland = island !== null && island === islandOf(b.region);
-    if (sameIsland && (b.neighbours.some((n) => areaKey(n) === ka) || a.neighbours.some((n) => areaKey(n) === kb))) {
-      return { tier: "neighbour", reason: `nearby: ${b.canonical} for ${a.canonical}` };
+    const sameIsland = a.island !== null && a.island === b.island;
+    if (sameIsland) {
+      const weights = [weightTo(b.neighbours, ka), weightTo(a.neighbours, kb)].filter((w): w is number => w !== null);
+      if (weights.length) return { tier: "neighbour", reason: `nearby: ${b.canonical} for ${a.canonical}`, weight: Math.max(...weights) };
+      if (a.region && a.region === b.region) return { tier: "same-region", reason: `same region: ${a.region}` };
     }
-    if (sameIsland && a.region && a.region === b.region) return { tier: "same-region", reason: `same region: ${a.region}` };
     return { tier: "excluded", reason: "excluded" };
   }
   if (areaKey(inquiry.text) === areaKey(listing.text)) return { tier: "same-area", reason: `same area: ${inquiry.text.trim()}` };
   return { tier: "excluded", reason: "excluded" };
 }
 
-/** Today's exact text, synchronously: no region, no neighbours. Empty text has no match. */
+/** Today's exact text, synchronously: no region, no island, no neighbours. Empty text has no match. */
 export function exactRef(text: string): AreaRef {
   const canonical = text.trim().replace(/\s+/g, " ");
-  return { text, match: areaKey(text) ? { canonical, region: null, neighbours: [] } : null };
+  return { text, match: areaKey(text) ? { canonical, region: null, island: null, neighbours: [] } : null };
 }
 
 async function safeResolve(resolver: AreaResolver, text: string): Promise<AreaMatch | null> {
@@ -195,7 +208,8 @@ export class ExactAreaFallback implements AreaResolver {
   }
 }
 
-export type Place = { name: string; region: Region | null; municipality?: string | null; neighbours?: string[] };
+/** A place for MemoryAreaResolver. Neighbours may be plain names (weight 0) or { area, weight }. */
+export type Place = { name: string; region: Region | null; municipality?: string | null; neighbours?: (string | Neighbour)[] };
 
 /** An in-memory place list (tests). A name that isn't in the list is unmapped. */
 export class MemoryAreaResolver implements AreaResolver {
@@ -213,8 +227,9 @@ export class MemoryAreaResolver implements AreaResolver {
       mapped: true,
       canonical: p.name,
       region: p.region,
+      island: islandOf(p.region),
       municipality: p.municipality ?? null,
-      neighbours: [...(p.neighbours ?? [])],
+      neighbours: neighbourList(p.neighbours),
       confidence: "high",
       source: "market",
     });
@@ -242,8 +257,8 @@ export class AliasTable implements AliasSource {
   }
 }
 
-/** The shape of resolve_area's answer, tolerant: `area` or `canonical`, string or number confidence, missing fields. */
-const AREA_KEYS = ["area", "canonical", "region", "neighbours", "suggestions"];
+/** The keys that mark resolve_area's answer (its JSON block): an answer names an area, or says it's unresolved. */
+const AREA_KEYS = ["area", "unresolved"];
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -267,6 +282,8 @@ function findAreaObject(result: unknown): Record<string, unknown> | null {
 }
 
 const strOf = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim().replace(/\s+/g, " ") : null);
+
+/** The suggestions: a list of names, de-duplicated. */
 const listOf = (v: unknown): string[] => {
   if (!Array.isArray(v)) return [];
   const out: string[] = [];
@@ -278,33 +295,51 @@ const listOf = (v: unknown): string[] => {
 };
 
 /**
- * resolve_area's answer as a lookup. The one place that knows the assumed shape (see the header of this file).
- * Confidence: "high" or "low"; a number at or above LOW_CONFIDENCE is high; absent is high only when both the
- * area and the region are there. Low, or no area, is unmapped: it keeps its suggestions for the desk.
+ * resolve_area's neighbours as { area, weight }. A plain name is weight 0 (fixtures may use names only). A list
+ * that isn't a list is no neighbours. Duplicates by area are merged, keeping the higher weight.
+ */
+export function neighbourList(v: unknown): Neighbour[] {
+  if (!Array.isArray(v)) return [];
+  const out: Neighbour[] = [];
+  for (const x of v) {
+    const area = strOf(isObject(x) ? x.area : x);
+    if (!area) continue;
+    const weight = isObject(x) && typeof x.weight === "number" && Number.isFinite(x.weight) ? x.weight : 0;
+    const seen = out.find((n) => areaKey(n.area) === areaKey(area));
+    if (seen) seen.weight = Math.max(seen.weight, weight);
+    else out.push({ area, weight });
+  }
+  return out;
+}
+
+/** "high" or "low" from a numeric confidence (0 to 1, at or above LOW_CONFIDENCE is high). Anything else is low. */
+function confidenceLevel(v: unknown): "high" | "low" {
+  if (typeof v === "number") return Number.isFinite(v) && v >= LOW_CONFIDENCE ? "high" : "low";
+  return typeof v === "string" && v.trim().toLowerCase() === "high" ? "high" : "low";
+}
+
+/**
+ * resolve_area's answer as a lookup. The one place that reads the market-mcp shape (see the header of this file).
+ * The island is the answer's `island`, or the region's when that's absent. A confident answer with an area is
+ * mapped. A low confidence, or `area: null` (unresolved), is unmapped: it keeps its suggestions for the desk.
  */
 export function areaFromToolResult(query: string, result: unknown): AreaLookup {
   const o = findAreaObject(result);
   if (!o) return blankLookup(query, { source: "market" });
-  const canonical = strOf(o.area) ?? strOf(o.canonical);
+  const canonical = strOf(o.area);
   const region = parseRegion(o.region);
-  const level = confidenceLevel(o.confidence, canonical !== null && region !== null);
-  const mapped = canonical !== null && level === "high";
+  const level = confidenceLevel(o.confidence);
   return blankLookup(query, {
-    mapped,
+    mapped: canonical !== null && level === "high",
     canonical,
     region,
+    island: parseIsland(o.island) ?? islandOf(region),
     municipality: strOf(o.municipality),
-    neighbours: listOf(o.neighbours),
+    neighbours: neighbourList(o.neighbours),
     confidence: canonical ? level : null,
     suggestions: listOf(o.suggestions),
     source: "market",
   });
-}
-
-function confidenceLevel(v: unknown, complete: boolean): "high" | "low" {
-  if (typeof v === "string") return v.trim().toLowerCase() === "high" ? "high" : "low";
-  if (typeof v === "number" && Number.isFinite(v)) return v >= LOW_CONFIDENCE ? "high" : "low";
-  return complete ? "high" : "low";
 }
 
 /**
@@ -351,7 +386,7 @@ async function tryLookup(resolver: AreaResolver, text: string): Promise<AreaLook
 }
 
 /**
- * Production resolution: local aliases first (the alias's canonical name, with the market's region and
+ * Production resolution: local aliases first (the alias's canonical name, with the market's region, island and
  * neighbours for it if the market knows it), then the market, then exact text if the market is down or unset.
  * Never throws.
  */

@@ -12,15 +12,16 @@ import { MarketSearch, marketConfigFromEnv } from "../flow/market-search.ts";
 import { rankOurListings } from "../flow/match.ts";
 import { FixtureCrm, type FlowAgent, type Listing } from "../flow/source.ts";
 import type { Place } from "../flow/areas.ts";
-import { AreaStore, areaWiringFromEnv, mapAreaAlias } from "../node/area-store.ts";
+import { AreaStore, areasFromEnv, mapAreaAlias } from "../node/area-store.ts";
 import { loadFixtureCrm } from "../node/jsonl.ts";
 import { staffAccess } from "../node/periskope-intake.ts";
 import { GATE_OPEN_PATHS } from "../../lib/gate.ts";
 
 /**
- * The area rules through the lead flow, the desk and the staff alias store. The market is a fake MCP server
- * (fakeMarket below): resolve_area answers from the small place list here, the learn_ tools are recorded, and
- * search_market_listings returns the hits a test gives it. No live calls; the fetch global is not used.
+ * The area rules through the lead flow, the desk and the staff alias store. Two fakes: the market-mcp server
+ * (fakeMarket: resolve_area answers from the small place list here, search_market_listings returns the hits a
+ * test gives it) and market-ingest (fakeIngest: records each POST). Nothing learns on market-mcp: the tests
+ * assert that no learn_ tool is ever called. No live calls; the fetch global is not used.
  */
 
 const MIN = 60_000;
@@ -30,7 +31,11 @@ after(() => rmSync(ROOT, { recursive: true, force: true }));
 let dirs = 0;
 const freshDir = () => join(ROOT, `d${++dirs}`);
 
+/** The market search (search_market_listings and resolve_area). */
 const ENV = { ONEON1_MARKET_SEARCH_URL: "http://127.0.0.1:8787/mcp", ONEON1_MARKET_SEARCH_TOKEN: "test-token-not-real-0123", ONEON1_MARKET_SEARCH_TIMEOUT_MS: "2000" };
+/** The market-ingest write (staff aliases). Both are needed for a live post. */
+const INGEST_URL = "https://market.example/functions/v1/market-ingest";
+const INGEST_ENV = { ONEON1_MARKET_WRITE_URL: INGEST_URL, ONEON1_MARKET_INGEST_TOKEN: "ingest-test-token-not-real-0123" };
 
 const PLACES: Place[] = [
   { name: "Westmoorings", region: "North West", neighbours: ["Glencoe", "Maraval"] },
@@ -42,12 +47,15 @@ const PLACES: Place[] = [
   { name: "Scarborough", region: "Tobago", neighbours: ["Westmoorings"] },
 ];
 
-/** What the fake resolve_area says: the place if it's in the list, a low-confidence guess for "Westmoring", else nothing. */
+/**
+ * What the fake resolve_area says, in the confirmed shape: the place (with its island) if it's in the list; an
+ * unresolved answer with suggestions for the typo "Westmoring"; else unresolved with no suggestions.
+ */
 function resolveAnswer(text: string): Record<string, unknown> {
   const t = text.trim().toLowerCase();
-  if (t === "westmoring") return { area: "Westmoring", region: "North West", confidence: 0.5, suggestions: ["Westmoorings"] };
+  if (t === "westmoring") return { area: null, unresolved: true, suggestions: ["Westmoorings"] };
   const p = PLACES.find((x) => x.name.toLowerCase() === t);
-  return p ? { area: p.name, region: p.region, neighbours: p.neighbours, confidence: "high" } : {};
+  return p ? { area: p.name, island: p.region === "Tobago" ? "Tobago" : "Trinidad", region: p.region, neighbours: p.neighbours, confidence: 0.95 } : { area: null, unresolved: true, suggestions: [] };
 }
 
 const SEARCH_HITS = [
@@ -58,7 +66,7 @@ const SEARCH_HITS = [
 const sse = (msg: unknown) => `event: message\ndata: ${JSON.stringify(msg)}\n\n`;
 
 /** A fake market-mcp: initialize, the initialized notice, then tools/call. Records every tool call by name. */
-function fakeMarket(opts: { learnStatus?: number; hits?: unknown[] } = {}) {
+function fakeMarket(opts: { hits?: unknown[] } = {}) {
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
   const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body));
@@ -72,13 +80,22 @@ function fakeMarket(opts: { learnStatus?: number; hits?: unknown[] } = {}) {
     if (body.method !== "tools/call") throw new Error(`unexpected ${body.method}`);
     const { name, arguments: args } = body.params as { name: string; arguments: Record<string, unknown> };
     calls.push({ tool: name, args });
-    if (name.startsWith("learn_") && opts.learnStatus) return new Response("nope", { status: opts.learnStatus });
     const payload =
       name === "resolve_area" ? resolveAnswer(String(args.text)) : name === "search_market_listings" ? { total: (opts.hits ?? []).length, hits: opts.hits ?? [] } : { ok: true };
     const result = { content: [{ type: "text", text: "A spoken summary." }, { type: "text", text: JSON.stringify(payload) }] };
     return new Response(sse({ jsonrpc: "2.0", id: body.id, result }), { status: 200, headers: { "content-type": "text/event-stream" } });
   }) as typeof fetch;
   return { fetcher, calls, named: (tool: string) => calls.filter((c) => c.tool === tool) };
+}
+
+/** A fake market-ingest: records each POST (url, the Authorization header, the JSON body) and answers with `status`. */
+function fakeIngest(status = 200) {
+  const posts: { url: string; auth: string | null; body: unknown }[] = [];
+  const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
+    posts.push({ url: String(url), auth: new Headers(init?.headers).get("authorization"), body: JSON.parse(String(init?.body)) });
+    return new Response(status === 200 ? JSON.stringify({ ok: true }) : "nope", { status });
+  }) as typeof fetch;
+  return { fetcher, posts };
 }
 
 const fixture = loadFixtureCrm();
@@ -116,13 +133,12 @@ const inq = (over: Partial<Inquiry> = {}): Inquiry => ({
   ...over,
 });
 
-/** A flow on a fake clock, with the CRM given. The market is the fake when `fake` is given; areas and learning use the store in `root`. */
+/** A flow on a fake clock, with the CRM given. The market is the fake when `fake` is given; areas and pairs use the store in `root`. */
 function world(listings: Listing[], o: { fake?: ReturnType<typeof fakeMarket> | null; root?: string } = {}) {
   let now = START;
   const clock = () => new Date(now);
   const root = o.root ?? freshDir();
   const store = new AreaStore(join(root, "areas"));
-  const wiring = areaWiringFromEnv(store, o.fake ? ENV : {}, o.fake?.fetcher);
   const outbox = new DryRunOutbox({ clock });
   const flow = new LeadFlow({
     crm: FixtureCrm.from({ agents: AGENTS, listings, inquiries: [] }),
@@ -132,8 +148,8 @@ function world(listings: Listing[], o: { fake?: ReturnType<typeof fakeMarket> | 
     timeoutMs: 15 * MIN,
     hours: PLACEHOLDER_BUSINESS_HOURS,
     admin: { name: "Admin", address: "admin@example.com" },
-    areas: wiring.areas,
-    areaLearning: wiring.areaLearning,
+    areas: areasFromEnv(store, o.fake ? ENV : {}, o.fake?.fetcher),
+    pairStore: store,
   });
   return { flow, outbox, store, root, advance: (m: number) => (now += m * MIN) };
 }
@@ -200,7 +216,6 @@ test("approveMatches records one approved pair for each pick, and nothing for th
   assert.deepEqual(w.store.pairs().map((p) => [p.inquiryArea, p.listingArea, p.tier, p.signal]), [["Westmoorings", "Glencoe", "neighbour", "approved"]]);
   assert.equal(w.flow.approval(a.id).status, "approved");
   assert.equal(w.flow.areaPairs().length, 1);
-  await w.flow.learningSent();
 });
 
 test("rejectMatches records every candidate as rejected; an empty selection is the same as a reject", async () => {
@@ -237,38 +252,29 @@ test("a second decision on the same approval is refused, and records nothing mor
   assert.equal(w.store.pairs().length, before);
 });
 
-test("learn_area_neighbour is sent only for an explicit approve or reject, one call per record, never on receive or tick", async () => {
+test("approve and reject write local pairs only: no learn_area_neighbour or learn_area_alias call, on receive, tick or a decision", async () => {
   const fake = fakeMarket({ hits: SEARCH_HITS });
   const w = world(WEST_LISTINGS, { fake });
   await w.flow.receive(westInq());
   w.advance(16);
   await w.flow.tick();
-  assert.equal(fake.named("learn_area_neighbour").length, 0, "nothing sent on receive or tick");
-  assert.equal(fake.named("learn_area_alias").length, 0);
-
   w.flow.approveMatches(w.flow.pendingApprovals()[0].id, ["ours:G1"]);
-  await w.flow.learningSent();
-  assert.deepEqual(fake.named("learn_area_neighbour").map((c) => c.args), [{ inquiryArea: "Westmoorings", listingArea: "Glencoe", tier: "neighbour", signal: "approved" }]);
+
+  const fake2 = fakeMarket({ hits: SEARCH_HITS });
+  const w2 = world(WEST_LISTINGS, { fake: fake2 });
+  await w2.flow.receive(westInq());
+  w2.flow.rejectMatches(w2.flow.pendingApprovals()[0].id);
+
+  assert.deepEqual([...fake.calls, ...fake2.calls].filter((c) => c.tool.startsWith("learn_")), []);
+  assert.deepEqual(w.store.pairs().map((p) => [p.inquiryArea, p.listingArea, p.tier, p.signal]), [["Westmoorings", "Glencoe", "neighbour", "approved"]]);
+  assert.equal(w2.store.pairs().length, 4);
 });
 
-test("a failed learn_area_neighbour keeps the local record and doesn't throw into the approve path", async () => {
-  const fake = fakeMarket({ hits: SEARCH_HITS, learnStatus: 500 });
-  const w = world(WEST_LISTINGS, { fake });
-  await w.flow.receive(westInq());
-  const a = w.flow.pendingApprovals()[0];
-  const done = w.flow.approveMatches(a.id, ["ours:G1"]);
-  assert.equal(done.status, "approved");
-  await w.flow.learningSent();
-  assert.equal(fake.named("learn_area_neighbour").length, 1, "the send was tried once");
-  assert.equal(w.store.pairs().length, 1, "the record is kept");
-});
-
-test("with no market configured, the learning is recorded locally and nothing is sent", async () => {
+test("with no market configured, the decision is recorded locally and nothing is sent", async () => {
   const w = world(WEST_LISTINGS);
   await w.flow.receive(westInq());
   // Exact text only: Westmoorings is the one same-area candidate (Glencoe is not seen as a neighbour).
   w.flow.approveMatches(w.flow.pendingApprovals()[0].id, ["ours:W1"]);
-  await w.flow.learningSent();
   assert.deepEqual(w.store.pairs().map((p) => [p.listingArea, p.tier]), [["Westmoorings", "same-area"]]);
 });
 
@@ -298,17 +304,17 @@ test("the desk: an unmapped inquiry area is flagged with its suggestions; unmapp
   assert.deepEqual(after.areaLearning.byTier.find((x) => x.tier === "neighbour"), { tier: "neighbour", approved: 0, rejected: 2 });
 });
 
-test("a staff mapping: the row is written, learn_area_alias is sent (live), and the alias then matches first", async () => {
+test("a staff mapping is posted to market-ingest as kind alias (write URL, bearer token), nothing goes to market-mcp, and the alias then matches first", async () => {
+  const ingest = fakeIngest();
   const fake = fakeMarket();
-  const root = freshDir();
-  const store = new AreaStore(root);
-  const row = await mapAreaAlias({ alias: "  Westmoring ", canonical: "Westmoorings" }, { store, env: ENV, fetcher: fake.fetcher, now: new Date(START) });
-  assert.equal(row.ok, true);
+  const store = new AreaStore(freshDir());
+  const row = await mapAreaAlias({ alias: "  Westmoring ", canonical: "Westmoorings" }, { store, env: INGEST_ENV, fetcher: ingest.fetcher, now: new Date(START) });
   assert.equal(row.ok && row.row.market, "sent");
-  assert.deepEqual(fake.named("learn_area_alias").map((c) => c.args), [{ alias: "Westmoring", canonical: "Westmoorings" }]);
-  assert.deepEqual(store.aliasRows().map((r) => [r.alias, r.canonical]), [["Westmoring", "Westmoorings"]]);
+  assert.deepEqual(ingest.posts, [{ url: INGEST_URL, auth: `Bearer ${INGEST_ENV.ONEON1_MARKET_INGEST_TOKEN}`, body: { kind: "alias", alias: "Westmoring", canonical: "Westmoorings" } }]);
+  assert.deepEqual(fake.calls, [], "the alias is not a market-mcp call");
+  assert.deepEqual(store.aliasRows().map((r) => [r.alias, r.canonical, r.market]), [["Westmoring", "Westmoorings", "sent"]]);
 
-  const { areas } = areaWiringFromEnv(store, ENV, fake.fetcher);
+  const areas = areasFromEnv(store, ENV, fake.fetcher);
   const l = await areas.lookup("westmoring");
   assert.equal(l.mapped, true);
   assert.equal(l.source, "alias");
@@ -318,25 +324,29 @@ test("a staff mapping: the row is written, learn_area_alias is sent (live), and 
   assert.deepEqual(ranked.map((r) => [r.item.id, r.reason]), [["W1", "same area: Westmoorings"], ["G1", "nearby: Glencoe for Westmoorings"], ["C1", "same region: North West"]]);
 });
 
-test("a staff mapping with no market is a dry run: no network, the row says so, and the alias still resolves (same area only)", async () => {
-  const root = freshDir();
-  const store = new AreaStore(root);
-  const noNetwork = (async () => {
-    throw new Error("no network in tests");
-  }) as unknown as typeof fetch;
-  const row = await mapAreaAlias({ alias: "Glen Cove", canonical: "Glencoe" }, { store, env: {}, fetcher: noNetwork });
-  assert.equal(row.ok && row.row.market, "dry-run");
-  const l = await areaWiringFromEnv(store, {}, noNetwork).areas.lookup("glen  cove");
+test("a staff mapping is a dry run unless both the write URL and the ingest token are set: no post, and the alias still resolves", async () => {
+  const ingest = fakeIngest();
+  const store = new AreaStore(freshDir());
+  const none = await mapAreaAlias({ alias: "Glen Cove", canonical: "Glencoe" }, { store, env: {}, fetcher: ingest.fetcher });
+  assert.equal(none.ok && none.row.market, "dry-run");
+  const searchOnly = await mapAreaAlias({ alias: "Glen Pool", canonical: "Glencoe" }, { store, env: ENV, fetcher: ingest.fetcher });
+  assert.equal(searchOnly.ok && searchOnly.row.market, "dry-run", "the market search URL and token don't switch the ingest on");
+  const urlOnly = await mapAreaAlias({ alias: "Glen Dale", canonical: "Glencoe" }, { store, env: { ONEON1_MARKET_WRITE_URL: INGEST_URL }, fetcher: ingest.fetcher });
+  assert.equal(urlOnly.ok && urlOnly.row.market, "dry-run", "the write URL alone isn't enough");
+  assert.deepEqual(ingest.posts, [], "no network");
+
+  const l = await areasFromEnv(store, {}, ingest.fetcher).lookup("glen  cove");
   assert.equal(l.canonical, "Glencoe");
   assert.equal(l.region, null);
 });
 
-test("a failed learn_area_alias keeps the mapping and says so on the row; the request still succeeds", async () => {
-  const fake = fakeMarket({ learnStatus: 503 });
+test("a failed ingest post keeps the mapping and marks the row failed; the request still succeeds", async () => {
+  const ingest = fakeIngest(503);
   const store = new AreaStore(freshDir());
-  const row = await mapAreaAlias({ alias: "Westmoring", canonical: "Westmoorings" }, { store, env: ENV, fetcher: fake.fetcher });
+  const row = await mapAreaAlias({ alias: "Westmoring", canonical: "Westmoorings" }, { store, env: INGEST_ENV, fetcher: ingest.fetcher });
   assert.equal(row.ok && row.row.market, "failed");
-  assert.equal(store.aliasRows().length, 1);
+  assert.equal(ingest.posts.length, 1, "one attempt");
+  assert.deepEqual(store.aliasRows().map((r) => [r.alias, r.market]), [["Westmoring", "failed"]]);
 });
 
 test("bad alias bodies are refused, and the files are private (0700 directory, 0600 files)", async () => {

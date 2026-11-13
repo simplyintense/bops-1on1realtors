@@ -128,8 +128,9 @@ export function toolArguments(c: MarketCriteria): Record<string, string | number
 /**
  * The Streamable HTTP JSON-RPC client for tt-market-search. One callTool(name, args) is initialize, the
  * initialized notice, then tools/call. Failures (HTTP, JSON-RPC, a tool error, a timeout) throw; the callers
- * decide what that means (MarketSearch: a note; the area resolver: fall back to exact text). Shared by
- * search_market_listings, resolve_area, learn_area_alias and learn_area_neighbour.
+ * decide what that means (MarketSearch: a note; the area resolver: fall back to exact text). Used for
+ * search_market_listings and resolve_area only. Staff aliases go to market-ingest (periskope.ts), and neighbour
+ * learning stays local (area-learning.ts); neither is a call from here.
  */
 export class MarketClient implements ToolCaller {
   private readonly cfg: MarketConfig;

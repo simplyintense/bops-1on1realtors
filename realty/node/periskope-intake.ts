@@ -6,7 +6,7 @@ import { runtimeEnv, type Env } from "../flow/env.ts";
 import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "../flow/flow.ts";
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
-import { areaWiringFromEnv, AreaStore } from "./area-store.ts";
+import { areasFromEnv, AreaStore } from "./area-store.ts";
 import { marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
 import { DryRunOutbox } from "../flow/outbox.ts";
 import {
@@ -174,7 +174,7 @@ export function senderHashOf(phone: string): string {
 
 function logReject(item: MarketIngestItem, error: string): void {
   const kind = item.kind;
-  const group = kind === "optout" ? item.group : kind === "group" ? item.group : item.group;
+  const group = kind === "alias" ? null : item.group;
   console.warn(`market-ingest ${error}: kind=${kind}${group ? ` group=${group}` : ""}`);
 }
 
@@ -225,14 +225,13 @@ async function flushMarketOutboxUnlocked(c: Ctx): Promise<{ attempted: number; s
 /* ---------------- The lead flow, kept in a file ---------------- */
 
 function openFlow(c: Ctx, crm: CrmSource, onTick?: (now: Date) => void | Promise<void>): LeadFlow {
-  const areas = areaWiringFromEnv(c.areas, c.env, c.fetch);
   return new LeadFlow({
     crm,
     clock: () => c.now,
     outbox: new DryRunOutbox({ clock: () => c.now, append: (line) => appendJsonl(join(c.root, "outbox.jsonl"), line) }),
     market: marketFrom(c.env),
-    areas: areas.areas,
-    areaLearning: areas.areaLearning,
+    areas: areasFromEnv(c.areas, c.env, c.fetch),
+    pairStore: c.areas,
     timeoutMs: timeoutMsFromEnv(c.env),
     hours: businessHoursFromEnv(c.env),
     admin: ADMIN,

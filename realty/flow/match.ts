@@ -10,11 +10,14 @@ import type { Listing } from "./source.ts";
  * Excluded areas (Tobago vs Trinidad, or anything unrelated) are dropped. Co-broke hits get the same
  * treatment here, client-side: the search server's area filter is not trusted as geography.
  *
+ * Inside the neighbour tier, the higher market weight comes first; then price. Other tiers are tier, then price.
+ *
  * With no resolver, the area check is today's exact text. An inquiry with no criteria (no type, area,
  * budget or beds) gets no matches rather than every listing.
  */
 
-export type Ranked<T> = { item: T; tier: MatchTier; reason: string };
+/** weight is the neighbour weight from market-mcp (0 for every other tier, and for a neighbour named without one). */
+export type Ranked<T> = { item: T; tier: MatchTier; reason: string; weight: number };
 
 const DEFAULT_LIMIT = 5;
 
@@ -62,7 +65,7 @@ function cmpPrice(a: number | null, b: number | null): number {
 
 function sortRanked<T>(rows: Ranked<T>[], price: (item: T) => number | null, limit: number): Ranked<T>[] {
   return rows
-    .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || cmpPrice(price(a.item), price(b.item)))
+    .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || b.weight - a.weight || cmpPrice(price(a.item), price(b.item)))
     .slice(0, limit);
 }
 
@@ -74,7 +77,7 @@ export async function rankOurListings(inq: Inquiry, listings: Listing[], areas: 
   for (const l of listings) {
     if (!fitsOurs(inq, l)) continue;
     const v = areaTier(inqRef, await refFor(areas, l.area));
-    if (v.tier !== "excluded") out.push({ item: l, tier: v.tier, reason: v.reason });
+    if (v.tier !== "excluded") out.push({ item: l, tier: v.tier, reason: v.reason, weight: v.weight ?? 0 });
   }
   return sortRanked(out, (l) => l.price, limit);
 }
@@ -88,7 +91,7 @@ export async function rankCoBroke(inq: Inquiry, hits: CoBrokeHit[], areas: AreaR
     if (!fitsHit(inq, h)) continue;
     if (inqRef && !h.area) continue;
     const v = areaTier(inqRef, await refFor(areas, h.area ?? ""));
-    if (v.tier !== "excluded") out.push({ item: h, tier: v.tier, reason: v.reason });
+    if (v.tier !== "excluded") out.push({ item: h, tier: v.tier, reason: v.reason, weight: v.weight ?? 0 });
   }
   return sortRanked(out, (h) => h.price, limit);
 }
@@ -104,7 +107,7 @@ export function matchOurListings(inq: Inquiry, listings: Listing[], limit = DEFA
   for (const l of listings) {
     if (!fitsOurs(inq, l)) continue;
     const v = areaTier(inqRef, exactRef(l.area));
-    if (v.tier !== "excluded") out.push({ item: l, tier: v.tier, reason: v.reason });
+    if (v.tier !== "excluded") out.push({ item: l, tier: v.tier, reason: v.reason, weight: 0 });
   }
   return sortRanked(out, (l) => l.price, limit).map((r) => r.item);
 }

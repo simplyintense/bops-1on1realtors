@@ -24,7 +24,7 @@ import { propertyKindFromCrm } from "./taxonomy.ts";
  * items do not carry a consent field; the group is allowlisted separately with kind=group. The adapter
  * is in this file (postMarketItem); it stays off unless ONEON1_MARKET_WRITE_URL and
  * ONEON1_MARKET_INGEST_TOKEN are both set. Network errors are left on the outbox for a later flush,
- * never retried inline.
+ * never retried inline. Staff area aliases use the same adapter (kind "alias", aliasItem; area-store.ts).
  */
 
 export const DAY_MS = 86_400_000;
@@ -90,7 +90,10 @@ export type MarketGroupItem = {
   active: boolean;
 };
 
-export type MarketIngestItem = MarketSourceItem | MarketOptOutItem | MarketGroupItem;
+/** A staff area alias: the alias maps to the canonical area name. */
+export type MarketAliasItem = { kind: "alias"; alias: string; canonical: string };
+
+export type MarketIngestItem = MarketSourceItem | MarketOptOutItem | MarketGroupItem | MarketAliasItem;
 
 export type Decision =
   | { action: "ignore"; reason: string }
@@ -441,12 +444,18 @@ export function parseConsentPatch(body: unknown): { ok: true; patch: ConsentPatc
 
 /* ---------------- Market-ingest adapter (off unless URL and token are both set) ---------------- */
 
+/** The body for a staff alias on market-ingest. The one place that builds it: change the shape here. */
+export function aliasItem(alias: string, canonical: string): MarketAliasItem {
+  return { kind: "alias", alias, canonical };
+}
+
 export type MarketWriteConfig = { url: string; token: string };
 
 export type MarketWriteResult =
   | { ok: true; kind: "source"; id: number; deduped: boolean }
   | { ok: true; kind: "group"; group: string; active: boolean; adminOk: boolean }
   | { ok: true; kind: "optout" }
+  | { ok: true; kind: "alias" }
   | { ok: false; retry: false; error: "not_allowlisted" | "opted_out" | "invalid" | "http"; status: number }
   | { ok: false; retry: true; error: "network" };
 
@@ -485,6 +494,7 @@ export async function postMarketItem(cfg: MarketWriteConfig, item: MarketIngestI
       return { ok: true, kind: "group", group: typeof g.group === "string" ? g.group : item.group, active: g.active === true, adminOk: g.adminOk === true };
     }
     if (item.kind === "optout") return { ok: true, kind: "optout" };
+    if (item.kind === "alias") return { ok: true, kind: "alias" };
     const r = (isObj(body) ? body : {}) as { id?: unknown; deduped?: unknown };
     return { ok: true, kind: "source", id: typeof r.id === "number" ? r.id : 0, deduped: r.deduped === true };
   }

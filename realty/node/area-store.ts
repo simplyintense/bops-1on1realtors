@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AliasTable, CompositeAreaResolver, MarketAreaResolver, type AreaResolver } from "../flow/areas.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
-import { learnOnMarket, type AreaLearning, type AreaPair, type AreaPairStore } from "../flow/area-learning.ts";
+import type { AreaPair, AreaPairStore } from "../flow/area-learning.ts";
+import { aliasItem, marketWriteConfigFromEnv, postMarketItem } from "../flow/periskope.ts";
 import { marketConfigFromEnv, MarketClient } from "../flow/market-search.ts";
 import { appendJsonl } from "./jsonl.ts";
 
@@ -12,8 +13,9 @@ import { appendJsonl } from "./jsonl.ts";
  * realty/flow/areas.ts and realty/flow/area-learning.ts.
  *
  *   aliases.jsonl  one row per staff mapping: { alias, canonical, at, market }. The last row for an alias wins.
- *                  market is dry-run (no market URL and token), sent, or failed (learn_area_alias).
- *   pairs.jsonl    one row per approve/reject decision on one candidate (AreaPair). Never bulk-replayed.
+ *                  market is dry-run (no ONEON1_MARKET_WRITE_URL or no ONEON1_MARKET_INGEST_TOKEN), sent, or
+ *                  failed. The row is posted to market-ingest as kind "alias" (periskope.ts).
+ *   pairs.jsonl    one row per approve/reject decision on one candidate (AreaPair). Local only, never bulk-replayed.
  */
 
 const ALIAS_FILE = "aliases.jsonl";
@@ -71,34 +73,19 @@ export class AreaStore implements AreaPairStore {
   }
 }
 
-/** The market client when ONEON1_MARKET_SEARCH_URL and _TOKEN are both set; null otherwise (dry run). */
+/** The market client when ONEON1_MARKET_SEARCH_URL and _TOKEN are both set; null otherwise (exact text). */
 function marketClientFrom(env: Env, fetcher?: typeof fetch): MarketClient | null {
   const cfg = marketConfigFromEnv(env);
   return cfg ? new MarketClient(cfg, fetcher) : null;
 }
 
 /**
- * The area resolver and learning wiring for a flow, from the environment. Aliases are read from the store
- * now; the market's resolve_area is used only when the market is configured, and exact text otherwise.
- * learn_area_neighbour is sent for each approve/reject record only when the market is configured.
+ * The area resolver for a flow, from the environment. Aliases are read from the store now; the market's
+ * resolve_area is used only when the market search is configured, and exact text otherwise.
  */
-export function areaWiringFromEnv(store: AreaStore, env: Env = runtimeEnv(), fetcher?: typeof fetch): { areas: AreaResolver; areaLearning: AreaLearning } {
+export function areasFromEnv(store: AreaStore, env: Env = runtimeEnv(), fetcher?: typeof fetch): AreaResolver {
   const client = marketClientFrom(env, fetcher);
-  const market = client ? new MarketAreaResolver(client) : null;
-  return {
-    areas: new CompositeAreaResolver({ aliases: store.aliasTable(), market }),
-    areaLearning: {
-      store,
-      send: async (pair: AreaPair) => {
-        await learnOnMarket(client, "learn_area_neighbour", {
-          inquiryArea: pair.inquiryArea,
-          listingArea: pair.listingArea,
-          tier: pair.tier,
-          signal: pair.signal,
-        });
-      },
-    },
-  };
+  return new CompositeAreaResolver({ aliases: store.aliasTable(), market: client ? new MarketAreaResolver(client) : null });
 }
 
 function cleanName(v: unknown): string | null {
@@ -110,16 +97,19 @@ function cleanName(v: unknown): string | null {
 export type MapAliasResult = { ok: true; row: AliasRow } | { ok: false; error: string };
 
 /**
- * A staff mapping of one alias to a canonical area. Writes the row first as a dry run, then calls
- * learn_area_alias when the market is configured and records the outcome on the row. A failed call keeps
- * the row (market: "failed"); it never fails the mapping. The caller checks staff access (staffAccess).
+ * A staff mapping of one alias to a canonical area. One POST to market-ingest (kind "alias") when both
+ * ONEON1_MARKET_WRITE_URL and ONEON1_MARKET_INGEST_TOKEN are set; otherwise a dry run, with no network. The row
+ * records the outcome. A failed post keeps the row (market: "failed"); it never fails the mapping. The caller
+ * checks staff access (staffAccess).
  */
 export async function mapAreaAlias(body: unknown, o: { store: AreaStore; env?: Env; fetcher?: typeof fetch; now?: Date }): Promise<MapAliasResult> {
   const b = (typeof body === "object" && body !== null ? body : {}) as { alias?: unknown; canonical?: unknown };
   const alias = cleanName(b.alias);
   const canonical = cleanName(b.canonical);
   if (!alias || !canonical) return { ok: false, error: `send JSON with alias and canonical (text, up to ${NAME_MAX} characters)` };
-  const market = await learnOnMarket(marketClientFrom(o.env ?? runtimeEnv(), o.fetcher), "learn_area_alias", { alias, canonical });
+  const cfg = marketWriteConfigFromEnv(o.env ?? runtimeEnv());
+  let market: AliasRow["market"] = "dry-run";
+  if (cfg) market = (await postMarketItem(cfg, aliasItem(alias, canonical), o.fetcher)).ok ? "sent" : "failed";
   const row: AliasRow = { alias, canonical, at: (o.now ?? new Date()).toISOString(), market };
   o.store.addAlias(row);
   return { ok: true, row };

@@ -10,10 +10,10 @@ import {
   ExactAreaFallback,
   exactRef,
   islandOf,
-  islandsCompatible,
   lookupAll,
   MarketAreaResolver,
   MemoryAreaResolver,
+  parseIsland,
   parseRegion,
   refFor,
   REGIONS,
@@ -22,7 +22,7 @@ import {
   type Place,
   type ToolCaller,
 } from "../flow/areas.ts";
-import { aggregatePairs, learnOnMarket, pairFor, type AreaPair } from "../flow/area-learning.ts";
+import { aggregatePairs, pairFor, type AreaPair } from "../flow/area-learning.ts";
 import type { Inquiry } from "../flow/engine.ts";
 import { matchOurListings, rankCoBroke, rankOurListings } from "../flow/match.ts";
 import type { CoBrokeHit } from "../flow/market-search.ts";
@@ -118,10 +118,26 @@ test("the six regions are exact strings; Tobago is Tobago, every other region is
   assert.equal(parseRegion("  tobago "), "Tobago", "region names are read in any case");
 });
 
-test("islands are compatible unless both are known and differ", () => {
-  assert.equal(islandsCompatible("Tobago", "North West"), false);
-  assert.equal(islandsCompatible("South", "Central"), true);
-  assert.equal(islandsCompatible("Tobago", null), true, "an unknown region can't rule a match out on its own");
+test("the island is the payload's when it's there, and the region's when it isn't", () => {
+  assert.equal(parseIsland(" tobago "), "Tobago");
+  assert.equal(parseIsland("Atlantis"), null);
+  const fromPayload = areaFromToolResult("x", toolResult({ area: "Glencoe", island: "Tobago", region: "North West", confidence: 0.95 }));
+  assert.equal(fromPayload.island, "Tobago", "the payload's island wins over the region's");
+  const fromRegion = areaFromToolResult("Glencoe", toolResult({ area: "Glencoe", region: "North West", confidence: 0.95 }));
+  assert.equal(fromRegion.island, "Trinidad", "no island in the payload: the region gives it");
+});
+
+test("a Tobago area and a Trinidad area never match, whatever the neighbour weights say", async () => {
+  const answers: Record<string, unknown> = {
+    Scarborough: { area: "Scarborough", island: "Tobago", region: "Tobago", confidence: 0.95, neighbours: [{ area: "Westmoorings", weight: 0.99 }] },
+    Westmoorings: { area: "Westmoorings", island: "Trinidad", region: "North West", confidence: 0.95, neighbours: [{ area: "Scarborough", weight: 0.99 }] },
+  };
+  const { caller } = fakeCaller((_name, args) => toolResult(answers[String(args.text)]));
+  const r = new MarketAreaResolver(caller);
+  const s = await refFor(r, "Scarborough");
+  const w = await refFor(r, "Westmoorings");
+  assert.deepEqual(areaTier(w, s), { tier: "excluded", reason: "excluded: Tobago vs Trinidad" });
+  assert.deepEqual(areaTier(s, w), { tier: "excluded", reason: "excluded: Trinidad vs Tobago" });
 });
 
 test("areaKey ignores case, spacing and dash style", () => {
@@ -131,11 +147,11 @@ test("areaKey ignores case, spacing and dash style", () => {
 
 // ── Tiers and reasons ─────────────────────────────────────────────────────────────────────────────
 
-test("tier reasons: same area, nearby (listing named first), same region", async () => {
+test("tier reasons: same area, nearby (listing named first, with its weight), same region", async () => {
   const r = composite();
   const westmoorings = await refFor(r, "Westmoorings");
   assert.deepEqual(areaTier(westmoorings, await refFor(r, "westmoorings ")), { tier: "same-area", reason: "same area: Westmoorings" });
-  assert.deepEqual(areaTier(westmoorings, await refFor(r, "Glencoe")), { tier: "neighbour", reason: "nearby: Glencoe for Westmoorings" });
+  assert.deepEqual(areaTier(westmoorings, await refFor(r, "Glencoe")), { tier: "neighbour", reason: "nearby: Glencoe for Westmoorings", weight: 0 });
   assert.deepEqual(areaTier(westmoorings, await refFor(r, "Carenage")), { tier: "same-region", reason: "same region: North West" });
 });
 
@@ -167,7 +183,7 @@ test("exact text (no resolver): case and spacing only, no neighbours, no regions
 
 // ── Aliases ───────────────────────────────────────────────────────────────────────────────────────
 
-test("a local alias is checked first, and its canonical name takes the market's region and neighbours", async () => {
+test("a local alias is checked first, and its canonical name takes the market's region, island and neighbours", async () => {
   // The market has "Hill View" as its own place (Central). Staff mapped it to Glencoe, and the alias wins.
   const places = [...PLACES, { name: "Hill View", region: "Central" as const, neighbours: [] }];
   const r = new CompositeAreaResolver({
@@ -178,14 +194,15 @@ test("a local alias is checked first, and its canonical name takes the market's 
   assert.equal(l.source, "alias");
   assert.equal(l.canonical, "Glencoe");
   assert.equal(l.region, "North West", "the market's region for Glencoe, not Central");
-  assert.deepEqual(l.neighbours, ["Westmoorings"]);
+  assert.equal(l.island, "Trinidad");
+  assert.deepEqual(l.neighbours, [{ area: "Westmoorings", weight: 0 }]);
   assert.equal(l.query, "  hill VIEW ", "the query is kept as asked");
 });
 
 test("with the market down, an alias still gives its canonical name (same area), with no region", async () => {
   const failing = { lookup: async () => { throw new Error("down"); }, resolve: async () => { throw new Error("down"); } };
   const r = new CompositeAreaResolver({ aliases: new AliasTable([{ alias: "Glen Cove", canonical: "Glencoe" }]), market: failing });
-  assert.deepEqual(await r.resolve("glen  cove"), { canonical: "Glencoe", region: null, neighbours: [] });
+  assert.deepEqual(await r.resolve("glen  cove"), { canonical: "Glencoe", region: null, island: null, neighbours: [] });
 });
 
 test("a later alias for the same name wins", () => {
@@ -222,6 +239,30 @@ test("Westmoorings and Scarborough never match in either direction", async () =>
   const r = composite();
   assert.deepEqual((await rankOurListings(inq(), [listing("S", "Scarborough", { price: 1 })], r)).map((x) => x.item.id), []);
   assert.deepEqual((await rankOurListings(inq({ area: "Scarborough" }), [listing("W", "Westmoorings")], r)).map((x) => x.item.id), []);
+});
+
+test("inside the neighbour tier, the higher market weight comes first, then the cheaper price; other tiers stay price-only", async () => {
+  const places: Place[] = [
+    { name: "Westmoorings", region: "North West", neighbours: [{ area: "Glencoe", weight: 0.6 }, { area: "Maraval", weight: 0.9 }, { area: "Diego Martin", weight: 0.9 }] },
+    { name: "Glencoe", region: "North West" },
+    { name: "Maraval", region: "North West" },
+    { name: "Diego Martin", region: "North West" },
+    { name: "Carenage", region: "North West" },
+  ];
+  const r = new CompositeAreaResolver({ market: new MemoryAreaResolver(places) });
+  const listings = [listing("G", "Glencoe", { price: 3000 }), listing("M", "Maraval", { price: 6000 }), listing("D", "Diego Martin", { price: 5000 }), listing("C", "Carenage", { price: 1000 })];
+  const ranked = await rankOurListings(inq(), listings, r);
+  assert.deepEqual(ranked.map((x) => [x.item.id, x.tier, x.weight]), [["D", "neighbour", 0.9], ["M", "neighbour", 0.9], ["G", "neighbour", 0.6], ["C", "same-region", 0]]);
+});
+
+test("when both areas list each other, the higher of the two weights is the one used", async () => {
+  const places: Place[] = [
+    { name: "Westmoorings", region: "North West", neighbours: [{ area: "Glencoe", weight: 0.4 }] },
+    { name: "Glencoe", region: "North West", neighbours: [{ area: "Westmoorings", weight: 0.9 }] },
+  ];
+  const r = new CompositeAreaResolver({ market: new MemoryAreaResolver(places) });
+  assert.deepEqual(areaTier(await refFor(r, "Westmoorings"), await refFor(r, "Glencoe")), { tier: "neighbour", reason: "nearby: Glencoe for Westmoorings", weight: 0.9 });
+  assert.deepEqual(areaTier(await refFor(r, "Glencoe"), await refFor(r, "Westmoorings")), { tier: "neighbour", reason: "nearby: Westmoorings for Glencoe", weight: 0.9 });
 });
 
 test("co-broke hits are ranked client-side too: a Scarborough hit is dropped, a neighbour hit is kept with its reason", async () => {
@@ -280,7 +321,7 @@ test("when the market is down, exact text still matches; a different spelling or
 
 test("with the market unset, the composite is exact text, with nothing else", async () => {
   const r = new CompositeAreaResolver();
-  assert.deepEqual(await r.resolve("  Woodbrook "), { canonical: "Woodbrook", region: null, neighbours: [] });
+  assert.deepEqual(await r.resolve("  Woodbrook "), { canonical: "Woodbrook", region: null, island: null, neighbours: [] });
   assert.equal((await r.lookup("Woodbrook")).source, "exact");
   assert.equal(await r.resolve("   "), null, "empty text has no area");
 });
@@ -314,57 +355,74 @@ test("lookupAll: once per area key, and an area whose lookup throws is left out 
 
 // ── Market resolve_area: parsing ──────────────────────────────────────────────────────────────────
 
-test("high confidence: the canonical name, region, municipality and neighbours are read from the JSON block", () => {
+test("high confidence: the area, island, region, municipality and weighted neighbours are read from the JSON block", () => {
   const l = areaFromToolResult(
     "westmoorings",
-    toolResult({ area: "Westmoorings", region: "North West", municipality: "Diego Martin", neighbours: ["Glencoe", " Maraval ", "Glencoe"], confidence: "high" }),
+    toolResult({
+      area: "Westmoorings",
+      island: "Trinidad",
+      region: "North West",
+      municipality: "Diego Martin",
+      neighbours: [{ area: "Glencoe", weight: 0.9 }, { area: " Maraval ", weight: 0.4 }, { area: "Glencoe", weight: 0.7 }],
+      confidence: 0.93,
+      suggestions: [],
+    }),
   );
   assert.equal(l.mapped, true);
   assert.equal(l.canonical, "Westmoorings");
+  assert.equal(l.island, "Trinidad");
   assert.equal(l.region, "North West");
   assert.equal(l.municipality, "Diego Martin");
-  assert.deepEqual(l.neighbours, ["Glencoe", "Maraval"], "trimmed and de-duplicated");
+  assert.deepEqual(l.neighbours, [{ area: "Glencoe", weight: 0.9 }, { area: "Maraval", weight: 0.4 }], "trimmed and de-duplicated, the higher weight kept");
   assert.equal(l.confidence, "high");
 });
 
-test("a numeric confidence at or above 0.8 is high; below it is low and unmapped, with its suggestions", () => {
-  assert.equal(areaFromToolResult("x", toolResult({ area: "Glencoe", region: "North West", confidence: 0.93 })).mapped, true);
-  const low = areaFromToolResult("Westmoring", toolResult({ area: "Westmoring", region: "North West", confidence: 0.5, suggestions: ["Westmoorings", "Westmorland"] }));
+test("plain neighbour names are accepted too, with weight 0", () => {
+  const l = areaFromToolResult("Glencoe", toolResult({ area: "Glencoe", region: "North West", neighbours: ["Westmoorings", "Westmoorings"], confidence: 0.9 }));
+  assert.deepEqual(l.neighbours, [{ area: "Westmoorings", weight: 0 }]);
+});
+
+test("confidence is a number from 0 to 1: 0.8 or more is high; below it is low and unmapped, with its suggestions", () => {
+  assert.equal(areaFromToolResult("x", toolResult({ area: "Glencoe", region: "North West", confidence: 0.8 })).mapped, true, "0.8 itself is high");
+  const low = areaFromToolResult("Westmoring", toolResult({ area: "Westmoorings", region: "North West", confidence: 0.5, suggestions: ["Westmoorings", "Westmorland"] }));
   assert.equal(low.mapped, false);
-  assert.equal(low.canonical, "Westmoring", "the guess is kept for the desk");
+  assert.equal(low.canonical, "Westmoorings", "the guess is kept for the desk");
   assert.equal(low.confidence, "low");
   assert.deepEqual(low.suggestions, ["Westmoorings", "Westmorland"]);
   assert.equal(low.neighbours.length, 0, "this answer named no neighbours");
 });
 
-test("the string \"low\" is unmapped too, and the suggestions come through", () => {
+test("the string \"low\" is unmapped too, and the suggestions come through (old fixtures)", () => {
   const l = areaFromToolResult("Westmoring", toolResult({ area: "Westmoorings", region: "North West", confidence: "low", suggestions: ["Westmoorings"] }));
   assert.equal(l.mapped, false);
   assert.deepEqual(l.suggestions, ["Westmoorings"]);
 });
 
-test("missing fields: no confidence and no region is low; no area is unmapped with no canonical name; a non-list is ignored", () => {
-  const noRegion = areaFromToolResult("Westmoorings", toolResult({ area: "Westmoorings" }));
-  assert.equal(noRegion.mapped, false, "an area with no region and no confidence isn't trusted");
-  const noArea = areaFromToolResult("x", toolResult({ region: "North West", suggestions: ["Glencoe"] }));
-  assert.equal(noArea.mapped, false);
-  assert.equal(noArea.canonical, null);
-  assert.deepEqual(noArea.suggestions, ["Glencoe"]);
-  const oddLists = areaFromToolResult("Glencoe", toolResult({ area: "Glencoe", region: "North West", confidence: "high", neighbours: "Westmoorings", suggestions: null }));
-  assert.equal(oddLists.mapped, true);
-  assert.deepEqual(oddLists.neighbours, [], "a string where a list belongs is ignored, not split");
+test("an unresolved answer (area null) is unmapped, and its suggestions reach the desk", () => {
+  const l = areaFromToolResult("Westmoring", toolResult({ area: null, unresolved: true, suggestions: ["Westmoorings"] }));
+  assert.equal(l.mapped, false);
+  assert.equal(l.canonical, null);
+  assert.equal(l.confidence, null);
+  assert.deepEqual(l.suggestions, ["Westmoorings"]);
 });
 
-test("an explicit high confidence with an unknown region keeps the area and drops the region", () => {
+test("no confidence is unmapped; a non-list of neighbours is ignored, not split", () => {
+  assert.equal(areaFromToolResult("Westmoorings", toolResult({ area: "Westmoorings", region: "North West" })).mapped, false, "an answer with no confidence isn't trusted");
+  const oddLists = areaFromToolResult("Glencoe", toolResult({ area: "Glencoe", region: "North West", confidence: 0.95, neighbours: "Westmoorings", suggestions: null }));
+  assert.equal(oddLists.mapped, true);
+  assert.deepEqual(oddLists.neighbours, [], "a string where a list belongs is ignored, not split");
+  assert.deepEqual(oddLists.suggestions, []);
+});
+
+test("an explicit high confidence with an unknown region keeps the area and drops the region and island", () => {
   const l = areaFromToolResult("Glencoe", toolResult({ area: "Glencoe", region: "Atlantis", confidence: 0.95 }));
   assert.equal(l.mapped, true);
   assert.equal(l.region, null, "a region we don't know isn't claimed for an island");
+  assert.equal(l.island, null);
 });
 
-test("canonical is accepted in place of area; structuredContent is read too; a spoken summary alone is unmapped", () => {
-  const viaCanonical = areaFromToolResult("Glencoe", toolResult({ canonical: "Glencoe", region: "North West", confidence: "high" }));
-  assert.equal(viaCanonical.canonical, "Glencoe");
-  const structured = areaFromToolResult("Glencoe", { structuredContent: { area: "Glencoe", region: "North West", confidence: "high" }, content: [] });
+test("structuredContent is read too; a spoken summary alone is unmapped", () => {
+  const structured = areaFromToolResult("Glencoe", { structuredContent: { area: "Glencoe", region: "North West", confidence: 0.9 }, content: [] });
   assert.equal(structured.mapped, true);
   const spoken = areaFromToolResult("Glencoe", { content: [{ type: "text", text: "Glencoe is in North West." }] });
   assert.equal(spoken.mapped, false);
@@ -374,9 +432,9 @@ test("canonical is accepted in place of area; structuredContent is read too; a s
 // ── Market resolve_area: the call, the cooldown ───────────────────────────────────────────────────
 
 test("MarketAreaResolver asks resolve_area with { text } and parses the answer", async () => {
-  const { caller, calls } = fakeCaller(() => toolResult({ area: "Glencoe", region: "North West", neighbours: ["Westmoorings"], confidence: "high" }));
+  const { caller, calls } = fakeCaller(() => toolResult({ area: "Glencoe", island: "Trinidad", region: "North West", neighbours: [{ area: "Westmoorings", weight: 0.9 }], confidence: 0.95 }));
   const r = new MarketAreaResolver(caller);
-  assert.deepEqual(await r.resolve(" Glencoe "), { canonical: "Glencoe", region: "North West", neighbours: ["Westmoorings"] });
+  assert.deepEqual(await r.resolve(" Glencoe "), { canonical: "Glencoe", region: "North West", island: "Trinidad", neighbours: [{ area: "Westmoorings", weight: 0.9 }] });
   assert.deepEqual(calls, [{ name: "resolve_area", args: { text: "Glencoe" } }]);
   assert.equal(await r.resolve("   "), null);
   assert.equal(calls.length, 1, "empty text is never sent");
@@ -387,7 +445,7 @@ test("MarketAreaResolver: a failure throws, and nothing is asked during the cool
   let fail = true;
   const { caller, calls } = fakeCaller(() => {
     if (fail) throw new Error("timed out");
-    return toolResult({ area: "Glencoe", region: "North West", confidence: "high" });
+    return toolResult({ area: "Glencoe", region: "North West", confidence: 0.95 });
   });
   const r = new MarketAreaResolver(caller, { now: () => now, cooldownMs: 60_000 });
   await assert.rejects(r.lookup("Glencoe"), /timed out/);
@@ -443,13 +501,4 @@ test("aggregatePairs counts by signal, by tier and by pair, busiest pair first",
   assert.deepEqual(stats.byTier.find((t) => t.tier === "same-area"), { tier: "same-area", approved: 0, rejected: 0 });
   assert.deepEqual(stats.byPair[0], { inquiryArea: "Westmoorings", listingArea: "Glencoe", tier: "neighbour", approved: 1, rejected: 1 });
   assert.equal(stats.byPair.length, 2);
-});
-
-test("learnOnMarket: a dry run with no caller; 'sent' on success; 'failed' on error, and never a throw", async () => {
-  assert.equal(await learnOnMarket(null, "learn_area_neighbour", {}), "dry-run");
-  const ok = fakeCaller(() => ({}));
-  assert.equal(await learnOnMarket(ok.caller, "learn_area_neighbour", { a: 1 }), "sent");
-  assert.deepEqual(ok.calls, [{ name: "learn_area_neighbour", args: { a: 1 } }]);
-  const bad: ToolCaller = { callTool: async () => { throw new Error("HTTP 500"); } };
-  assert.equal(await learnOnMarket(bad, "learn_area_alias", {}), "failed");
 });

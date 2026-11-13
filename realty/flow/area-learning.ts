@@ -1,13 +1,12 @@
-import { areaKey, type MatchTier, type ToolCaller } from "./areas.ts";
+import { areaKey, type MatchTier } from "./areas.ts";
 
 /**
  * Data collection for the geography rules, not a change to them. Each explicit staff decision (an agent's
  * approveMatches or rejectMatches) leaves one record per candidate pair: the inquiry area, the listing area,
- * the tier the ranking gave, and the signal. Nothing here changes a tier yet.
+ * the tier the ranking gave, and the signal. Nothing here changes a tier or a weight.
  *
- * The records are the local truth. The same pair is also sent to market-mcp as learn_area_neighbour, but only
- * when ONEON1_MARKET_SEARCH_URL and _TOKEN are both set; otherwise the send is a dry run and the record is all
- * there is. Nothing is replayed in bulk, and a failed send keeps the local record.
+ * The records are local only: realty/node/area-store.ts appends them to pairs.jsonl. Nothing is sent to
+ * market-mcp, and nothing is replayed in bulk.
  */
 
 export type LearnSignal = "approved" | "rejected";
@@ -40,17 +39,14 @@ export class MemoryAreaPairStore implements AreaPairStore {
   }
 }
 
-/** What the flow is given: the store, and optionally a sender for learn_area_neighbour (one call per record). */
-export type AreaLearning = {
-  store: AreaPairStore;
-  send?: (pair: AreaPair) => Promise<void>;
-};
-
 /** The pair for one candidate, or null when there's nothing to learn (no inquiry area, no listing area, or tier "any"). */
 export function pairFor(inquiryArea: string | null, listingArea: string | null, tier: MatchTier, signal: LearnSignal, at: string): AreaPair | null {
   if (!inquiryArea || !listingArea || tier === "any") return null;
   return { inquiryArea, listingArea, tier, signal, at };
 }
+
+// TODO: send these pairs to market-ingest as kind "neighbour" (one item per pair), so Builder can use them. Hold
+// until Miles approves automatic neighbour-weight changes; until then the pairs stay local.
 
 export type PairCount = { inquiryArea: string; listingArea: string; tier: LearnedTier; approved: number; rejected: number };
 
@@ -83,20 +79,4 @@ export function aggregatePairs(pairs: AreaPair[]): AreaLearningStats {
   }
   const pairsSorted = [...byPair.values()].sort((a, b) => b.approved + b.rejected - (a.approved + a.rejected) || a.inquiryArea.localeCompare(b.inquiryArea));
   return { total: pairs.length, bySignal, byTier, byPair: pairsSorted };
-}
-
-export type LearnOutcome = "dry-run" | "sent" | "failed";
-
-/**
- * One tools/call on market-mcp for a learning record, or a dry run when there's no caller (the market
- * isn't configured). Never throws: a failure is "failed", and the local record stays.
- */
-export async function learnOnMarket(caller: ToolCaller | null, tool: "learn_area_neighbour" | "learn_area_alias", args: Record<string, unknown>): Promise<LearnOutcome> {
-  if (!caller) return "dry-run";
-  try {
-    await caller.callTool(tool, args);
-    return "sent";
-  } catch {
-    return "failed";
-  }
 }

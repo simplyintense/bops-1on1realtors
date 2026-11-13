@@ -12,6 +12,7 @@ import {
   decide,
   interpret,
   listingTypeOf,
+  aliasItem,
   marketWriteConfigFromEnv,
   parseConsentPatch,
   postMarketItem,
@@ -347,6 +348,19 @@ test("a successful listing post uses the bearer token and returns id and deduped
 
   const group = await postMarketItem({ url: cfg.url, token: cfg.token }, toMarketGroupItem(okConsent()), async () => new Response(JSON.stringify({ group: CHAT, active: true, adminOk: true }), { status: 200 }));
   assert.deepEqual(group, { ok: true, kind: "group", group: CHAT, active: true, adminOk: true });
+});
+
+test("a staff alias is posted as the flat { kind: 'alias', alias, canonical } body, and comes back ok as kind alias", async () => {
+  const cfg = { url: "https://market.example/functions/v1/market-ingest", token: "ingest-token" };
+  const sent: unknown[] = [];
+  const ok = await postMarketItem(cfg, aliasItem("Westmoring", "Westmoorings"), async (_url, init) => {
+    sent.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  });
+  assert.deepEqual(ok, { ok: true, kind: "alias" });
+  assert.deepEqual(sent, [{ kind: "alias", alias: "Westmoring", canonical: "Westmoorings" }]);
+  const invalid = await postMarketItem(cfg, aliasItem("", "Westmoorings"), async () => new Response(JSON.stringify({ error: "bad" }), { status: 400 }));
+  assert.deepEqual(invalid, { ok: false, retry: false, error: "invalid", status: 400 });
 });
 
 test("when the adapter is on, a listing is posted once; a 403 is recorded as rejected and not retried on tick", async () => {

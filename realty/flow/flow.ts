@@ -1,7 +1,7 @@
 import { agentsTried, FlowError, LeadEngine, type Attempt, type Clock, type EngineSnapshot, type Inquiry, type Lead } from "./engine.ts";
 import { businessHoursFromEnv, type BusinessHours } from "./hours.ts";
 import { CachedAreaResolver, ExactAreaFallback, type AreaResolver, type MatchTier } from "./areas.ts";
-import { pairFor, type AreaLearning, type AreaPair, type LearnSignal } from "./area-learning.ts";
+import { pairFor, type AreaPair, type AreaPairStore, type LearnSignal } from "./area-learning.ts";
 import { hasCriteria, marketCriteria, rankCoBroke, rankOurListings, type Ranked } from "./match.ts";
 import type { CoBrokeHit, MarketSearch } from "./market-search.ts";
 import { managementFlags } from "./management.ts";
@@ -57,8 +57,8 @@ export type FlowOptions = {
   onTick?: (now: Date) => void | Promise<void>;
   /** How areas are matched. Unset: exact text (ExactAreaFallback), which is today's behaviour. Wrapped in a per-flow cache. */
   areas?: AreaResolver;
-  /** Where the approve/reject records go, and how they're sent to market-mcp. Unset: nothing is recorded. */
-  areaLearning?: AreaLearning;
+  /** Where the approve/reject records go (local only; see area-learning.ts). Unset: nothing is recorded. */
+  pairStore?: AreaPairStore;
 };
 
 /** A listing the agent may send the client: ours from the CRM, or another agency's (co-broke). tier and reason say why it's here (internal). */
@@ -102,8 +102,7 @@ export class LeadFlow {
   private readonly approvals: MatchApproval[];
   private readonly hours: BusinessHours;
   private readonly areas: AreaResolver;
-  private readonly learning: AreaLearning | null;
-  private readonly learnSends: Promise<void>[] = [];
+  private readonly pairStore: AreaPairStore | null;
 
   constructor(o: FlowOptions) {
     this.o = o;
@@ -117,7 +116,7 @@ export class LeadFlow {
     }
     this.hours = o.hours ?? businessHoursFromEnv();
     this.areas = new CachedAreaResolver(o.areas ?? new ExactAreaFallback());
-    this.learning = o.areaLearning ?? null;
+    this.pairStore = o.pairStore ?? null;
     this.engine = new LeadEngine({ timeoutMs: o.timeoutMs, clock: o.clock, hours: this.hours }, o.snapshot);
   }
 
@@ -131,14 +130,9 @@ export class LeadFlow {
     return this.areas;
   }
 
-  /** Every area pair recorded so far (empty without an area learning store). */
+  /** Every area pair recorded so far (empty without a pair store). */
   areaPairs(): AreaPair[] {
-    return this.learning?.store.pairs() ?? [];
-  }
-
-  /** Resolves once every learn_area_neighbour send started so far has finished (or failed). Nothing else waits on it. */
-  async learningSent(): Promise<void> {
-    await Promise.all(this.learnSends.splice(0));
+    return this.pairStore?.pairs() ?? [];
   }
 
   /** Every dry-run message recorded so far (a copy). */
@@ -372,20 +366,15 @@ export class LeadFlow {
     this.save();
   }
 
-  /**
-   * One explicit decision, recorded per candidate: the pair of areas, the tier, the signal. Local write first;
-   * then, if there's a sender, learn_area_neighbour in the background (never throws into the approve path).
-   */
+  /** One explicit decision, recorded per candidate: the pair of areas, the tier, the signal. Local only. */
   private learn(a: MatchApproval, candidates: MatchCandidate[], signal: LearnSignal) {
-    if (!this.learning) return;
+    if (!this.pairStore) return;
     const inquiryArea = this.engine.lead(a.leadId).inquiry.area;
     const at = this.engine.now.toISOString();
     for (const c of candidates) {
       const listingArea = c.kind === "ours" ? c.listing.area : c.hit.area;
       const pair = pairFor(inquiryArea, listingArea, c.tier, signal, at);
-      if (!pair) continue;
-      this.learning.store.add(pair);
-      if (this.learning.send) this.learnSends.push(this.learning.send(pair).catch(() => undefined));
+      if (pair) this.pairStore.add(pair);
     }
   }
 
