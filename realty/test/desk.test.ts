@@ -189,7 +189,7 @@ test("deskView is pure: same input, same output, and it doesn't change the leads
 const CORE = [
   "flow/engine.ts", "flow/flow.ts", "flow/hours.ts", "flow/listing-audit.ts", "flow/live-crm.ts", "flow/management.ts",
   "flow/market-search.ts", "flow/match.ts", "flow/messages.ts", "flow/outbox.ts", "flow/report.ts", "flow/route.ts",
-  "flow/source.ts", "flow/taxonomy.ts", "flow/desk.ts", "flow/env.ts", "flow/demo-day.ts", "crm.ts",
+  "flow/source.ts", "flow/taxonomy.ts", "flow/desk.ts", "flow/env.ts", "flow/demo-day.ts", "flow/periskope.ts", "crm.ts",
   // Imported (for values) by the core:
   "extract.ts", "dedupe.ts", "agents.ts",
 ];
