@@ -181,7 +181,8 @@ Config (environment, all optional):
   read through `realty/flow/live-crm.ts` (`crmSourceFromEnv`, read-only; it takes a fallback source, e.g. the
   fixture, for when they aren't set). `ONEON1_CRM_WRITES` stays off for the lead flow: it never writes to the CRM.
 - `ONEON1_MARKET_SEARCH_URL` and `ONEON1_MARKET_SEARCH_TOKEN`: both needed, or the search is off. When on, the
-  flow calls `search_market_listings` on tt-market-search (Streamable HTTP) for buyers and renters with criteria,
+  flow calls `search_market_listings` on tt-market-search (Streamable HTTP) for buyers and renters with criteria
+  (and `resolve_area` for area names, and the two learn tools; see "Geography matching"),
   and lists other agencies' hits as co-broke candidates in the agent's alert. Our own listings are dropped.
   Each request times out after `ONEON1_MARKET_SEARCH_TIMEOUT_MS` (default 4000); on failure the alert says
   "not checked" and the flow carries on. It sends the server's own arguments (`listing_type`, `area`,
@@ -197,6 +198,93 @@ Matches and management-only messages:
   documents, unusual deals; `realty/flow/management.ts`) is never acted on: no acknowledgement, no routing,
   only an admin exception whose reason starts `management-only:`.
 
+### Geography matching (realty/flow/areas.ts, match.ts, area-learning.ts)
+
+Area matching is by tier, not by exact text alone. For a buyer or renter who names an area, each listing
+(ours, or another agency's co-broke hit) gets one tier, and the agent's alert gives the reason on its line:
+
+| Tier | Reason text (example) | When |
+| --- | --- | --- |
+| same-area | `same area: Westmoorings` | the two names resolve to the same canonical area |
+| neighbour | `nearby: Glencoe for Westmoorings` | one area lists the other as a neighbour (listing area named first) |
+| same-region | `same region: North West` | both are in the same region |
+| excluded | `excluded: Tobago vs Trinidad`, or `excluded` | anything else; dropped |
+
+Candidates are ranked by tier, then by price (as before). Budget, beds, type, status and "not the listing
+asked about" are checked as before. Co-broke hits are filtered and ranked the same way, client-side: the search
+server's area filter is not trusted as a geography check.
+
+**Regions** (exact strings): `Port of Spain`, `North West`, `East–West Corridor`, `Central`, `South`, `Tobago`.
+
+**The Tobago/Trinidad rule.** A region of `Tobago` is Tobago; every other region is Trinidad. A Tobago area
+never matches a Trinidad one, even if a neighbour list says so. The island check runs first, so a wrong
+neighbour list can't cross islands. A region the code doesn't know isn't claimed for either island.
+
+**Where the names come from, in order** (`CompositeAreaResolver`, one per flow, cached per flow):
+
+1. Local staff aliases (`.data/realty/areas/aliases.jsonl`). An alias's canonical name is then looked up on the
+   market for its region and neighbours.
+2. `resolve_area` on market-mcp, when `ONEON1_MARKET_SEARCH_URL` and `_TOKEN` are both set. A high-confidence
+   answer maps the text. A low-confidence answer, or no area, is **unmapped**.
+3. Exact text (case and spacing only, no region, no neighbours). This is used only when the market is down,
+   times out, or isn't set. A timeout or error starts a 60-second cooldown, so a slow market doesn't stall every
+   area in an alert. An unmapped answer from a working market stays unmapped; identical text still matches
+   itself, and nothing else does.
+
+With the market off, matching is today's exact text, and the alert's reasons read `same area: …`.
+
+**Unmapped areas.** An inquiry area or an active CRM listing area the resolver doesn't recognise is unmapped.
+- On the desk (`deskView`): `unmappedAreas` gives `count` (distinct areas) and up to 10 `examples` (`text`,
+  `occurrences`, `from`: inquiry and/or listing, and `suggestions` from a low-confidence answer). Each lead has
+  `unmappedArea: true` and `suggestions` when its inquiry area is unmapped. This is a missing-field flag on the
+  lead. It is not a management exception, and it doesn't go on Wendy's listing missing-fields list.
+- Staff map an alias once with the staff-only API below.
+
+**Staff alias API** (behind the login gate, not an open path; 403 on the public demo):
+
+```
+POST /api/realty/areas/alias     { "alias": "Westmoring", "canonical": "Westmoorings" }
+→ 201 { "alias": { "alias", "canonical", "at", "market": "dry-run" | "sent" | "failed" } }
+→ 400 for a bad body (text, 1 to 80 characters each)
+```
+
+The row goes to `.data/realty/areas/aliases.jsonl` (0700 directory, 0600 file). The last row for an alias wins.
+Local aliases are checked first on every resolve. The handler is `mapAreaAlias` (`realty/node/area-store.ts`), and
+the gate is `staffAccess` (`realty/node/periskope-intake.ts`).
+
+**Learning (data collection only; no tier changes yet).** Only an explicit staff or agent decision records anything:
+
+- `approveMatches(id, selectedIds)`: one record per **selected** candidate, `approved`. Candidates left out are
+  not recorded at all, so they aren't treated as rejected.
+- `rejectMatches(id)`, or an empty selection: one record per candidate in that approval, `rejected`.
+- A record is `{ inquiryArea, listingArea, tier, signal, at }` in `.data/realty/areas/pairs.jsonl`. Candidates
+  with no inquiry area, no listing area, or tier `any` are not recorded.
+- The desk's `areaLearning` counts records by signal, by tier and by pair.
+- Nothing is sent on receive, on `tick()`, or in bulk. Nothing replays history.
+
+**market-mcp tools, and the dry-run rule.** Both learn tools are dry-run unless `ONEON1_MARKET_SEARCH_URL` and
+`ONEON1_MARKET_SEARCH_TOKEN` are both set. The dry run is the local record, and nothing is called. When live, each
+call is one `tools/call`, with no retry loop, and a failure keeps the local record (for a staff alias, the row says
+`market: "failed"`). A failure never reaches the approve/reject path or the alias request. The same MCP client
+(`MarketClient.callTool` in `realty/flow/market-search.ts`) does all four calls.
+
+- `learn_area_alias` (after a staff mapping): `{ alias, canonical }`.
+- `learn_area_neighbour` (per approve/reject record): `{ inquiryArea, listingArea, tier, signal }`, where `tier` is
+  `same-area`, `neighbour` or `same-region`, and `signal` is `approved` or `rejected`.
+
+**Assumed market-mcp shapes (Builder to confirm).** Nothing here has been checked against a live market-mcp.
+If the tool shapes differ, change only `areaFromToolResult` (areas.ts) and the two argument objects above.
+
+- `resolve_area`, args `{ text }`. Response, tolerant (`area` or `canonical`; `confidence` as `"high"`/`"low"` or a
+  number, where a number below 0.8 is low; absent means high only when `area` and `region` are both there):
+  `{ area, region, municipality?, neighbours: string[], confidence?, suggestions?: string[] }`.
+  The JSON may be the second text block of the result, or `structuredContent`.
+- `learn_area_alias`, args `{ alias, canonical }`.
+- `learn_area_neighbour`, args `{ inquiryArea, listingArea, tier, signal: "approved" | "rejected" }`.
+
+**Not used:** `kind=alias` on market-ingest. The alias and neighbour data go through the market-mcp tools above, not
+through the market-ingest outbox.
+
 Reports: `sendDailyReport()` (every lead the flow holds) and `sendWeeklyReport()` (leads received in the 7
 days up to now) go to admin as one dry-run email each. Besides per-agent responsiveness, exceptions and open
 leads, they count enquiries by property kind and channel, list management-only leads, and list our active
@@ -209,7 +297,7 @@ core is plain TypeScript with no Next.js and no Node-only imports, so it can run
 function, a browser bundle or Node alike:
 
 - Portable: `realty/flow/{engine,flow,hours,listing-audit,live-crm,management,market-search,match,messages,
-  outbox,report,route,source,taxonomy,desk,env,demo-day,periskope}.ts` and `realty/crm.ts`. No `node:*`, no `next/*`,
+  outbox,report,route,source,taxonomy,desk,env,demo-day,periskope,areas,area-learning}.ts` and `realty/crm.ts`. No `node:*`, no `next/*`,
   no bare `process` (`env.ts` `runtimeEnv()` reads `globalThis.process?.env` if there is one, else `{}`; on
   Deno pass `Deno.env.toObject()` to the `*FromEnv(env)` helpers). `realty/test/desk.test.ts` checks this.
 - Injected: the CRM source (`CrmSource`; `FixtureCrm.from(data)` or the fetch-based `LiveCrmSource`), the clock,
@@ -227,8 +315,9 @@ function, a browser bundle or Node alike:
   (e.g. a cron'd edge function every minute) and persist the snapshot. `tick()` also runs `onTick` (the
   Periskope host wires the retention purge and one market-outbox flush here).
 
-The Next `/realty-demo` page stays the public fixture demo only. There is no Next staff UI and no
-`/api/realty/*` route for the desk.
+The Next `/realty-demo` page stays the public fixture demo only. There is no Next staff UI for the desk. The one
+Next route under `/api/realty/*` is the staff alias API above (`app/api/realty/areas/alias`), which the desk
+doesn't use yet.
 
 ### Periskope intake (read-only, sends off)
 
