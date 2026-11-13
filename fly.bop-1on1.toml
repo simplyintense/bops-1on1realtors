@@ -1,10 +1,10 @@
 # bop.1on1realtors.com on Fly.io (1on1 Realtors fork). Not deployed yet: see docs/1on1-realtors.md.
 #   fly apps create bop-1on1realtors
-#   fly volumes create bops_data --size 3 --region mia -a bop-1on1realtors
+#   fly volumes create bops_data --size 3 --region iad -a bop-1on1realtors
 #   fly secrets set -a bop-1on1realtors ...   (the list in docs/1on1-realtors.md; never in this file)
 #   fly deploy -c fly.bop-1on1.toml
 app = "bop-1on1realtors"
-# Miami: the closest Fly region to Trinidad and Tobago.
+# Northern Virginia (iad): a close Fly region to Trinidad and Tobago.
 primary_region = "iad"
 
 [build]
