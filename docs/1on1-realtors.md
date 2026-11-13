@@ -75,7 +75,9 @@ Sessions last 12 hours, in an httpOnly, Secure, SameSite=Lax cookie signed with 
 If the gate is on but a setting is missing, the server answers 503 to everyone (fails closed).
 Open without sign-in: `/api/health` (says only `{"bops":true}`), the sign-in routes, and the webhook
 paths that check their own signatures (`/api/apps/call`, `/api/phone/*`, `/api/channels/slack/events`,
-`/api/cloud/event`). With the gate off (the Mac app, `npm run dev`), nothing changes from upstream.
+`/api/cloud/event`, `/api/intake/periskope`). The Periskope staff paths (`/api/intake/periskope/opt-out`,
+`/api/intake/periskope/consent`) stay behind the gate. With the gate off (the Mac app, `npm run dev`),
+nothing changes from upstream.
 
 Google OAuth client (in the 1on1 Realtors Google Cloud project): type "Web application", authorized
 redirect URIs `https://bop.1on1realtors.com/api/gate/callback` and, until DNS is live,
@@ -207,7 +209,7 @@ core is plain TypeScript with no Next.js and no Node-only imports, so it can run
 function, a browser bundle or Node alike:
 
 - Portable: `realty/flow/{engine,flow,hours,listing-audit,live-crm,management,market-search,match,messages,
-  outbox,report,route,source,taxonomy,desk,env,demo-day}.ts` and `realty/crm.ts`. No `node:*`, no `next/*`,
+  outbox,report,route,source,taxonomy,desk,env,demo-day,periskope}.ts` and `realty/crm.ts`. No `node:*`, no `next/*`,
   no bare `process` (`env.ts` `runtimeEnv()` reads `globalThis.process?.env` if there is one, else `{}`; on
   Deno pass `Deno.env.toObject()` to the `*FromEnv(env)` helpers). `realty/test/desk.test.ts` checks this.
 - Injected: the CRM source (`CrmSource`; `FixtureCrm.from(data)` or the fetch-based `LiveCrmSource`), the clock,
@@ -222,14 +224,74 @@ function, a browser bundle or Node alike:
   `outbox`, and `log`. `flowDesk(flow)` builds it from a running `LeadFlow`. Pure: no clock, no I/O.
 - Timeouts move on only when the host calls `flow.tick()` (it returns how many offers ran out). There is no
   timer in the flow and none in `instrumentation.ts`; the Lovable/Supabase side would call it on a schedule
-  (e.g. a cron'd edge function every minute) and persist the snapshot.
+  (e.g. a cron'd edge function every minute) and persist the snapshot. `tick()` also runs `onTick` (the
+  Periskope host wires the retention purge and one market-outbox flush here).
 
 The Next `/realty-demo` page stays the public fixture demo only. There is no Next staff UI and no
 `/api/realty/*` route for the desk.
 
+### Periskope intake (read-only, sends off)
+
+`POST /api/intake/periskope` receives Periskope's `message.created` webhooks for WhatsApp groups. The
+signature is HMAC-SHA256 of the raw body, hex, in the `x-periskope-signature` header, checked with
+`PERISKOPE_SIGNING_KEY` ([Periskope webhook docs](https://docs.periskope.app/api-reference/webhooks/introduction)).
+The key unset answers 503; a missing or wrong signature answers 401. Everything accepted or ignored
+(wrong event, sent by us, not a group, no consent, opted out, media or non-text, already seen, chatter)
+answers 200 quickly. Bops never posts or replies to WhatsApp and never calls the Periskope API.
+
+A buyer request is taken into the existing lead flow (`source: periskope-group`, `channel: whatsapp`)
+so the SLA, missing-field flags, matching and approval queue run unchanged, and is also queued for
+market-ingest as `kind: "request"`. A co-broke listing is queued as `kind: "listing"`. Chatter is
+dropped. Nothing stores the raw message text: only the buyer brief or listing details (budget, area,
+type, beds) and the posting agent's business name and number.
+
+The market-ingest adapter POSTs one item at a time to `ONEON1_MARKET_WRITE_URL` (the
+`/functions/v1/market-ingest` URL) with `Authorization: Bearer` from `ONEON1_MARKET_INGEST_TOKEN`. It
+stays dry-run (records only) unless both are set. A `403` `not_allowlisted` or `opted_out` is logged
+and not retried. Network errors stay on the outbox and are retried later by `tick()` / `flushMarketOutbox`,
+never inline. Item payloads do not include a consent field; the group is allowlisted with a separate
+`kind: "group"` post (see Consent). The write contract is in HOSTING.md on
+[tt-market-search PR #3](https://github.com/simplyintense/tt-market-search/pull/3) (commit 8867403).
+
+Config:
+
+- `PERISKOPE_SIGNING_KEY`: required for the webhook to accept posts.
+- `PERISKOPE_ALLOWED_CHATS`: optional extra comma-separated chat ids. Empty or unset means consent
+  records alone decide (an empty list is not "accept none").
+- `PERISKOPE_REQUEST_RETENTION_DAYS`: default `60` (buyer requests and their seen metadata).
+- `PERISKOPE_LISTING_RETENTION_DAYS`: default `90` (WhatsApp co-broke listings and their seen metadata).
+- `ONEON1_MARKET_WRITE_URL` and `ONEON1_MARKET_INGEST_TOKEN`: both needed, or the adapter stays off.
+
+`purgeExpiredPeriskope` is callable on its own and from `LeadFlow.tick()` via `onTick`.
+
+Node helpers live in `realty/node/periskope-store.ts` and `realty/node/periskope-intake.ts` (signature,
+store, outbox, staff functions). The staff routes are `/api/intake/periskope/consent` and
+`/api/intake/periskope/opt-out`.
+
+### Consent
+
+Staff post the group's WhatsApp notice by hand. Bops never posts into a group. A group's messages are
+accepted only once a persisted consent record in `.data/realty/periskope/` has both `noticePostedAt`
+and `adminOkAt` set, and `active` is not false. Staff record that with `POST /api/intake/periskope/consent`
+(`chatId`, `groupName`, `noticePostedAt`, `adminOkBy`, `adminOkAt`, `active`). `adminOkBy` is a business
+name or role, never a phone number (the route rejects a number).
+
+When both the notice and the admin's OK are first set, Bops also POSTs `kind: "group"` to market-ingest
+with: `group` (the WhatsApp `chat_id`, the same value sent as `group` on every listing/request item),
+`name`, `noticePostedAt`, `adminOkAt`, `adminOkBy`, and `active: true`. The response is
+`{ group, active, adminOk }`. Revoke by sending `active: false` (not by clearing `adminOkAt`); later
+listing or request posts for that group are refused by market-ingest as `not_allowlisted`, and Bops
+stops accepting its messages.
+
+Opt-outs: `POST /api/intake/periskope/opt-out` with `{ senderPhone }` adds the number to a persisted
+list, deletes everything already stored from that sender (leads from this route, market-ingest source
+items, seen-id metadata), and POSTs `kind: "optout"` (with `senderHash` of the number) to market-ingest.
+Later messages from that sender are dropped before the body is parsed.
+
 Not yet, before this can go live:
 
-- A source of new inquiries (poll or webhook) and wiring the live CRM source into a hosted flow.
+- Wiring this webhook's LeadFlow (and the live CRM source) into a hosted always-on process, plus DNS
+  for `bop.1on1realtors.com` so Periskope can reach it.
 - A scheduler that calls `tick()`, and a state store for the snapshot (Supabase table on the Lovable side).
 - Parsing agents' replies (ACCEPT / PASS) from WhatsApp or email. The demo calls `respond()` directly.
 - Real transports, each approved by the owner, starting with admin only.
