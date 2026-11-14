@@ -109,21 +109,29 @@ test("our listings match by the co-broke rules: rent vs sale, same or nearby are
     listing({ id: "beds", beds: 4 }),
     listing({ id: "land", propertyKind: "land" }),
     listing({ id: "sold", status: "sold" }),
-    listing({ id: "unheld", price: 7000, agentId: 0 }),
+    listing({ id: "unheld", price: 7500, agentId: 0 }),
+    listing({ id: "too-cheap", price: 1800 }),
+    listing({ id: "storage-filed-as-home", title: "Storage Units, Westmoorings - For Rent", price: 9000 }),
   ];
   const got = await matchOurListings(RENT, listings, AREAS);
   assert.deepEqual(got.map((m) => m.title && m.reason && m.source), got.map(() => "1on1 Realtors"));
   assert.equal(got.length, 3);
-  assert.match(got[0].reason ?? "", /^in Westmoorings, TT\$7,000 for a TT\$9,000 budget, 2 bed, our listing$/);
-  assert.match(got[1].reason ?? "", /^in Westmoorings, TT\$8,500/);
+  assert.match(got[0].reason ?? "", /^in Westmoorings, TT\$8,500 for a TT\$9,000 budget, 2 bed, our listing$/);
+  assert.match(got[1].reason ?? "", /^in Westmoorings, TT\$7,500/);
   assert.match(got[2].reason ?? "", /^Glencoe, near Westmoorings, TT\$10,500 for a TT\$9,000 budget, 3 bed/);
-  assert.deepEqual(got.map((m) => m.holder), [null, 7, 7], "same area first, cheapest first; holder kept, null with no agent");
-  assert.equal(got[1].price, "TT$8,500");
+  assert.deepEqual(got.map((m) => m.holder), [7, null, 7], "same area first, closest to the budget first; holder kept, null with no agent");
+  assert.equal(got[0].price, "TT$8,500");
   assert.doesNotMatch(JSON.stringify(got), /score|grade/);
   assert.deepEqual(await matchOurListings({ ...RENT, intent: null }, listings, AREAS), []);
   assert.deepEqual(await matchOurListings({ ...RENT, area: null }, listings, AREAS), []);
   // With no area directory, only the same name matches.
   assert.equal((await matchOurListings(RENT, listings, new ExactAreaFallback())).length, 2);
+  // A single figure is both ends of the band; a range widens it by 20% each side.
+  const band = async (r: Partial<LiveRequest>) => (await matchOurListings({ ...RENT, ...r }, listings, AREAS)).map((m) => m.price);
+  assert.deepEqual(await band({ priceMax: null, priceMin: 9000 }), ["TT$8,500", "TT$7,500", "TT$10,500"]);
+  assert.deepEqual(await band({ priceMin: 2000, priceMax: 9000 }), ["TT$8,500", "TT$7,500", "TT$1,800", "TT$10,500"]);
+  // No budget: price can't be checked, so the five closest by area, cheapest first.
+  assert.deepEqual(await band({ priceMin: null, priceMax: null }), ["TT$1,800", "US$2,000", "TT$7,500", "TT$8,500", "TT$11,000"]);
 });
 
 function world(ours: { listings: () => Promise<Listing[]> } | null) {

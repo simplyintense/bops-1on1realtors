@@ -88,21 +88,37 @@ export const PRICE_BAND = 0.2;
 
 type Category = "land" | "commercial" | "residential";
 const categoryOfRequest = (t: string | null): Category | null => (t === "land" || t === "commercial" ? t : t ? "residential" : null);
-const categoryOfListing = (l: Listing): Category => (l.propertyKind === "land" || l.propertyKind === "commercial" ? l.propertyKind : "residential");
+/**
+ * The CRM files some land and storage under "Residential", so a title that says land, a lot, storage, a warehouse or an
+ * office decides when the CRM's kind says residential.
+ */
+const LAND_TITLE = /\b(land|lots?|acres?)\b/i;
+const COMMERCIAL_TITLE = /\b(storage|warehouse|office|commercial|retail|shop|bond)\b/i;
+const categoryOfListing = (l: Listing): Category => {
+  if (l.propertyKind === "land" || l.propertyKind === "commercial") return l.propertyKind;
+  if (LAND_TITLE.test(l.title)) return "land";
+  if (COMMERCIAL_TITLE.test(l.title)) return "commercial";
+  return "residential";
+};
 
 /**
  * Our active CRM listings that fit the request, by the market's co-broke rules with no scoring: sale vs rent; same or a
  * nearby area (same-area or neighbour tier, same island; same region alone isn't nearby); price within 20% of the budget
- * (above the most, below the least) in the same currency; beds within one; and the same kind of place (land, commercial or
- * residential). A field the listing doesn't give (no price, no beds) can't be checked, so it passes, as on the market.
- * Same area first, then nearby, then cheapest. Never throws: an area that can't be resolved only matches its own name.
+ * either way (from 20% under the least to 20% over the most; a single figure is both) in the same currency; beds within
+ * one; and the same kind of place (land, commercial or residential). A field the listing doesn't give (no price, no beds)
+ * can't be checked, so it passes, as on the market. Same area first, then nearby, then the price closest to the budget. Never throws: an area that can't be resolved only matches its own name.
  */
+const gap = (price: number, budget: number) => (price ? Math.abs(price - budget) : Infinity);
+
 export async function matchOurListings(r: LiveRequest, listings: readonly Listing[], areas: AreaResolver, limit = LIVE_LIMIT): Promise<MatchItem[]> {
   if (!r.intent || !r.area) return [];
   const type = r.intent === "rent" ? "rent" : "sale";
   const cat = categoryOfRequest(r.propertyType);
-  const hi = r.priceMax !== null ? r.priceMax * (1 + PRICE_BAND) : null;
-  const lo = r.priceMin !== null ? r.priceMin * (1 - PRICE_BAND) : null;
+  const top = r.priceMax ?? r.priceMin;
+  const bottom = r.priceMin ?? r.priceMax;
+  const hi = top !== null ? top * (1 + PRICE_BAND) : null;
+  const lo = bottom !== null ? bottom * (1 - PRICE_BAND) : null;
+  const budget = top ?? 0;
   const fits = listings.filter(
     (l) =>
       l.status === "active" &&
@@ -122,7 +138,7 @@ export async function matchOurListings(r: LiveRequest, listings: readonly Listin
     const v = areaTier(want, ref);
     return v.tier === "same-area" || v.tier === "neighbour" ? [{ l, v }] : [];
   });
-  ranked.sort((a, b) => (a.v.tier === b.v.tier ? 0 : a.v.tier === "same-area" ? -1 : 1) || (a.l.price || Infinity) - (b.l.price || Infinity));
+  ranked.sort((a, b) => (a.v.tier === b.v.tier ? 0 : a.v.tier === "same-area" ? -1 : 1) || gap(a.l.price, budget) - gap(b.l.price, budget));
   return ranked.slice(0, limit).map(({ l, v }) => ({
     title: l.title || `${OUR_AGENCY} listing ${l.id}`,
     url: /^https?:\/\//i.test(l.url) ? l.url : null,
