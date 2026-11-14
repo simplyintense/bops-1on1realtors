@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LiveMatchStatus, LiveRequest } from "../flow/live-match.ts";
+import { developmentNameOf, foldPrice, priceKey, setOf, unknownPlaceHints, type PriceRangeRow, type StrongAlert, type UnknownPlace } from "../flow/observe.ts";
 import type { GroupConsent, Kind, MarketIngestItem, PostRecord } from "../flow/periskope.ts";
 import { applyStatus, type MatchStatus, type StatusRow } from "../flow/match-status.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
@@ -66,6 +67,11 @@ const FILES = {
   live: "live-matches.jsonl",
   matchStatus: "match-status.jsonl",
   posts: "posts.jsonl",
+  supply: "supply.jsonl",
+  demand: "demand.jsonl",
+  priceRanges: "price-ranges.jsonl",
+  unknownPlaces: "unknown-places.jsonl",
+  alerts: "alerts.jsonl",
 } as const;
 
 export type Collection = keyof typeof FILES;
@@ -157,16 +163,72 @@ export class PeriskopeStore {
     const existing = this.post(row.messageId);
     if (!existing) {
       this.add("posts", row);
+      this.observe(row, true);
       return "added";
     }
     const patch: Partial<PostRecord> = {};
     if (!existing.originalText && row.originalText) patch.originalText = row.originalText;
     if (!existing.senderName && row.senderName) patch.senderName = row.senderName;
+    if (!existing.groupName && row.groupName) patch.groupName = row.groupName;
     if ((!existing.mediaFiles || !existing.mediaFiles.length) && row.mediaFiles?.length) patch.mediaFiles = row.mediaFiles;
     if ((!existing.mediaUrls || !existing.mediaUrls.length) && row.mediaUrls?.length) patch.mediaUrls = row.mediaUrls;
-    if (!Object.keys(patch).length) return "unchanged";
-    this.updatePost(row.messageId, patch);
+    if (!Object.keys(patch).length) {
+      this.observe(existing, false);
+      return "unchanged";
+    }
+    const next = this.updatePost(row.messageId, patch);
+    if (next) this.observe(next, false);
     return "refilled";
+  }
+
+  supply(): PostRecord[] { return this.rows<PostRecord>("supply"); }
+  demand(): PostRecord[] { return this.rows<PostRecord>("demand"); }
+  priceRanges(): PriceRangeRow[] { return this.rows<PriceRangeRow>("priceRanges"); }
+  unknownPlaces(): UnknownPlace[] { return this.rows<UnknownPlace>("unknownPlaces"); }
+  alerts(): StrongAlert[] { return this.rows<StrongAlert>("alerts"); }
+
+  /** Project a parsed post into the supply or demand set, and update price and unknown-place knowledge. */
+  observe(row: PostRecord, recordKnowledge = true, at = row.sentAt): void {
+    const side = row.set ?? setOf(row.category);
+    if (side === "supply") this.upsertSet("supply", { ...row, set: "supply", development: row.development ?? developmentNameOf(row.area) });
+    if (side === "demand") this.upsertSet("demand", { ...row, set: "demand", development: row.development ?? developmentNameOf(row.area) });
+    if (recordKnowledge && side && row.area && row.price != null && row.listingType && row.currency) {
+      const base = { area: row.area, development: row.development ?? developmentNameOf(row.area), beds: row.beds, listingType: row.listingType, currency: row.currency, side };
+      const all = this.priceRanges();
+      const k = priceKey(base);
+      const i = all.findIndex((r) => priceKey(r) === k);
+      const next = foldPrice(i >= 0 ? all[i] : null, row.price, at, base);
+      if (i >= 0) all[i] = next;
+      else all.push(next);
+      this.replace("priceRanges", all);
+    }
+    if (recordKnowledge && side && !row.area && row.originalText) {
+      const all = this.unknownPlaces();
+      for (const name of unknownPlaceHints(row.originalText)) {
+        const i = all.findIndex((r) => r.name.toLowerCase() === name.toLowerCase());
+        if (i >= 0) all[i] = { ...all[i], count: all[i].count + 1, lastSeenAt: at };
+        else all.push({ name, count: 1, firstSeenAt: at, lastSeenAt: at });
+      }
+      this.replace("unknownPlaces", all);
+    }
+  }
+
+  private upsertSet(c: "supply" | "demand", row: PostRecord): void {
+    const all = this.rows<PostRecord>(c);
+    const i = all.findIndex((r) => r.messageId === row.messageId);
+    if (i < 0) this.add(c, row);
+    else {
+      all[i] = { ...all[i], ...row, messageId: row.messageId };
+      this.replace(c, all);
+    }
+  }
+
+  /** Idempotent: the same request and listing url is stored once. Never sends. */
+  addAlert(row: StrongAlert): boolean {
+    const key = `${row.messageId}|${row.listingUrl ?? row.listingTitle}`;
+    if (this.alerts().some((a) => `${a.messageId}|${a.listingUrl ?? a.listingTitle}` === key)) return false;
+    this.add("alerts", row);
+    return true;
   }
 
   updatePost(messageId: string, patch: Partial<PostRecord>): PostRecord | null {

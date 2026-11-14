@@ -17,10 +17,10 @@ primary_region = "iad"
   BOPS_PUBLIC_URL = "https://bop.1on1realtors.com"
   # The fly.dev name too, to sign in before DNS points here (add its callback to the Google client).
   BOPS_PUBLIC_HOST = "bop.1on1realtors.com,bop-1on1realtors.fly.dev"
-  # Listen-only single-group test of the Periskope intake. Names and chat ids are not secret. Deny by default: only this group is read.
-  # The WhatsApp group name is exactly "AREA Registered Agents" (capital AREA). The chat id pins it if a webhook has no chat_name.
-  PERISKOPE_ALLOWED_GROUPS = "AREA Registered Agents"
-  PERISKOPE_ALLOWED_CHAT_IDS = "18686789715-1444916451@g.us"
+  # Listen-only Periskope intake (weekend observation mode: no WhatsApp replies or DMs). Names and chat ids are not secret. Deny by default: only these groups are read.
+  # Names are exact WhatsApp titles (capitalisation, punctuation, emoji and spacing). Chat ids pin a group if a webhook has no chat_name.
+  PERISKOPE_ALLOWED_GROUPS = "AREA Registered Agents|R. E. SEARCHES ONLY|🇹🇹🏡 Anything Real Estate❤️|REAL ESTATE AGENTS OF T&T|Top Notch Realtors|T&T Realty Co Broke Group"
+  PERISKOPE_ALLOWED_CHAT_IDS = "18686789715-1444916451@g.us|120363139007270954@g.us|18686209603-1626217638@g.us|18686894126-1467511703@g.us|18683898353-1597076235@g.us|18687143939-1555072973@g.us"
 
 # Chats, bots and settings (.data/) survive deploys and restarts.
 [[mounts]]

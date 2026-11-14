@@ -35,6 +35,7 @@ const SAMPLE: PostRecord = {
   propertyClass: "residential_sale",
   notes: "3 bed townhouse in Maraval, TT$1200000",
   originalText: "SECRET original body that agents must not see",
+  groupName: "AREA Registered Agents",
 };
 
 test("postView includes originalText only for an owner; an agent never receives the field", () => {
@@ -74,5 +75,9 @@ test("dateAst reports Port of Spain time, and the CSV has a header plus one data
   const lines = csv.trim().split("\n");
   assert.equal(lines.length, 2);
   assert.match(lines[0], /original text/);
+  assert.match(lines[0], /(?:^|,)group(?:$|,)/);
+  assert.match(lines[0], /(?:^|,)set(?:$|,)/);
+  assert.match(lines[0], /(?:^|,)development(?:$|,)/);
   assert.match(lines[1], /listing_for_sale/);
+  assert.match(lines[1], /AREA Registered Agents/);
 });

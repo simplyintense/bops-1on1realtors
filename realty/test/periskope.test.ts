@@ -629,3 +629,48 @@ test("categoryOf splits rental requests from buyer requests, and sale listings f
   const rent = categoryOf(interpret(rentListing), rentListing);
   assert.equal(rent.category, "listing_for_rent");
 });
+
+test("demand phrases, bare millions as TT$, and central locations parse as a buyer request", () => {
+  const raffy = "Good day agents. In search for a one bedroom apartment in central locations. 1m budget. Raffy";
+  const i = interpret(raffy);
+  assert.equal(i.kind, "buyer_request");
+  assert.equal(i.facts.area, "Central locations");
+  assert.equal(i.facts.beds, 1);
+  assert.equal(i.facts.type, "apartment");
+  assert.equal(i.facts.budget?.max, 1_000_000);
+  assert.equal(i.facts.budget?.currency, "TTD");
+  assert.equal(categoryOf(i, raffy).category, "buyer_request");
+  assert.equal(listingTypeOf(i.facts), "sale");
+
+  for (const phrase of ["searching for", "need", "client needs", "looking for"]) {
+    const text = `Client ${phrase} a 2 bed house in Maraval, 1.2m budget`;
+    assert.equal(interpret(text).kind, "buyer_request", phrase);
+    assert.equal(interpret(text).facts.budget?.max, 1_200_000, phrase);
+  }
+});
+
+test("search for, any units for rent, slash budgets, and named developments parse as rental requests", () => {
+  const lorraine = "Hi All Any La Fontaine units for rent up to $20,000.";
+  const li = interpret(lorraine);
+  assert.equal(li.kind, "buyer_request");
+  assert.equal(li.facts.area, "La Fontaine");
+  assert.equal(li.facts.type, "apartment");
+  assert.equal(li.facts.intent, "rent");
+  assert.equal(li.facts.budget?.max, 20_000);
+  assert.equal(li.facts.budget?.currency, "TTD");
+  assert.equal(listingTypeOf(li.facts), "rent");
+  assert.equal(categoryOf(li, lorraine).category, "rental_request");
+
+  const leanna = "Good day, search for a 3 bedroom unit in Westhills buildings 10, 7, 8 or 9. Budget $7000/7500 for rent.";
+  const ei = interpret(leanna);
+  assert.equal(ei.kind, "buyer_request");
+  assert.equal(ei.facts.area, "West Hills");
+  assert.equal(ei.facts.type, "apartment");
+  assert.equal(ei.facts.beds, 3);
+  assert.equal(ei.facts.intent, "rent");
+  assert.equal(ei.facts.budget?.min, 7000);
+  assert.equal(ei.facts.budget?.max, 7500);
+  assert.equal(ei.facts.budget?.currency, "TTD");
+  assert.equal(listingTypeOf(ei.facts), "rent");
+  assert.equal(categoryOf(ei, leanna).category, "rental_request");
+});

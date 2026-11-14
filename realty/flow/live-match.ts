@@ -1,3 +1,4 @@
+import { areasForMatch, developmentOf, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from "../extract.ts";
 import { areaTier, refFor, type AreaResolver, type ToolCaller } from "./areas.ts";
 import type { SeamAgent } from "./crm-seam.ts";
 import { moneyLabel } from "./market-search.ts";
@@ -129,8 +130,33 @@ const categoryOfListing = (l: Listing): Category => {
  */
 const gap = (price: number, budget: number) => (price ? Math.abs(price - budget) : Infinity);
 
+const areaTextKey = (s: string) => s.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
+const mentionsName = (hay: string, name: string) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(hay);
+
+/** A listing in Glencoe is not a West Hills match until Miles confirms, even though sources put them in the same west cluster. */
+function blockedWestHillsGlencoe(requestArea: string, l: Listing): boolean {
+  const d = developmentOf(requestArea);
+  if (d?.name !== "West Hills") return false;
+  const hay = `${l.area ?? ""} ${l.title ?? ""}`;
+  if (d.aliases.some((a) => mentionsName(hay, a)) || mentionsName(hay, d.name)) return false;
+  return WEST_HILLS_UNCONFIRMED_NEIGHBOURS.some((n) => mentionsName(hay, n));
+}
+
+function gazetteerTier(requestArea: string, l: Listing): { tier: "same-area" | "neighbour" } | null {
+  const { same, nearby } = areasForMatch(requestArea);
+  const hay = `${l.area ?? ""} ${l.title ?? ""}`;
+  const areaK = areaTextKey(l.area ?? "");
+  const hit = (name: string) => areaK === areaTextKey(name) || mentionsName(hay, name);
+  const d = developmentOf(requestArea);
+  if (same.some(hit) || (d && d.aliases.some((a) => mentionsName(hay, a)))) return { tier: "same-area" };
+  if (nearby.some(hit)) return { tier: "neighbour" };
+  return null;
+}
+
+
 export async function matchOurListings(r: LiveRequest, listings: readonly Listing[], areas: AreaResolver, limit = LIVE_LIMIT): Promise<MatchItem[]> {
   if (!r.intent || !r.area) return [];
+  const area = r.area;
   const type = r.intent === "rent" ? "rent" : "sale";
   const cat = categoryOfRequest(r.propertyType);
   const top = r.priceMax ?? r.priceMin;
@@ -147,15 +173,28 @@ export async function matchOurListings(r: LiveRequest, listings: readonly Listin
       (r.beds === null || !l.beds || Math.abs(l.beds - r.beds) <= 1),
   );
   if (!fits.length) return [];
-  const want = await refFor(areas, r.area);
+  const plan = areasForMatch(area);
+  const wantsSame = await Promise.all(plan.same.map((name) => refFor(areas, name)));
+  const wantsNear = await Promise.all(plan.nearby.map((name) => refFor(areas, name)));
+  const wants = [...wantsSame, ...wantsNear];
   // One lookup per distinct area, not per listing.
   const refs = new Map<string, Awaited<ReturnType<typeof refFor>>>();
   for (const a of new Set(fits.map((l) => l.area).filter(Boolean))) refs.set(a, await refFor(areas, a));
   const ranked = fits.flatMap((l) => {
+    if (blockedWestHillsGlencoe(area, l)) return [];
+    let best: { tier: "same-area" | "neighbour" } | null = gazetteerTier(area, l);
     const ref = refs.get(l.area);
-    if (!ref) return [];
-    const v = areaTier(want, ref);
-    return v.tier === "same-area" || v.tier === "neighbour" ? [{ l, v }] : [];
+    if (!best && ref) {
+      for (const want of wants) {
+        const v = areaTier(want, ref);
+        if (v.tier === "same-area") {
+          best = { tier: "same-area" };
+          break;
+        }
+        if (v.tier === "neighbour" && best?.tier !== "same-area") best = { tier: "neighbour" };
+      }
+    }
+    return best ? [{ l, v: best }] : [];
   });
   ranked.sort((a, b) => (a.v.tier === b.v.tier ? 0 : a.v.tier === "same-area" ? -1 : 1) || gap(a.l.price, budget) - gap(b.l.price, budget));
   return ranked.slice(0, limit).map(({ l, v }) => ({

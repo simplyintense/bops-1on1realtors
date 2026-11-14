@@ -232,3 +232,64 @@ test("the session is refreshed when it is about to expire", async () => {
   await seam.agents();
   assert.equal(n, 2);
 });
+
+test("a Central locations request matches our listings in any of the eight central areas, not elsewhere", async () => {
+  const areas = new MemoryAreaResolver([
+    { name: "Port of Spain", region: "Port of Spain", neighbours: ["Belmont"] },
+    { name: "St. Clair", region: "Port of Spain", neighbours: ["Woodbrook"] },
+    { name: "Woodbrook", region: "Port of Spain", neighbours: ["St. Clair"] },
+    { name: "Newtown", region: "Port of Spain" },
+    { name: "Belmont", region: "Port of Spain", neighbours: ["Port of Spain"] },
+    { name: "St. James", region: "Port of Spain" },
+    { name: "Maraval", region: "North West" },
+    { name: "Cascade", region: "Port of Spain" },
+    { name: "San Fernando", region: "South" },
+  ]);
+  const req: LiveRequest = { intent: "buy", area: "Central locations", beds: 1, propertyType: "apartment", priceMin: null, priceMax: 1_000_000, currency: "TTD", monthly: false };
+  const listings = [
+    listing({ id: "wb", title: "Woodbrook 2-bed apartment", listingType: "sale", area: "Woodbrook", price: 995_000, beds: 2 }),
+    listing({ id: "pos", title: "POS 1-bed apartment", listingType: "sale", area: "Port of Spain", price: 900_000, beds: 1 }),
+    listing({ id: "sf", title: "San Fernando 2-bed apartment", listingType: "sale", area: "San Fernando", price: 995_000, beds: 2 }),
+  ];
+  const got = await matchOurListings(req, listings, areas);
+  // Same-area first, then closest to the TT$1M budget: Woodbrook at 995k, then POS at 900k. San Fernando is out.
+  assert.deepEqual(got.map((m) => m.title), ["Woodbrook 2-bed apartment", "POS 1-bed apartment"]);
+});
+
+test("named developments match the parent and listed neighbours, and a West Hills request does not include Glencoe", async () => {
+  const areas = new MemoryAreaResolver([
+    { name: "Westmoorings", region: "North West", neighbours: ["Glencoe", "Diego Martin", "Goodwood Park"] },
+    { name: "Petit Valley", region: "North West", neighbours: ["Diego Martin", "Glencoe", "Westmoorings"] },
+    { name: "Diego Martin", region: "North West", neighbours: ["Westmoorings", "Petit Valley"] },
+    { name: "Glencoe", region: "North West", neighbours: ["Westmoorings", "Petit Valley"] },
+    { name: "Carenage", region: "North West", neighbours: ["Westmoorings"] },
+    { name: "Goodwood Park", region: "North West", neighbours: ["Westmoorings"] },
+    { name: "Woodbrook", region: "Port of Spain" },
+  ]);
+
+  const lorraine: LiveRequest = { intent: "rent", area: "La Fontaine", beds: null, propertyType: "apartment", priceMin: null, priceMax: 20_000, currency: "TTD", monthly: true };
+  const westListings = [
+    listing({ id: "lf", title: "La Fontaine, Columbus Circle", area: "Westmoorings", price: 18_000, beds: 3 }),
+    listing({ id: "wm", title: "Westmoorings 2-bed apartment", area: "Westmoorings", price: 17_000, beds: 2 }),
+    listing({ id: "vk", title: "Victoria Keyes, Diego Martin", area: "Diego Martin", price: 11_500, beds: 3 }),
+    listing({ id: "wb", title: "One Woodbrook Place 3 bed", area: "Woodbrook", price: 20_000, beds: 3 }),
+  ];
+  const lorraineHits = await matchOurListings(lorraine, westListings, areas);
+  assert.deepEqual(lorraineHits.map((m) => m.title), ["La Fontaine, Columbus Circle", "Westmoorings 2-bed apartment"]);
+  assert.equal(lorraineHits[0].reason?.startsWith("in "), true, "the named development is same-area");
+  assert.match(lorraineHits[1].reason ?? "", /near La Fontaine/, "the parent area is a neighbour");
+
+  const leanna: LiveRequest = { intent: "rent", area: "West Hills", beds: 3, propertyType: "apartment", priceMin: 7000, priceMax: 7500, currency: "TTD", monthly: true };
+  const hillListings = [
+    listing({ id: "wh-rent", title: "West Hills building 10", area: "Petit Valley", price: 7500, beds: 3 }),
+    listing({ id: "pv", title: "Petit Valley 3-bed apartment", area: "Petit Valley", price: 8000, beds: 3 }),
+    listing({ id: "dm", title: "Victoria Keyes, Diego Martin", area: "Diego Martin", price: 11_500, beds: 3 }),
+    listing({ id: "gl", title: "NEWBURY HILL EXTENSION", area: "Glencoe", price: 8500, beds: 3 }),
+    listing({ id: "wh-sale", title: "WEST HILLS, PETIT VALLEY 3BR Apartment For Sale", area: "Petit Valley", listingType: "sale", price: 1_750_000, beds: 3 }),
+  ];
+  const leannaHits = await matchOurListings(leanna, hillListings, areas);
+  assert.deepEqual(leannaHits.map((m) => m.title), ["West Hills building 10", "Petit Valley 3-bed apartment"]);
+  assert.ok(leannaHits[0].reason?.startsWith("in "), "the development itself is same-area");
+  assert.match(leannaHits[1].reason ?? "", /near West Hills/);
+  assert.ok(!leannaHits.some((m) => /Glencoe|NEWBURY/i.test(m.title) || m.area === "Glencoe"), "Glencoe stays out until Miles confirms");
+});

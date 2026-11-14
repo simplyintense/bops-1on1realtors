@@ -65,7 +65,7 @@ function amount(num: string, mult?: string): number {
 const CUR = String.raw`(?:(TT\$?|TTD|US\$?|USD|\$)\s?)`;
 const NUM = String.raw`(\d[\d,]*(?:\.\d+)?)\s?(k|m|mn|mil|mill|million|thousand)?\b`;
 const PERIOD = String.raw`(\s?(?:\/|per|a)\s?(?:month|mth|mo)\b|\s?monthly\b)?`;
-const RANGE = new RegExp(String.raw`${CUR}?${NUM}\s?(?:-|–|to|and)\s?${CUR}?${NUM}${PERIOD}`, "i");
+const RANGE = new RegExp(String.raw`${CUR}?${NUM}\s?(?:-|–|/|to|and)\s?${CUR}?${NUM}${PERIOD}`, "i");
 const SINGLE = new RegExp(String.raw`${CUR}${NUM}${PERIOD}|\b(?:budget|max|maximum|up to|under|around|about)\s(?:is\s|of\s)?${CUR}?${NUM}${PERIOD}|${NUM}${PERIOD}?\s?(TTD|USD|TT|US)\b`, "i");
 
 function currencyOf(sym: string | undefined, text: string): "TTD" | "USD" {
@@ -73,6 +73,17 @@ function currencyOf(sym: string | undefined, text: string): "TTD" | "USD" {
   if (s.startsWith("US")) return "USD";
   if (s.startsWith("TT")) return "TTD";
   return /\b(usd|us\$|us dollars?)\b/i.test(text) ? "USD" : "TTD";
+}
+
+// "1m", "1.2M", "800k" (letter glued to the number) and "1 mil" / "1 million" (the word form). Bare "5 m" is not money.
+const COMPACT_AMOUNT = new RegExp(String.raw`${CUR}?(\d[\d,]*(?:\.\d+)?)(m|mn|mil|mill|k)\b(?:\s*budget\b)?${PERIOD}`, "i");
+const WORD_AMOUNT = new RegExp(String.raw`${CUR}?(\d[\d,]*(?:\.\d+)?)\s(mil|mill|million|thousand)\b(?:\s*budget\b)?${PERIOD}`, "i");
+
+function budgetOf(cur: string | undefined, num: string, mult: string | undefined, per: string | undefined, raw: string, text: string, index: number): Budget | null {
+  const max = amount(num, mult);
+  if (max < 1000) return null;
+  const monthly = !!per || /\b(per|a|\/)\s?month\b|monthly/i.test(text.slice(index, index + raw.length + 12));
+  return { min: null, max, currency: currencyOf(cur, text), period: monthly ? "month" : null, text: raw.trim() };
 }
 
 export function findBudget(text: string): Budget | null {
@@ -89,21 +100,114 @@ export function findBudget(text: string): Budget | null {
     }
   }
   const s = SINGLE.exec(text);
-  if (!s) return null;
-  // Groups: [1 cur, 2 num, 3 mult, 4 period] | [5 cur, 6 num, 7 mult, 8 period] | [9 num, 10 mult, 11 period, 12 cur]
-  const [cur, num, mult, per] = s[2] ? [s[1], s[2], s[3], s[4]] : s[6] ? [s[5], s[6], s[7], s[8]] : [s[12], s[9], s[10], s[11]];
-  const max = amount(num, mult);
-  if (max < 1000) return null;
-  const monthly = !!per || /\b(per|a|\/)\s?month\b|monthly/i.test(text.slice(s.index, s.index + s[0].length + 12));
-  return { min: null, max, currency: currencyOf(cur, text), period: monthly ? "month" : null, text: s[0].trim() };
+  if (s) {
+    // Groups: [1 cur, 2 num, 3 mult, 4 period] | [5 cur, 6 num, 7 mult, 8 period] | [9 num, 10 mult, 11 period, 12 cur]
+    const [cur, num, mult, per] = s[2] ? [s[1], s[2], s[3], s[4]] : s[6] ? [s[5], s[6], s[7], s[8]] : [s[12], s[9], s[10], s[11]];
+    return budgetOf(cur, num, mult, per, s[0], text, s.index);
+  }
+  const c = COMPACT_AMOUNT.exec(text);
+  if (c) return budgetOf(c[1], c[2], c[3], c[4], c[0], text, c.index);
+  const w = WORD_AMOUNT.exec(text);
+  if (w) return budgetOf(w[1], w[2], w[3], w[4], w[0], text, w.index);
+  return null;
 }
 
 /* ---------------- Areas ---------------- */
 
+/**
+ * The Port of Spain / west-of-the-savannah group people mean by "central" or "central locations".
+ * The stored name is "Central locations", not "Central", which is already a Trinidad region (Chaguanas, Couva…).
+ */
+export const CENTRAL_AREA = "Central locations";
+export const CENTRAL_AREAS = ["Port of Spain", "St. Clair", "Woodbrook", "Newtown", "Belmont", "St. James", "Maraval", "Cascade"];
+const CENTRAL_PHRASE = /\bcentral(?:\s+locations?)?\b/i;
+
+/** True when the parsed area is the central group, not a single named place and not the Central region. */
+export function isCentralAreaGroup(name: string | null | undefined): boolean {
+  const k = (name ?? "").replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
+  return k === "central" || k === "central location" || k === "central locations";
+}
+
+/**
+ * Named apartment developments in west Trinidad. A message that names one is in that development:
+ * the parent is the surrounding area, neighbours are adjoining areas, and the type is apartment
+ * unless the text names another kind of place. Glencoe sits in the same west cluster as West Hills
+ * (Petit Valley / Morne Coco Road) but is left out of West Hills neighbours until Miles confirms.
+ *
+ * Sources (checked 14 Nov 2026):
+ *   La Fontaine — Columbus Circle, Westmoorings: prince-associates.com/properties/rental/west/la_fontaine.html,
+ *     deneco.co, mybunchofkeys.com (Westmoorings South East, walking distance to ISPS, Massy, Westmall).
+ *   West Hills / Westhills — Morne Coco Road, Petit Valley, Diego Martin: homesolutionstt.com/communities/west-hills,
+ *     mybunchofkeys.com listings ("Westhills, Morne Coco Rd – Petit Valley", building-numbered blocks).
+ *   One Woodbrook Place — Woodbrook / Mucurapo, Port of Spain: owptt.com, nck.ca, appleandiron.com.
+ *   La Riviera — Columbus Circle / Westmoorings East: desilvarealty.com, mybunchofkeys.com.
+ *   The Towers — Columbus Circle, Westmoorings (Caribi, Arawak, Ciboney): desilvarealty.com, mybunchofkeys.com.
+ *   Victoria Keyes — Diego Martin, minutes from Westmall: terracaribbean.com, mybunchofkeys.com.
+ *   Aquaria — Carenage hillside off the Western Main Road, listed with Goodwood Park / Westmoorings:
+ *     mybunchofkeys.com/property/for-rent-aquaria/.
+ *   Goodwood Heights — Westmoorings: mybunchofkeys.com/property/goodwood-heights-westmoorings-3/.
+ *   Glencoe adjoining this cluster: Wikipedia "Maraval" groups Westmoorings, Goodwood Park and Glencoe;
+ *     mybunchofkeys.com tags a Glencoe rental as Diego Martin / Glencoe / Petit Valley / Westmoorings;
+ *     Morne Coco Road links Petit Valley toward Westmoorings (jbmancave.com drive notes).
+ */
+export type Development = {
+  name: string;
+  aliases: string[];
+  parent: string;
+  neighbours: string[];
+  type: "apartment";
+};
+
+export const DEVELOPMENTS: Development[] = [
+  { name: "La Fontaine", aliases: ["La Fontaine", "Lafontaine"], parent: "Westmoorings", neighbours: ["Westmoorings", "Diego Martin", "Goodwood Park", "Carenage"], type: "apartment" },
+  { name: "West Hills", aliases: ["West Hills", "Westhills", "Westhill", "West Hill"], parent: "Petit Valley", neighbours: ["Petit Valley", "Diego Martin", "Westmoorings"], type: "apartment" },
+  { name: "One Woodbrook Place", aliases: ["One Woodbrook Place", "One Woodbrook", "OWP"], parent: "Woodbrook", neighbours: ["Woodbrook", "Port of Spain"], type: "apartment" },
+  { name: "La Riviera", aliases: ["La Riviera"], parent: "Westmoorings", neighbours: ["Westmoorings", "Diego Martin"], type: "apartment" },
+  { name: "The Towers", aliases: ["The Towers, Westmoorings", "The Towers Westmoorings"], parent: "Westmoorings", neighbours: ["Westmoorings", "Diego Martin"], type: "apartment" },
+  { name: "Victoria Keyes", aliases: ["Victoria Keyes", "Victoria Keys"], parent: "Diego Martin", neighbours: ["Diego Martin", "Westmoorings"], type: "apartment" },
+  { name: "Aquaria", aliases: ["Aquaria Apartments", "Aquaria"], parent: "Carenage", neighbours: ["Carenage", "Goodwood Park", "Westmoorings"], type: "apartment" },
+  { name: "Goodwood Heights", aliases: ["Goodwood Heights"], parent: "Westmoorings", neighbours: ["Westmoorings", "Goodwood Park"], type: "apartment" },
+];
+
+/** West Hills is on Morne Coco Road in Petit Valley; Glencoe is next to that west cluster, but is not used as a neighbour in matching until Miles confirms. */
+export const WEST_HILLS_UNCONFIRMED_NEIGHBOURS = ["Glencoe"];
+
+export function developmentOf(name: string | null | undefined): Development | null {
+  const k = (name ?? "").replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
+  if (!k) return null;
+  return DEVELOPMENTS.find((d) => d.name.toLowerCase() === k || d.aliases.some((a) => a.toLowerCase() === k)) ?? null;
+}
+
+export function findDevelopments(text: string): Development[] {
+  const aliases = DEVELOPMENTS.flatMap((d) => d.aliases.map((alias) => ({ alias, d }))).sort((a, b) => b.alias.length - a.alias.length);
+  const out: Development[] = [];
+  let rest = text;
+  for (const { alias, d } of aliases) {
+    const re = new RegExp(`\\b${esc(alias)}\\b`, "i");
+    if (re.test(rest) && !out.includes(d)) {
+      out.push(d);
+      rest = rest.replace(new RegExp(`\\b${esc(alias)}\\b`, "gi"), " ");
+    }
+  }
+  return out;
+}
+
+/** Areas to match against a request: a development expands to itself, its parent, and confirmed neighbours. */
+export function areasForMatch(area: string): { same: string[]; nearby: string[] } {
+  if (isCentralAreaGroup(area)) return { same: [...CENTRAL_AREAS], nearby: [] };
+  const d = developmentOf(area);
+  if (d) return { same: [d.name], nearby: [d.parent, ...d.neighbours].filter((n, i, all) => areaKeyish(n) !== areaKeyish(d.name) && all.indexOf(n) === i) };
+  return { same: [area], nearby: [] };
+}
+
+function areaKeyish(s: string): string {
+  return s.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 /** Places 1on1 lists in, by the names people write. Longest first so "Port of Spain" beats "Spain". */
 export const AREAS = [
-  "Port of Spain", "Westmoorings", "West Moorings", "Maraval", "St. Ann's", "St Anns", "Cascade", "Diego Martin", "Glencoe",
-  "Goodwood Park", "Woodbrook", "St. Clair", "St Clair", "Federation Park", "Ellerslie Park", "Fairways", "Valsayn", "St. Augustine",
+  "Port of Spain", "Westmoorings", "West Moorings", "Maraval", "St. Ann's", "St Anns", "St. James", "St James", "Cascade", "Diego Martin", "Glencoe",
+  "Goodwood Park", "Woodbrook", "Newtown", "New Town", "St. Clair", "St Clair", "Federation Park", "Ellerslie Park", "Fairways", "Valsayn", "St. Augustine",
   "St Augustine", "Curepe", "Tunapuna", "Arima", "Trincity", "D'Abadie", "Chaguanas", "Couva", "Point Lisas", "San Fernando",
   "Gulf View", "La Romaine", "Marabella", "Princes Town", "Point Fortin", "Carenage", "Chaguaramas", "Santa Cruz", "Petit Valley",
   "Cocorite", "Belmont", "Barataria", "San Juan", "Morvant", "El Socorro", "Piarco", "Freeport", "Claxton Bay", "Penal", "Siparia",
@@ -112,29 +216,36 @@ export const AREAS = [
   "Signal Hill", "Tobago", "Trinidad",
 ].sort((a, b) => b.length - a.length);
 
-const CANON: Record<string, string> = { "west moorings": "Westmoorings", "st anns": "St. Ann's", "st clair": "St. Clair", "st augustine": "St. Augustine", "mount irvine": "Mt Irvine" };
+const CANON: Record<string, string> = { "west moorings": "Westmoorings", "st anns": "St. Ann's", "st clair": "St. Clair", "st james": "St. James", "st augustine": "St. Augustine", "new town": "Newtown", "mount irvine": "Mt Irvine" };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\./g, "\\.?").replace(/'/g, "['’]?");
 
 export function findAreas(text: string): string[] {
-  const out: string[] = [];
+  const devs = findDevelopments(text);
+  const out: string[] = devs.map((d) => d.name);
   let rest = text;
+  for (const d of devs) {
+    for (const alias of d.aliases) rest = rest.replace(new RegExp(`\\b${esc(alias)}\\b`, "gi"), " ");
+  }
   for (const a of AREAS) {
     const re = new RegExp(`\\b${esc(a)}\\b`, "i");
     if (re.test(rest)) {
-      const name = CANON[a.toLowerCase().replace(/\./g, "")] ?? a;
+      const name = CANON[a.toLowerCase().replace(/\\./g, "")] ?? a;
       if (!out.includes(name)) out.push(name);
       rest = rest.replace(new RegExp(`\\b${esc(a)}\\b`, "gi"), " ");
     }
   }
-  return out.filter((a) => a !== "Trinidad" || out.length === 1);
+  const named = out.filter((a) => a !== "Trinidad" || (out.length === 1 && !CENTRAL_PHRASE.test(text)));
+  // "central" / "central locations" is the group only when no more specific place was named.
+  if (CENTRAL_PHRASE.test(text) && named.length === 0) return [CENTRAL_AREA];
+  return named;
 }
 
 /* ---------------- What kind of place ---------------- */
 
 const TYPES: [string, RegExp][] = [
   ["townhouse", /\btown\s?houses?\b/i],
-  ["apartment", /\b(apartments?|apt|flat)\b/i],
+  ["apartment", /\b(apartments?|apt|flat|(?<!storage\s)units?)\b/i],
   ["condo", /\b(condos?|condominiums?)\b/i],
   ["house", /\b(house|home|bungalow|villa)s?\b/i],
   ["land", /\b(land|lots?|acres?|plot)\b/i],
@@ -147,6 +258,7 @@ export function findInterest(text: string): Interest {
   const rent = /\b(rent|rental|renting|lease|leasing|to let)\b/i.test(text);
   const buy = /\b(buy|buying|purchase|purchasing|for sale|mortgage)\b/i.test(text);
   const types = TYPES.filter(([t, re]) => re.test(t === "house" ? text.replace(/\btown\s?houses?\b/gi, " ") : text)).map(([t]) => t);
+  if (findDevelopments(text).length && types.length === 0) types.unshift("apartment");
   const b = /\b(\d|one|two|three|four|five|six)\s?(?:-|\s)?(?:bed(?:room)?s?|br|bd)\b/i.exec(text);
   const bedrooms = b ? (NUMBERS[b[1].toLowerCase()] ?? Number(b[1])) : null;
   return { intent: rent && !buy ? "rent" : buy && !rent ? "buy" : rent && buy ? (text.search(/rent|lease/i) < text.search(/buy|purchas|sale/i) ? "rent" : "buy") : null, types, bedrooms };
@@ -183,7 +295,7 @@ export function leadFacts(text: string): LeadFacts {
   return { names: findNames(text), phones: findPhones(text), emails: findEmails(text), budget: findBudget(text), areas: findAreas(text), interest: findInterest(text) };
 }
 
-const LEAD_WORDS = /\b(client|lead|buyer|tenant|prospect|looking for|interested in|enquir|inquir|wants? (?:to|a|an)|needs? (?:a|an)|searching for|in the market|budget|is (?:it|this) (?:still )?available|for (?:rent|sale))\b/i;
+const LEAD_WORDS = /\b(client|lead|buyer|tenant|prospect|looking for|search(?:ing)? for|in search (?:of|for)|interested in|enquir|inquir|wants? (?:to|a|an)|client\s+needs?|needs?|searching for|in the market|budget|is (?:it|this) (?:still )?available|for (?:rent|sale))\b/i;
 
 /** Whether a message reads like a lead: lead words plus something concrete (contact, money, place, kind of property). */
 export function looksLikeLead(text: string, f: LeadFacts = leadFacts(text)): boolean {

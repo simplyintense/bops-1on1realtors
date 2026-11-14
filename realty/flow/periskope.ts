@@ -1,4 +1,4 @@
-import { findAreas, findBudget, findInterest, findPhones, normalizePhone } from "../extract.ts";
+import { developmentOf, findAreas, findBudget, findInterest, findPhones, normalizePhone } from "../extract.ts";
 import type { Currency, Inquiry, ListingType } from "./engine.ts";
 import { runtimeEnv, type Env } from "./env.ts";
 import { propertyKindFromCrm } from "./taxonomy.ts";
@@ -136,6 +136,12 @@ export type PostRecord = {
   notes: string | null;
   /** The original message text. Owners may read it in Bops; never log it, and never show it on an agent's desk. */
   originalText: string | null;
+  /** The WhatsApp group name, when known. Used to tag a backfill row; not a secret. */
+  groupName?: string | null;
+  /** supply = a property on offer; demand = someone looking. Unset for chatter. */
+  set?: "supply" | "demand" | null;
+  /** Canonical development name when the area is a named development. */
+  development?: string | null;
   mediaUrls?: string[];
   mediaFiles?: string[];
 };
@@ -314,10 +320,12 @@ export function recordsDueForPurge<T>(rows: readonly T[], now: Date, days: numbe
 
 /* ---------------- Classification ---------------- */
 
-// Demand: someone wants something. "looking", "seeking", "searching", "in the market", "anyone have", "wanted" and
-// "ISO" (in search of) are the strong ones: they win over a supply word ("anyone have a house for sale in...").
-const DEMAND = /\b(looking|seeking|searching|in the market|anyone (?:have|has|got)|wanted|ISO|wants? (?:a|an)\b|needs? (?:a|an)\b)/i;
-const STRONG_DEMAND = /\b(looking|seeking|searching|in the market|anyone (?:have|has|got)|wanted|ISO)\b/i;
+// Demand: someone wants something. "looking", "looking for", "seeking", "searching", "searching for",
+// "in search for/of", "in the market", "anyone have", "wanted", "ISO", "need", "needs" and "client needs"
+// are the strong ones: they win over a supply word ("anyone have a house for sale in...").
+const DEMAND = /\b(looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|in the market|anyone (?:have|has|got)|wanted|ISO|client\s+needs?|needs?|wants? (?:a|an))\b/i;
+const ANY_UNITS = /\bany\b[\s\S]{0,80}?\bunits?\s+for\s+(?:rent|sale)\b/i;
+const STRONG_DEMAND = /\b(looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|in the market|anyone (?:have|has|got)|wanted|ISO|client\s+needs?|needs?)\b/i;
 // Supply: a property is on offer.
 const SUPPLY = /\b(co-?broke|50\/50|just listed|for sale|available)\b/i;
 
@@ -382,14 +390,14 @@ const hasListingFacts = (f: Facts) => !!(f.area || f.beds || f.type || f.budget)
 /**
  * buyer_request: demand words plus a fact (area, beds, type, budget or rental/sale intent).
  * cobroke_listing: supply words plus a fact (area, beds, type or budget).
- * Both demand and supply words: demand wins when "looking", "seeking", "searching" or "in the market" is there; otherwise supply.
+ * Both demand and supply words: demand wins when a strong demand phrase is there; otherwise supply.
  * Anything else is other.
  */
 export function interpret(body: string): Interpretation {
   const facts = factsOf(body);
-  const demand = DEMAND.test(body);
+  const demand = DEMAND.test(body) || ANY_UNITS.test(body);
   const supply = SUPPLY.test(body);
-  const side = demand && (!supply || STRONG_DEMAND.test(body)) ? "demand" : supply ? "supply" : null;
+  const side = demand && (!supply || STRONG_DEMAND.test(body) || ANY_UNITS.test(body)) ? "demand" : supply ? "supply" : null;
   let kind: Kind = "other";
   if (side === "demand" && (hasListingFacts(facts) || facts.intent)) kind = "buyer_request";
   if (side === "supply" && hasListingFacts(facts)) kind = "cobroke_listing";
@@ -564,6 +572,9 @@ export function postRecordOf(args: { message: ParsedMessage; phone: string; inte
     propertyClass: propertyKindFromCrm(listingType === "rent" ? "rent" : listingType === "sale" ? "sale" : null, f.type),
     notes: i.kind === "buyer_request" ? buyerBrief(f) : i.kind === "cobroke_listing" ? listingBrief(f) : null,
     originalText: m.body.trim() || null,
+    groupName: m.chatName,
+    set: category === "buyer_request" || category === "rental_request" ? "demand" : category === "listing_for_sale" || category === "listing_for_rent" || category === "cobroke" ? "supply" : null,
+    development: developmentOf(f.area)?.name ?? null,
   };
   if (listing && m.mediaUrls.length) rec.mediaUrls = m.mediaUrls;
   return rec;

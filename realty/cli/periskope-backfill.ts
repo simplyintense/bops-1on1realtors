@@ -1,14 +1,15 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { AREA_REGISTERED_AGENTS_CHAT_ID, AREA_REGISTERED_AGENTS_NAME, backfillGroup } from "../node/periskope-backfill.ts";
+import { INTAKE_GROUPS, backfillGroup } from "../node/periskope-backfill.ts";
 import { postsToCsv } from "../node/group-posts.ts";
 import { PeriskopeStore } from "../node/periskope-store.ts";
 
 /**
- * One-time listen-only backfill of the Area Registered Agents group. Usage:
+ * One-time listen-only backfill of the allowlisted Periskope groups. Usage:
  *   node --experimental-strip-types realty/cli/periskope-backfill.ts --days 7 --csv /path/to.csv
- * API key from PERISKOPE_API_KEY or --key-file (never printed). Optional --phone-id, --root, --chat-id.
- * Writes counts only to stdout. The CSV (if requested) holds original text and phones; don't print it.
+ * API key from PERISKOPE_API_KEY or --key-file (never printed). Optional --phone-id, --root.
+ * --chat-id and --chat-name limit it to one group; otherwise all INTAKE_GROUPS are read.
+ * Writes counts only to stdout (no message text, no phone numbers). The CSV holds original text and phones; don't print it.
  */
 
 function arg(name: string, fallback = ""): string {
@@ -26,30 +27,33 @@ if (!apiKey) {
 
 const root = arg("root", join(process.cwd(), ".data", "realty", "periskope"));
 const days = Math.max(1, Number(arg("days", "7")) || 7);
-const chatId = arg("chat-id", AREA_REGISTERED_AGENTS_CHAT_ID);
-const chatName = arg("chat-name", AREA_REGISTERED_AGENTS_NAME);
+const onlyId = arg("chat-id");
+const onlyName = arg("chat-name");
 const phoneId = arg("phone-id") || undefined;
 const csvPath = arg("csv");
 
-const result = await backfillGroup({
-  apiKey,
-  chatId,
-  chatName,
-  days,
-  phoneId,
-  opts: { root },
-});
+const groups = onlyId
+  ? [{ chatId: onlyId, chatName: onlyName || (INTAKE_GROUPS.find((g) => g.chatId === onlyId)?.chatName ?? onlyId) }]
+  : [...INTAKE_GROUPS];
 
-if (!result.ok) {
-  console.error(`backfill failed: ${result.error}`);
-  process.exit(1);
-}
-
-const { counts } = result;
-console.log(
-  JSON.stringify({
-    chatId,
-    chatName,
+const reports: unknown[] = [];
+for (const g of groups) {
+  const result = await backfillGroup({
+    apiKey,
+    chatId: g.chatId,
+    chatName: g.chatName,
+    days,
+    phoneId,
+    opts: { root },
+  });
+  if (!result.ok) {
+    console.error(`backfill failed for ${g.chatName}: ${result.error}`);
+    process.exit(1);
+  }
+  const { counts } = result;
+  reports.push({
+    chatId: g.chatId,
+    chatName: g.chatName,
     days,
     fetched: counts.fetched,
     parseFailures: counts.parseFailures,
@@ -69,8 +73,12 @@ console.log(
     photosStored: counts.photosStored,
     photoUrlsKept: counts.photoUrlsKept,
     byResult: counts.byResult,
-  }),
-);
+    supply: (counts.categories["listing_for_sale"] ?? 0) + (counts.categories["listing_for_rent"] ?? 0) + (counts.categories["cobroke"] ?? 0),
+    demand: (counts.categories["buyer_request"] ?? 0) + (counts.categories["rental_request"] ?? 0),
+  });
+}
+
+console.log(JSON.stringify({ groups: reports }));
 
 if (csvPath) {
   mkdirSync(dirname(csvPath), { recursive: true, mode: 0o700 });

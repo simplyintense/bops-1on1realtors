@@ -9,6 +9,7 @@ import { ackSenderFromEnv } from "../flow/messages.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
 import { CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
 import { liveRequestOf, matchOnArrival, matchOurListings, type LiveRequest } from "../flow/live-match.ts";
+import { veryStrongOurListings, type StrongAlert } from "../flow/observe.ts";
 import { MarketClient, marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
 import { DryRunOutbox } from "../flow/outbox.ts";
 import {
@@ -143,6 +144,42 @@ async function oursFor(request: LiveRequest, c: Ctx) {
     return [];
   }
   return matchOurListings(request, listings, oursAreas(c)).catch(() => []);
+}
+
+/** Very strong CRM matches only (same development or area, exact beds, in-band). Never a neighbour. */
+async function strongFor(request: LiveRequest, c: Ctx) {
+  if (!c.ours) return [];
+  let listings: Listing[];
+  try {
+    listings = await c.ours.listings();
+  } catch {
+    return [];
+  }
+  try {
+    return veryStrongOurListings(request, listings);
+  } catch {
+    return [];
+  }
+}
+
+function alertOf(d: { messageId: string; chatId: string; post: { sentAt: string; groupName?: string | null; area: string | null; beds: number | null } }, request: LiveRequest, m: { title: string; url: string | null; area: string | null; price: string | null; beds: number | null; reason: string | null }): StrongAlert {
+  return {
+    at: d.post.sentAt,
+    messageId: d.messageId,
+    chatId: d.chatId,
+    groupName: d.post.groupName ?? null,
+    requestArea: request.area ?? d.post.area ?? "",
+    requestBeds: request.beds ?? d.post.beds,
+    requestBudget: request.priceMax ?? request.priceMin,
+    currency: request.currency,
+    listingType: request.intent === "rent" ? "rent" : "sale",
+    listingTitle: m.title,
+    listingArea: m.area,
+    listingPrice: m.price,
+    listingBeds: m.beds,
+    listingUrl: m.url,
+    reason: m.reason ?? "very strong match",
+  };
 }
 
 let chain: Promise<unknown> = Promise.resolve();
@@ -297,10 +334,11 @@ async function act(d: Decision, c: Ctx): Promise<Reply> {
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at: d.post.sentAt });
       if (d.item) await queueMarket(c, d.item);
       // Seen is marked first, so a slow or failed match never makes Periskope deliver the message twice.
-      const [m, ours] = await Promise.all([matchOnArrival(request, d.messageId, at, c.market), oursFor(request, c)]);
+      const [m, ours, strong] = await Promise.all([matchOnArrival(request, d.messageId, at, c.market), oursFor(request, c), strongFor(request, c)]);
       c.store.updateLive(d.messageId, { status: m.status, matches: m.matches, ours, matchedAt: c.now.toISOString() });
+      for (const hit of strong) c.store.addAlert(alertOf(d, request, hit));
       const taken = lead ? `buyer request taken as ${lead.id}` : c.crm ? "buyer request stored (CRM unreachable: not routed)" : "buyer request stored (no CRM: not routed)";
-      return reply(200, { result: taken, matching: m.status, matches: m.matches.length, ours: ours.length });
+      return reply(200, { result: taken, matching: m.status, matches: m.matches.length, ours: ours.length, strong: strong.length });
     }
   }
 }

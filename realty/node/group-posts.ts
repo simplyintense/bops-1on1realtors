@@ -65,7 +65,10 @@ export function dateAst(iso: string): string {
 
 const CSV_HEADER = [
   "date (AST)",
+  "group",
+  "set",
   "category",
+  "development",
   "agent name",
   "agent phone",
   "area",
@@ -93,7 +96,10 @@ export function postsToCsv(store: PeriskopeStore): string {
     lines.push(
       [
         dateAst(p.sentAt),
+        p.groupName ?? "",
+        p.set ?? "",
         p.cobroke && p.category !== "cobroke" ? `${p.category}+cobroke` : p.category,
+        p.development ?? "",
         agentName,
         p.senderPhone ?? "",
         p.area ?? "",

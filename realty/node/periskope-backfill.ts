@@ -10,6 +10,17 @@ import { PeriskopeStore } from "./periskope-store.ts";
 
 export const AREA_REGISTERED_AGENTS_CHAT_ID = "18686789715-1444916451@g.us";
 export const AREA_REGISTERED_AGENTS_NAME = "AREA Registered Agents";
+
+/** The listen-only groups Miles allowlisted. Names are exact WhatsApp titles. */
+export const INTAKE_GROUPS = [
+  { chatId: "18686789715-1444916451@g.us", chatName: "AREA Registered Agents" },
+  { chatId: "120363139007270954@g.us", chatName: "R. E. SEARCHES ONLY" },
+  { chatId: "18686209603-1626217638@g.us", chatName: "🇹🇹🏡 Anything Real Estate❤️" },
+  { chatId: "18686894126-1467511703@g.us", chatName: "REAL ESTATE AGENTS OF T&T" },
+  { chatId: "18683898353-1597076235@g.us", chatName: "Top Notch Realtors" },
+  { chatId: "18687143939-1555072973@g.us", chatName: "T&T Realty Co Broke Group" },
+] as const;
+
 const API = "https://api.periskope.app";
 
 export type BackfillCounts = {
@@ -145,7 +156,11 @@ export async function backfillGroup(args: {
   if (!listed.ok) return { ok: false, error: listed.error, status: listed.status };
   const names = await memberNames({ apiKey: args.apiKey, chatId, phoneId: args.phoneId, fetcher: args.fetcher });
   const store = new PeriskopeStore(args.opts.root ?? `${process.cwd()}/.data/realty/periskope`);
-  const before = new Map(store.posts().map((p) => [p.messageId, { hasText: Boolean(p.originalText), files: p.mediaFiles?.length ?? 0 }]));
+  const before = new Map(
+    store.posts()
+      .filter((p) => p.chatId === chatId)
+      .map((p) => [p.messageId, { hasText: Boolean(p.originalText), files: p.mediaFiles?.length ?? 0 }]),
+  );
   const ordered = [...listed.messages].sort((a, b) => String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? "")));
 
   const counts: BackfillCounts = {
@@ -188,7 +203,7 @@ export async function backfillGroup(args: {
     else if (typeof reply.body.result === "string" && reply.body.result.startsWith("ignored:")) counts.ignored += 1;
   }
 
-  const after = store.posts();
+  const after = store.posts().filter((p) => p.chatId === chatId);
   const agents = new Set<string>();
   for (const p of after) {
     const prev = before.get(p.messageId);
@@ -206,7 +221,7 @@ export async function backfillGroup(args: {
     counts.photoUrlsKept += p.mediaUrls?.length ?? 0;
   }
   counts.distinctAgents = agents.size;
-  for (const row of store.live()) {
+  for (const row of store.live().filter((r) => r.chatId === chatId)) {
     const market = row.matches.length;
     const ours = row.ours?.length ?? 0;
     counts.marketMatches += market;
