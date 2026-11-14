@@ -3,6 +3,7 @@ import { criteriaFromParams, type DeskArea, type DeskCriteria, type DeskResult }
 import { staffMarketSearch } from "@/realty/node/market-desk.ts";
 import { staffMarketStrip } from "@/realty/node/market-stats.ts";
 import { Notice } from "../notice";
+import { viewer } from "../viewer";
 import { ListingTable } from "./listing-table";
 import { StatsStrip } from "./stats-strip";
 
@@ -10,7 +11,8 @@ import { StatsStrip } from "./stats-strip";
  * Market search for staff: other agencies' listings for an area, with filters (realty/flow/market-desk.ts). Read-only:
  * the form is a GET, the search runs on the server, and the market token never reaches the browser. The same search is
  * at /api/realty/market/search (staff only). Nothing here writes an alias, learns a neighbour, or sends anything.
- * The page sits in the realty layout (the theme, the header and the nav).
+ * The page sits in the realty layout (the theme, the header and the nav). The stats strip is for owners only: it's read
+ * only for them, so it never reaches anyone else.
  */
 
 export const dynamic = "force-dynamic";
@@ -27,9 +29,10 @@ export default async function MarketSearchPage({ searchParams }: { searchParams:
   }
   const ran = params.size > 0;
   const c = criteriaFromParams(params);
+  const { owner } = await viewer();
   const [result, strip] = await Promise.all([
     ran ? staffMarketSearch(c) : Promise.resolve(null),
-    staffMarketStrip(),
+    owner ? staffMarketStrip() : Promise.resolve(null),
   ]);
 
   return (

@@ -18,6 +18,8 @@ import { fakeCaller } from "./desk-fakes.ts";
 
 const KEY = "test-signing-key";
 const NOW = new Date("2026-11-13T20:00:00.000Z");
+/** A complete login-gate config (the gate is on): the owner checks need one. */
+const GATE_ENV = { BOPS_LOGIN_GATE: "google", BOPS_GATE_SECRET: "x".repeat(40), BOPS_ALLOWED_EMAILS: "@1on1.example", GOOGLE_OAUTH_CLIENT_ID: "id", GOOGLE_OAUTH_CLIENT_SECRET: "secret", BOPS_PUBLIC_URL: "https://bops.example" };
 
 /** A match_buyer hit the way the market sends one, with a score and a contact's phone that must not reach the view. */
 const HIT = {
@@ -205,7 +207,8 @@ test("the daily digest counts the last 24 hours and is for owners only", async (
   assert.equal(d.noMatches + d.notMatched, 0);
   assert.equal(digestOf(w.store().live(), new Date(NOW.getTime() + 25 * 3_600_000)).requests, 0, "older than a day is out");
 
-  const env = { BOPS_OWNER_EMAILS: "miles@1on1.example, wendy@1on1.example" };
+  // The login gate is on here: with it off, anyone may see the owners' screens (ownerAllowed).
+  const env = { ...GATE_ENV, BOPS_OWNER_EMAILS: "miles@1on1.example, wendy@1on1.example" };
   assert.deepEqual(await staffDigest({ email: "kerry@1on1.example", env, intakeRoot: w.root }), { owner: false });
   assert.deepEqual(await staffDigest({ email: null, env, intakeRoot: w.root }), { owner: false });
   const owner = await staffDigest({ email: "wendy@1on1.example", env, intakeRoot: w.root, now: new Date(NOW.getTime() + 60_000) });

@@ -3,6 +3,7 @@ import type { SeamAgent } from "./crm-seam.ts";
 import { moneyLabel } from "./market-search.ts";
 import { listingTypeOf, type Facts } from "./periskope.ts";
 import { parseMatch, type MatchItem } from "./recommendations.ts";
+import { followUpsOf, isHidden, listingKey, type FollowUp, type StatusRow } from "./match-status.ts";
 import type { Listing } from "./source.ts";
 import { jsonHits, readOnlyCall, timedOut } from "./requests.ts";
 
@@ -51,6 +52,8 @@ export type LiveMatchResult = { status: LiveMatchStatus; matches: MatchItem[] };
 /** A stored request as the desk and digest read it (realty/node/periskope-store.ts LiveRow has these and more). */
 export type LiveEntry = {
   messageId: string;
+  /** The desk's id for the request: a hash of messageId (realty/node/periskope-store.ts requestIdOf). What the pages and buttons carry. */
+  requestId: string;
   /** The posting agent's own number, normalized. Used only to tie a request to an agent; never shown. */
   senderPhone: string;
   receivedAt: string;
@@ -62,22 +65,38 @@ export type LiveEntry = {
   ours?: MatchItem[];
 };
 
-/** A request with its matches, as a page shows it: no phone number, no message id, no message text. */
-export type LiveCard = { label: string; receivedAt: string; status: LiveMatchStatus | "pending"; statusText: string | null; matches: MatchItem[]; ours: MatchItem[] };
+/**
+ * A request with its matches, as a page shows it: no phone number, no WhatsApp message id, no message text. `follow` is the
+ * follow-up of each listing on it, by listingKey.
+ */
+export type LiveCard = {
+  requestId: string;
+  label: string;
+  receivedAt: string;
+  status: LiveMatchStatus | "pending";
+  statusText: string | null;
+  matches: MatchItem[];
+  ours: MatchItem[];
+  follow: Record<string, FollowUp>;
+};
+
+/** `statuses`: the follow-ups to show. `hideMarked`: drop matches marked not a fit or closed (and a request left with none). */
+export type CardOptions = { statuses?: readonly StatusRow[]; hideMarked?: boolean };
 
 /** Newest first, at most `limit`. */
-export function liveCards(rows: readonly LiveEntry[], limit = 10): LiveCard[] {
+export function liveCards(rows: readonly LiveEntry[], limit = 10, o: CardOptions = {}): LiveCard[] {
   return [...rows]
     .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
-    .slice(0, limit)
-    .map((r) => ({
-      label: requestLabel(r.request),
-      receivedAt: r.receivedAt,
-      status: r.status,
-      statusText: r.status === "matched" ? null : r.status === "pending" ? "Matching hasn't finished." : STATUS_TEXT[r.status],
-      matches: r.matches,
-      ours: r.ours ?? [],
-    }));
+    .flatMap((r) => {
+      const follow = followUpsOf(o.statuses ?? [], r.requestId);
+      const keep = (m: MatchItem) => !(o.hideMarked && isHidden(follow[listingKey(m)]));
+      const matches = r.matches.filter(keep);
+      const ours = (r.ours ?? []).filter(keep);
+      // A request whose matches are all marked goes too; one that never had a match stays ("nothing fits").
+      if (o.hideMarked && r.matches.length + (r.ours ?? []).length > 0 && !matches.length && !ours.length) return [];
+      return [{ requestId: r.requestId, label: requestLabel(r.request), receivedAt: r.receivedAt, status: r.status, statusText: r.status === "matched" ? null : r.status === "pending" ? "Matching hasn't finished." : STATUS_TEXT[r.status], matches, ours, follow }];
+    })
+    .slice(0, limit);
 }
 
 /* ---------------- Our own listings ---------------- */
@@ -236,7 +255,8 @@ export type LiveDesk = {
   unheld: LiveCard[] | null;
 };
 
-export function liveDesk(i: { email: string | null; owner: boolean; agents: readonly SeamAgent[]; rows: readonly LiveEntry[] }): LiveDesk {
+export function liveDesk(i: { email: string | null; owner: boolean; agents: readonly SeamAgent[]; rows: readonly LiveEntry[]; statuses?: readonly StatusRow[]; showHidden?: boolean }): LiveDesk {
+  const o: CardOptions = { statuses: i.statuses, hideMarked: !i.showHidden };
   const phones = new Set(i.agents.flatMap((a) => (a.phone ? [a.phone] : [])));
   const email = i.email?.trim().toLowerCase() ?? null;
   const me = email ? (i.agents.find((a) => a.email === email) ?? null) : null;
@@ -244,7 +264,7 @@ export function liveDesk(i: { email: string | null; owner: boolean; agents: read
     ? { status: "signed-out" }
     : !me
       ? { status: "no-agent" }
-      : { status: "ok", phoneKnown: !!me.phone, cards: me.phone ? liveCards(i.rows.filter((r) => r.senderPhone === me.phone)) : [] };
+      : { status: "ok", phoneKnown: !!me.phone, cards: me.phone ? liveCards(i.rows.filter((r) => r.senderPhone === me.phone), 10, o) : [] };
   const keepOurs = (keep: (m: MatchItem) => boolean) => (rows: readonly LiveEntry[]) =>
     rows.flatMap((r) => {
       const ours = (r.ours ?? []).filter(keep);
@@ -253,9 +273,9 @@ export function liveDesk(i: { email: string | null; owner: boolean; agents: read
   const mine = me ? keepOurs((m) => m.holder === me.id)(i.rows.filter((r) => r.senderPhone !== me.phone)) : [];
   return {
     yours,
-    onListings: liveCards(mine),
-    unassigned: i.owner ? liveCards(i.rows.filter((r) => !phones.has(r.senderPhone))) : null,
-    unheld: i.owner ? liveCards(keepOurs((m) => m.holder == null)(i.rows)) : null,
+    onListings: liveCards(mine, 10, o),
+    unassigned: i.owner ? liveCards(i.rows.filter((r) => !phones.has(r.senderPhone)), 10, o) : null,
+    unheld: i.owner ? liveCards(keepOurs((m) => m.holder == null)(i.rows), 10, o) : null,
   };
 }
 
@@ -273,7 +293,8 @@ export type Digest = {
   cards: LiveCard[];
 };
 
-export function digestOf(rows: readonly LiveEntry[], now: Date, hours = 24): Digest {
+/** Every request in the window, with every match and its follow-up (nothing is hidden in the digest). */
+export function digestOf(rows: readonly LiveEntry[], now: Date, hours = 24, statuses: readonly StatusRow[] = []): Digest {
   const since = new Date(now.getTime() - hours * 3_600_000);
   const recent = rows.filter((r) => {
     const t = Date.parse(r.receivedAt);
@@ -286,6 +307,6 @@ export function digestOf(rows: readonly LiveEntry[], now: Date, hours = 24): Dig
     withMatches: recent.filter((r) => r.status === "matched" && r.matches.length > 0).length,
     noMatches: recent.filter((r) => r.status === "matched" && r.matches.length === 0).length,
     notMatched: recent.filter((r) => r.status !== "matched").length,
-    cards: liveCards(recent, 50),
+    cards: liveCards(recent, 50, { statuses }),
   };
 }

@@ -1,16 +1,18 @@
 import type { ReactNode } from "react";
 import type { LiveCard, LiveDesk } from "@/realty/flow/live-match.ts";
+import { listingKey, type FollowUp } from "@/realty/flow/match-status.ts";
 import { CRM_MISSING_TEXT, type BuyerMatch, type MatchItem, type Recommendations } from "@/realty/flow/recommendations.ts";
 import type { DeskView } from "@/realty/node/requests.ts";
 import { Notice } from "../notice";
+import { FollowUpButtons } from "./follow-up-buttons";
 
 /**
  * "Top recommendations for you" on the desk. It renders the view the server built (realty/node/requests.ts DeskView): the
  * signed-in agent's own WhatsApp requests with their live matches (other agencies' listings and ours from the 1on1 CRM),
  * WhatsApp requests that fit listings they hold, other agencies' open requests that fit listings they hold, and, for
  * owners only, the unassigned WhatsApp requests, matches on our listings with no agent, and every open market request. Match reasons and listings, never a score or a grade
- * (the view has none). The owner blocks are rendered only when the view has them, which is only for an owner. Nothing here
- * is sent or written.
+ * (the view has none). The owner blocks are rendered only when the view has them, which is only for an owner. Each match on a
+ * WhatsApp request has the follow-up buttons (Contacted, Not a fit, Closed), which save to Bops's own record only.
  */
 
 export function RecommendationsPanel({ recs }: { recs: DeskView | null }) {
@@ -89,8 +91,11 @@ function Yours({ yours }: { yours: LiveDesk["yours"] }) {
   return <Cards cards={yours.cards} />;
 }
 
-/** `oursOnly` shows just the matches on our own listings (for a holder, or the owners' "no agent" list). */
-export function Cards({ cards, oursOnly = false }: { cards: LiveCard[]; oursOnly?: boolean }) {
+/**
+ * `oursOnly` shows just the matches on our own listings (for a holder, or the owners' "no agent" list). `detail` adds who set
+ * each follow-up and when (the digest; the desk shows only the status).
+ */
+export function Cards({ cards, oursOnly = false, detail = false }: { cards: LiveCard[]; oursOnly?: boolean; detail?: boolean }) {
   return (
     <ul className="grid gap-4">
       {cards.map((c, i) => (
@@ -103,25 +108,36 @@ export function Cards({ cards, oursOnly = false }: { cards: LiveCard[]; oursOnly
           {!oursOnly && c.ours.length ? (
             <div className="mt-3">
               <h4 className="text-sm font-medium">From our listings</h4>
-              <MatchList items={c.ours} />
+              <MatchList items={c.ours} follow={followOf(c, detail)} />
             </div>
           ) : null}
           {oursOnly ? (
             <div className="mt-3">
-              <MatchList items={c.ours} />
+              <MatchList items={c.ours} follow={followOf(c, detail)} />
             </div>
           ) : null}
           {!oursOnly && c.status === "matched" && !c.matches.length ? <p className="rt-muted mt-2 text-sm">No listing at other agencies fits this request yet.</p> : null}
           {!oursOnly && c.matches.length ? (
             <div className="mt-3">
               {c.ours.length ? <h4 className="text-sm font-medium">Other agencies</h4> : null}
-              <MatchList items={c.matches} />
+              <MatchList items={c.matches} follow={followOf(c, detail)} />
             </div>
           ) : null}
         </li>
       ))}
     </ul>
   );
+}
+
+function followOf(c: LiveCard, detail: boolean): Follow {
+  return { requestId: c.requestId, statuses: c.follow, detail };
+}
+
+/** The status buttons for a request's matches: the request's id, each listing's current follow-up, and the digest's note. */
+type Follow = { requestId: string; statuses: Record<string, FollowUp>; detail: boolean };
+
+function followNote(f: FollowUp | undefined): string | null {
+  return f ? `${f.by ?? "Signed in"} · ${portOfSpainTime(f.at)}` : null;
 }
 
 function count(n: number): string {
@@ -159,27 +175,39 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function MatchList({ items }: { items: (MatchItem | BuyerMatch)[] }) {
+/** `follow` is set only on a WhatsApp request's matches; the market's own matches (the request feed) have no buttons. */
+function MatchList({ items, follow }: { items: (MatchItem | BuyerMatch)[]; follow?: Follow }) {
   return (
     <ul className="grid gap-3">
-      {items.map((m, i) => (
-        <li key={`${m.url ?? m.title}-${i}`} className="rt-card p-4">
-          <p className="font-medium">
-            {m.url ? (
-              <a href={m.url} target="_blank" rel="noopener noreferrer" className="rt-link">
-                {m.title}
-              </a>
-            ) : (
-              m.title
-            )}
-          </p>
-          <p className="rt-muted mt-1 text-sm">
-            {[m.area, m.price, m.beds !== null ? `${m.beds} bed` : null, m.source].filter(Boolean).join(" · ") || "Details not given"}
-          </p>
-          {m.reason ? <p className="mt-2 text-sm">{m.reason}</p> : null}
-          {"forRequest" in m ? <ForRequest r={m.forRequest} /> : null}
-        </li>
-      ))}
+      {items.map((m, i) => {
+        const key = listingKey(m);
+        return (
+          <li key={`${m.url ?? m.title}-${i}`} className="rt-card p-4">
+            <p className="font-medium">
+              {m.url ? (
+                <a href={m.url} target="_blank" rel="noopener noreferrer" className="rt-link">
+                  {m.title}
+                </a>
+              ) : (
+                m.title
+              )}
+            </p>
+            <p className="rt-muted mt-1 text-sm">
+              {[m.area, m.price, m.beds !== null ? `${m.beds} bed` : null, m.source].filter(Boolean).join(" · ") || "Details not given"}
+            </p>
+            {m.reason ? <p className="mt-2 text-sm">{m.reason}</p> : null}
+            {"forRequest" in m ? <ForRequest r={m.forRequest} /> : null}
+            {follow ? (
+              <FollowUpButtons
+                requestId={follow.requestId}
+                listingKey={key}
+                current={follow.statuses[key] ?? null}
+                note={follow.detail ? followNote(follow.statuses[key]) : null}
+              />
+            ) : null}
+          </li>
+        );
+      })}
     </ul>
   );
 }

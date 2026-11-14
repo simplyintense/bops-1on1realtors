@@ -1,13 +1,16 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { budgetLabel, REQUEST_LIMIT, requestCriteriaFromParams, sortFromParams, sortRequests, STATUSES, type BuyerRequest, type RequestCriteria, type RequestsResult, type Sort, type SortKey } from "@/realty/flow/requests.ts";
 import { staffRequests } from "@/realty/node/requests.ts";
 import { Notice } from "../notice";
+import { viewer } from "../viewer";
 
 /**
  * The buyer-request feed for staff: co-broke buyer requests from the market's search_market_requests (realty/flow/requests.ts).
- * Read only: the form is a GET, the search runs on the server, and the market token never reaches the browser. Sorting is
- * done here on the rows the market returned (up to 20, newest first from the market). Buyers' names, phone numbers and
- * message details are never read into a row, so they are never shown.
+ * Owners only: anyone else is sent to the desk, and the market isn't called for them. Read only: the form is a GET, the search
+ * runs on the server, and the market token never reaches the browser. Sorting is done here on the rows the market returned
+ * (up to 20, newest first from the market). Buyers' names, phone numbers and message details are never read into a row, so
+ * they are never shown.
  */
 
 export const dynamic = "force-dynamic";
@@ -16,6 +19,8 @@ export const metadata: Metadata = { title: "Buyer requests · 1on1 Realtors staf
 type Params = Record<string, string | string[] | undefined>;
 
 export default async function RequestsPage({ searchParams }: { searchParams: Promise<Params> }) {
+  const { email, owner } = await viewer();
+  if (!owner) redirect("/realty/desk");
   const raw = await searchParams;
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(raw)) {
@@ -25,7 +30,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
   const c = requestCriteriaFromParams(params);
   const sort = sortFromParams(params);
   // Never throws out of the page: a failure is the error notice below.
-  const result: RequestsResult = await staffRequests(c, { limit: REQUEST_LIMIT }).catch((): RequestsResult => ({ status: "error", reason: "unavailable" }));
+  const result: RequestsResult = await staffRequests(c, { limit: REQUEST_LIMIT, email }).catch((): RequestsResult => ({ status: "error", reason: "unavailable" }));
 
   return (
     <main className="mx-auto w-full max-w-6xl px-5 py-10">
@@ -101,6 +106,7 @@ function Filters({ c, sort }: { c: RequestCriteria; sort: Sort }) {
 }
 
 function Results({ result, params, sort }: { result: RequestsResult; params: URLSearchParams; sort: Sort }) {
+  if (result.status === "owners-only") return <Notice>The buyer requests are for the owners.</Notice>;
   if (result.status === "not-configured") {
     return <Notice tone="warn">Market search isn&apos;t set up on this server, so buyer requests can&apos;t be loaded. Whoever runs the server can set it up.</Notice>;
   }

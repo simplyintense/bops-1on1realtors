@@ -13,7 +13,7 @@ import { recommendationsFor } from "../flow/recommendations.ts";
 import type { Listing } from "../flow/source.ts";
 import { crmSeamFromEnv } from "../node/crm-shared.ts";
 import { handleWebhook, setConsent } from "../node/periskope-intake.ts";
-import { PeriskopeStore } from "../node/periskope-store.ts";
+import { PeriskopeStore, requestIdOf } from "../node/periskope-store.ts";
 import { fakeCaller } from "./desk-fakes.ts";
 
 /**
@@ -167,7 +167,7 @@ test("fail closed on arrival: our listings unreadable means no matches of ours, 
 
 test("the desk: the holder gets the match on their listing; the requester gets theirs; unheld and unassigned are owners only", () => {
   const mk = (id: string, phone: string, ours: { holder: number | null }[]): LiveEntry => ({
-    messageId: id, senderPhone: phone, receivedAt: "2026-11-14T03:00:00Z", request: RENT, status: "matched", matches: [],
+    messageId: id, requestId: requestIdOf(id), senderPhone: phone, receivedAt: "2026-11-14T03:00:00Z", request: RENT, status: "matched", matches: [],
     ours: ours.map((o, i) => ({ title: `${id}-ours-${i}`, url: null, area: "Westmoorings", price: null, beds: 2, source: "1on1 Realtors", reason: "r", holder: o.holder })),
   });
   const rows = [

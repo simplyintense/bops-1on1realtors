@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LiveMatchStatus, LiveRequest } from "../flow/live-match.ts";
 import type { GroupConsent, Kind, MarketIngestItem } from "../flow/periskope.ts";
+import { applyStatus, type MatchStatus, type StatusRow } from "../flow/match-status.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
 
@@ -12,6 +13,12 @@ import { appendJsonl } from "./jsonl.ts";
  * 0600 files. Appends use appendJsonl; deletes and consent updates rewrite the file through a temp file
  * and a rename, so a crash leaves the old file or the new one, never half of each.
  */
+
+/**
+ * The desk's id for a WhatsApp request: the first 24 hex characters of the SHA-256 of its message id. The message id can
+ * carry a sender's number, so the pages and the status buttons only ever see this.
+ */
+export const requestIdOf = (messageId: string): string => createHash("sha256").update(messageId).digest("hex").slice(0, 24);
 
 export type SeenRow = { id: string; senderPhone: string | null; kind: Kind; at: string };
 export type OptOutRow = { senderPhone: string; at: string };
@@ -25,6 +32,8 @@ export type LeadRow = { leadId: string; messageId: string; senderPhone: string; 
  */
 export type LiveRow = {
   messageId: string;
+  /** Derived on read by live(), never stored: requestIdOf(messageId). */
+  requestId: string;
   chatId: string;
   senderPhone: string;
   receivedAt: string;
@@ -55,6 +64,7 @@ const FILES = {
   market: "market-outbox.jsonl",
   leads: "leads.jsonl",
   live: "live-matches.jsonl",
+  matchStatus: "match-status.jsonl",
 } as const;
 
 export type Collection = keyof typeof FILES;
@@ -184,19 +194,42 @@ export class PeriskopeStore {
   /* ---- WhatsApp buyer requests and their live matches ---- */
 
   live(): LiveRow[] {
-    return this.rows<LiveRow>("live");
+    return this.storedLive().map((r) => ({ ...r, requestId: requestIdOf(r.messageId) }));
   }
 
-  addLive(row: LiveRow): void {
+  private storedLive(): Omit<LiveRow, "requestId">[] {
+    return this.rows<Omit<LiveRow, "requestId">>("live");
+  }
+
+  addLive(row: Omit<LiveRow, "requestId">): void {
     this.add("live", row);
   }
 
-  updateLive(messageId: string, patch: Partial<Omit<LiveRow, "messageId">>): LiveRow | null {
-    const all = this.live();
+  updateLive(messageId: string, patch: Partial<Omit<LiveRow, "messageId" | "requestId">>): LiveRow | null {
+    const all = this.storedLive();
     const i = all.findIndex((r) => r.messageId === messageId);
     if (i < 0) return null;
     all[i] = { ...all[i], ...patch, messageId };
     this.replace("live", all);
-    return all[i];
+    return { ...all[i], requestId: requestIdOf(messageId) };
+  }
+
+  /* ---- match follow-up: a status per request and listing (Bops's own record; nothing is sent) ---- */
+
+  matchStatuses(): StatusRow[] {
+    return this.rows<StatusRow>("matchStatus");
+  }
+
+  /** Sets (or with null, clears) one status. The same status again writes nothing. */
+  setMatchStatus(c: { requestId: string; listingKey: string; status: MatchStatus | null; by: string | null; at: string }): { changed: boolean } {
+    const next = applyStatus(this.matchStatuses(), c);
+    if (next.changed) this.replace("matchStatus", next.rows);
+    return { changed: next.changed };
+  }
+
+  /** Drops the statuses whose request is no longer live (purged, or the sender opted out). */
+  pruneMatchStatuses(): void {
+    const ids = new Set(this.live().map((r) => r.requestId));
+    this.removeWhere<StatusRow>("matchStatus", (r) => !ids.has(r.requestId));
   }
 }

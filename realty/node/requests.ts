@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { emailAllowed, parseAllowlist } from "../../lib/gate.ts";
+import { emailAllowed, ownerAllowed, parseAllowlist } from "../../lib/gate.ts";
 import { CRM_UNREACHABLE_TEXT, toMatchListing, type CrmListingsState, type CrmSeam } from "../flow/crm-seam.ts";
 import { digestOf, liveDesk, type Digest, type LiveDesk } from "../flow/live-match.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
@@ -32,7 +32,9 @@ function clientFrom(o: Opts): MarketClient | null {
   return cfg ? new MarketClient(cfg, o.fetcher) : null;
 }
 
-export async function staffRequests(c: RequestCriteria, o: Opts & { limit?: number } = {}): Promise<RequestsResult> {
+/** The market's buyer requests. Owners only (ownerAllowed): anyone else gets { status: "owners-only" } and the market isn't called. */
+export async function staffRequests(c: RequestCriteria, o: Opts & { limit?: number; email?: string | null } = {}): Promise<RequestsResult> {
+  if (!ownerAllowed(o.email, o.env ?? runtimeEnv())) return { status: "owners-only" };
   try {
     return await searchRequests(c, clientFrom(o), o.limit ?? REQUEST_LIMIT);
   } catch {
@@ -45,7 +47,7 @@ export async function staffRequests(c: RequestCriteria, o: Opts & { limit?: numb
  * agencies' requests); everyone gets their own WhatsApp requests' live matches once the CRM seam knows their number.
  * Our listings come from the CRM seam (not connected yet). `intakeRoot` and `seam` are for tests.
  */
-export async function staffRecommendations(o: Opts & { email: string | null; listings?: DeskListing[] | null; intakeRoot?: string; seam?: CrmSeam }): Promise<DeskView> {
+export async function staffRecommendations(o: Opts & { email: string | null; listings?: DeskListing[] | null; intakeRoot?: string; seam?: CrmSeam; showHidden?: boolean }): Promise<DeskView> {
   const env = o.env ?? runtimeEnv();
   const seam = o.seam ?? crmSeamFromEnv(env);
   const [crm, agents] = await Promise.all([
@@ -69,15 +71,16 @@ export async function staffRecommendations(o: Opts & { email: string | null; lis
     requests,
     caller,
   });
-  const rows = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot()).live();
-  return { ...recs, live: liveDesk({ email: o.email, owner: recs.owner, agents, rows }), crm: crm.status, crmText: crm.status === "ok" ? null : crm.text };
+  const store = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot());
+  const live = liveDesk({ email: o.email, owner: recs.owner, agents, rows: store.live(), statuses: store.matchStatuses(), showHidden: o.showHidden });
+  return { ...recs, live, crm: crm.status, crmText: crm.status === "ok" ? null : crm.text };
 }
 
-/** The owners' daily digest (app/realty/digest). Anyone who isn't an owner gets { owner: false } and no data. */
+/** The owners' daily digest (app/realty/digest). Anyone who isn't an owner (ownerAllowed) gets { owner: false } and no data. */
 export async function staffDigest(o: { email: string | null; env?: Env; intakeRoot?: string; now?: Date; seam?: CrmSeam }): Promise<{ owner: false } | { owner: true; digest: Digest; crmText: string | null }> {
   const env = o.env ?? runtimeEnv();
-  if (!o.email || !emailAllowed(o.email, parseAllowlist(env.BOPS_OWNER_EMAILS ?? ""))) return { owner: false };
-  const rows = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot()).live();
+  if (!ownerAllowed(o.email, env)) return { owner: false };
+  const store = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot());
   const crm = await (o.seam ?? crmSeamFromEnv(env)).listings();
-  return { owner: true, digest: digestOf(rows, o.now ?? new Date()), crmText: crm.status === "ok" ? null : crm.text };
+  return { owner: true, digest: digestOf(store.live(), o.now ?? new Date(), 24, store.matchStatuses()), crmText: crm.status === "ok" ? null : crm.text };
 }

@@ -27,7 +27,7 @@ import {
 } from "../flow/periskope.ts";
 import type { CrmSource, Listing } from "../flow/source.ts";
 import { sharedCrmSource } from "./crm-shared.ts";
-import { emailAllowed, GATE_COOKIE, gateConfig, parseAllowlist, publicDemo, readSession } from "../../lib/gate.ts";
+import { GATE_COOKIE, gateConfig, ownerAllowed, publicDemo, readSession } from "../../lib/gate.ts";
 import { appendJsonl } from "./jsonl.ts";
 import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
 
@@ -41,7 +41,7 @@ import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type 
  *
  * Files under root (default .data/realty/periskope, 0700 dir, 0600 files):
  *   seen.jsonl, opt-out.jsonl, consent.jsonl, market-outbox.jsonl, leads.jsonl, live-matches.jsonl,
- *   flow-state.json (the lead flow's snapshot), outbox.jsonl (dry-run client/agent messages).
+ *   match-status.jsonl (the desk's follow-up per match), flow-state.json (the lead flow's snapshot), outbox.jsonl (dry-run client/agent messages).
  * The area aliases and pair records are a sibling store: areas/ next to root (realty/node/area-store.ts).
  *
  * One intake or staff change runs at a time in this process (exclusive below). Across several processes
@@ -139,7 +139,7 @@ async function oursFor(request: LiveRequest, c: Ctx) {
 let chain: Promise<unknown> = Promise.resolve();
 
 /** Runs one job at a time in this process, so two deliveries can't both read the same state and write it twice. */
-function exclusive<T>(job: () => T | Promise<T>): Promise<T> {
+export function exclusive<T>(job: () => T | Promise<T>): Promise<T> {
   const run = chain.then(job, job);
   chain = run.catch(() => undefined);
   return run;
@@ -379,6 +379,7 @@ export function purgeExpiredPeriskope(store: PeriskopeStore, now: Date, env: Env
   const leads = store.removeWhere<LeadRow>("leads", (r) => leadIds.has(r.leadId)).length;
   const liveDue = new Set(recordsDueForPurge(store.live(), now, requestDays).map((r) => r.messageId));
   store.removeWhere<LiveRow>("live", (r) => liveDue.has(r.messageId));
+  store.pruneMatchStatuses();
   const marketN = store.removeWhere<MarketOutboxRow>("market", (r) => marketIds.has(r.localId)).length;
   const seenN = store.removeWhere<SeenRow>("seen", (r) => seenDue.has(r.id) || messageIds.has(r.id) || liveDue.has(r.id)).length;
   return { leads, market: marketN, seen: seenN, leadIds: [...leadIds] };
@@ -439,6 +440,7 @@ export function optOutSender(senderPhone: string, o: IntakeOptions = {}): Promis
     }).length;
     const seen = c.store.removeWhere<SeenRow>("seen", (r) => r.senderPhone === senderPhone).length;
     c.store.removeWhere<LiveRow>("live", (r) => r.senderPhone === senderPhone);
+    c.store.pruneMatchStatuses();
     dropFromFlowState(c.root, leadIds);
     await queueMarket(c, { kind: "optout", senderHash: senderHashOf(senderPhone) });
     return { senderPhone, added, leads: leadIds.length, market, seen };
@@ -498,16 +500,19 @@ export async function staffAccess(request: Request, env: Env = runtimeEnv()): Pr
 }
 
 /**
- * staffAccess, then owners only (BOPS_OWNER_EMAILS): 403 for a signed-in non-owner. With the login gate off (the Mac app,
- * dev) there's no session to check, so the window token in proxy.ts stays the check, as for staffAccess.
+ * staffAccess, then owners only (BOPS_OWNER_EMAILS, ownerAllowed): 403 for a signed-in non-owner. With the login gate off (the
+ * Mac app, dev) there's no session to check, so the window token in proxy.ts stays the check, as for staffAccess.
  */
 export async function ownerAccess(request: Request, env: Env = runtimeEnv()): Promise<Reply | null> {
   const denied = await staffAccess(request, env);
   if (denied) return denied;
+  return ownerAllowed(await staffEmail(request, env), env) ? null : reply(403, { error: "Owners only." });
+}
+
+/** The signed-in staff email, or null (gate off, or no valid session). Call after staffAccess has let the request through. */
+export async function staffEmail(request: Request, env: Env = runtimeEnv()): Promise<string | null> {
   const cfg = gateConfig(env);
-  if (!cfg || cfg === "misconfigured") return null;
-  const email = await readSession(cookieNamed(request, GATE_COOKIE), cfg);
-  return email && emailAllowed(email, parseAllowlist(env.BOPS_OWNER_EMAILS ?? "")) ? null : reply(403, { error: "Owners only." });
+  return cfg && cfg !== "misconfigured" ? readSession(cookieNamed(request, GATE_COOKIE), cfg) : null;
 }
 
 function cookieNamed(request: Request, name: string): string | undefined {

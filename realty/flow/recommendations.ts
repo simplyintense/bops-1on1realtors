@@ -109,6 +109,7 @@ function usableRequests(rows: BuyerRequest[]): BuyerRequest[] {
 
 async function buyerSide(input: RecommendationsInput): Promise<BuyerSide> {
   const r = input.requests;
+  if (r.status === "owners-only") return { buyers: { status: "owners-only" }, unassigned: [] };
   if (r.status === "not-configured") return { buyers: { status: "not-configured" }, unassigned: [] };
   if (r.status === "error") return { buyers: { status: "error", reason: r.reason }, unassigned: [] };
   const newest = usableRequests(r.rows);

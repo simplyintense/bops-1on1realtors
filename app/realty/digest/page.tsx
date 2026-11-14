@@ -1,42 +1,25 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
-import { GATE_COOKIE, gateConfig, readSession } from "@/lib/gate";
+import { redirect } from "next/navigation";
 import { staffDigest } from "@/realty/node/requests.ts";
 import { Cards, portOfSpainTime } from "../desk/recommendations-panel";
 import { Notice } from "../notice";
+import { viewer } from "../viewer";
 import { ReplayButton } from "./replay-button";
 
 /**
  * The owners' daily digest: the last 24 hours of buyer requests from the agents' WhatsApp group (Periskope intake), with
- * their live matches, and the sample replay. Owners only (BOPS_OWNER_EMAILS); anyone else gets a notice and no data. Read
- * only: nothing here sends a message or writes to the CRM. The replay is a dry run (realty/node/replay.ts).
+ * every match and its follow-up (who set it, and when), and the sample replay. Owners only (BOPS_OWNER_EMAILS): anyone else
+ * is sent to the desk, and no data is read for them. Read only apart from the follow-up buttons, which write Bops's own
+ * record and nothing else. The replay is a dry run (realty/node/replay.ts).
  */
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Daily digest · 1on1 Realtors", robots: { index: false, follow: false } };
 
-async function signedInEmail(): Promise<string | null> {
-  try {
-    const cfg = gateConfig();
-    if (!cfg || cfg === "misconfigured") return null;
-    return await readSession((await cookies()).get(GATE_COOKIE)?.value, cfg);
-  } catch {
-    return null;
-  }
-}
-
 export default async function RealtyDigest() {
-  const view = await staffDigest({ email: await signedInEmail() });
-  if (!view.owner) {
-    return (
-      <main className="mx-auto w-full max-w-5xl px-5 py-10">
-        <h1 className="text-3xl font-semibold">Daily digest</h1>
-        <div className="mt-6">
-          <Notice>The daily digest is for the owners. Your own requests&apos; matches are on the desk.</Notice>
-        </div>
-      </main>
-    );
-  }
+  const { email } = await viewer();
+  const view = await staffDigest({ email });
+  if (!view.owner) redirect("/realty/desk");
   const d = view.digest;
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
@@ -66,7 +49,7 @@ export default async function RealtyDigest() {
         </h2>
         <div className="mt-4">
           {d.cards.length ? (
-            <Cards cards={d.cards} />
+            <Cards cards={d.cards} detail />
           ) : (
             <Notice>No WhatsApp buyer requests in the last 24 hours. Until the agents&apos; group is connected, the replay below shows it working.</Notice>
           )}
