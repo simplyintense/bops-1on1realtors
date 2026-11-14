@@ -14,8 +14,13 @@ import { DryRunOutbox } from "../flow/outbox.ts";
 import {
   consentIsComplete,
   decide,
+  envelopeOf,
+  interpret,
   marketWriteConfigFromEnv,
+  parseMessage,
+  phoneOf,
   postMarketItem,
+  postRecordOf,
   recordsDueForPurge,
   retentionFromEnv,
   toMarketGroupItem,
@@ -24,6 +29,7 @@ import {
   type GroupConsent,
   type MarketIngestItem,
   type MarketSourceItem,
+  type PostRecord,
 } from "../flow/periskope.ts";
 import type { CrmSource, Listing } from "../flow/source.ts";
 import { sharedCrmSource } from "./crm-shared.ts";
@@ -187,8 +193,79 @@ async function ingest(text: string, c: Ctx): Promise<Reply> {
     consentOf: (chatId) => c.store.consent(chatId),
     seen: (id) => c.store.isSeen(id),
   });
+  if (d.action === "ignore" && d.reason === "already seen") await refillPost(c, payload);
   return act(d, c);
 }
+
+/**
+ * Ingest a trusted event (already authenticated, e.g. a backfill from the Periskope read API). Same
+ * pipeline as the webhook after the signature check. Does not call Periskope, and never sends.
+ */
+export function ingestEvent(payload: unknown, o: IntakeOptions = {}): Promise<Reply> {
+  return exclusive(() => ingest(JSON.stringify(payload), context(o)));
+}
+
+/** Store the structured post. For listing posts only, also try to save photos under root/media. Idempotent: a second call only fills missing text or photos. */
+async function keepPost(c: Ctx, post: PostRecord): Promise<void> {
+  const existing = c.store.post(post.messageId);
+  const listing = post.category === "listing_for_sale" || post.category === "listing_for_rent" || post.category === "cobroke";
+  const needPhotos = listing && (!(existing?.mediaFiles && existing.mediaFiles.length)) && (post.mediaUrls?.length ?? 0) > 0;
+  const urls = needPhotos ? (post.mediaUrls ?? []) : [];
+  const saved = urls.length ? await saveListingPhotos(c.root, post.messageId, urls, c.fetch) : { files: existing?.mediaFiles ?? [] };
+  const row = listing ? { ...post, mediaUrls: post.mediaUrls ?? existing?.mediaUrls, mediaFiles: saved.files.length ? saved.files : existing?.mediaFiles } : { ...post, mediaUrls: undefined, mediaFiles: undefined };
+  c.store.upsertPost(row);
+}
+
+/**
+ * If this message is already stored without originalText, fill it in (and a missing post row) without
+ * rematching. Does not log the text.
+ */
+async function refillPost(c: Ctx, payload: unknown): Promise<void> {
+  const e = envelopeOf(payload);
+  const m = e ? parseMessage(e.data) : null;
+  if (!m?.hasText) return;
+  const phone = phoneOf(m.sender);
+  if (!phone) return;
+  const sentAt = m.sentAt ?? c.now.toISOString();
+  const post = postRecordOf({ message: m, phone, interpretation: interpret(m.body), sentAt });
+  await keepPost(c, post);
+}
+
+/** Listing photos only: write each URL under root/media/<hash>/, 0700/0600. Failures leave the URL on the post. */
+export async function saveListingPhotos(root: string, messageId: string, urls: string[], fetcher: typeof fetch = fetch): Promise<{ files: string[] }> {
+  const dirName = createHash("sha256").update(messageId).digest("hex").slice(0, 24);
+  const dir = join(root, "media", dirName);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const files: string[] = [];
+  for (const [i, url] of urls.entries()) {
+    try {
+      const r = await fetcher(url, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(15000) });
+      if (!r.ok) continue;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (!buf.length) continue;
+      const ext = extOf(r.headers.get("content-type") ?? "", url);
+      const name = `${String(i + 1).padStart(2, "0")}${ext}`;
+      writeFileSync(join(dir, name), buf, { mode: 0o600 });
+      files.push(`media/${dirName}/${name}`);
+    } catch {
+      // A failed download is not a failed ingest; the URL stays on the post.
+    }
+  }
+  return { files };
+}
+
+function extOf(ct: string, url: string): string {
+  const t = ct.toLowerCase();
+  if (t.includes("png")) return ".png";
+  if (t.includes("webp")) return ".webp";
+  if (t.includes("gif")) return ".gif";
+  if (t.includes("jpeg") || t.includes("jpg")) return ".jpg";
+  const m = /\.(jpe?g|png|webp|gif)(?:\?|$)/i.exec(url);
+  if (!m) return ".bin";
+  const ext = m[1].toLowerCase();
+  return ext === "jpeg" ? ".jpg" : `.${ext}`;
+}
+
 
 async function act(d: Decision, c: Ctx): Promise<Reply> {
   const at = c.now.toISOString();
@@ -201,20 +278,23 @@ async function act(d: Decision, c: Ctx): Promise<Reply> {
       console.info(`periskope: dropped not allowlisted, total=${droppedNotAllowlisted} reason=${d.reason}`);
       return reply(200, { result: "dropped: not allowlisted" });
     case "other":
-      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "other", at });
+      await keepPost(c, d.post);
+      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "other", at: d.post.sentAt });
       return reply(200, { result: "dropped: not a buyer request or a co-broke listing" });
     case "cobroke_listing":
       if (d.item) await queueMarket(c, d.item);
-      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "cobroke_listing", at });
+      await keepPost(c, d.post);
+      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "cobroke_listing", at: d.post.sentAt });
       return reply(200, { result: d.item ? "listing recorded for market-ingest" : "listing noted (not enough fields for market-ingest)" });
     case "buyer_request": {
       // With a CRM the request also enters the lead flow (routing, timeouts, dry-run messages only); without one, or if the
       // CRM can't be reached, it is still stored and matched.
       const lead = c.crm ? await receive(d.inquiry, c, c.crm).catch(() => null) : null;
-      if (lead) c.store.addLead({ leadId: lead.id, messageId: d.messageId, senderPhone: d.phone, receivedAt: at });
+      if (lead) c.store.addLead({ leadId: lead.id, messageId: d.messageId, senderPhone: d.phone, receivedAt: d.post.sentAt });
       const request = liveRequestOf(d.facts);
-      c.store.addLive({ messageId: d.messageId, chatId: d.chatId, senderPhone: d.phone, receivedAt: at, request, status: "pending", matchedAt: null, matches: [] });
-      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at });
+      c.store.addLive({ messageId: d.messageId, chatId: d.chatId, senderPhone: d.phone, receivedAt: d.post.sentAt, request, status: "pending", matchedAt: null, matches: [] });
+      await keepPost(c, d.post);
+      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at: d.post.sentAt });
       if (d.item) await queueMarket(c, d.item);
       // Seen is marked first, so a slow or failed match never makes Periskope deliver the message twice.
       const [m, ours] = await Promise.all([matchOnArrival(request, d.messageId, at, c.market), oursFor(request, c)]);
@@ -390,6 +470,11 @@ export function purgeExpiredPeriskope(store: PeriskopeStore, now: Date, env: Env
   store.pruneMatchStatuses();
   const marketN = store.removeWhere<MarketOutboxRow>("market", (r) => marketIds.has(r.localId)).length;
   const seenN = store.removeWhere<SeenRow>("seen", (r) => seenDue.has(r.id) || messageIds.has(r.id) || liveDue.has(r.id)).length;
+  store.removeWhere<PostRecord>("posts", (r) => {
+    const listing = r.category === "listing_for_sale" || r.category === "listing_for_rent" || r.category === "cobroke";
+    const days = listing ? listingDays : requestDays;
+    return Date.parse(r.sentAt) < now.getTime() - days * 86_400_000 || messageIds.has(r.messageId) || liveDue.has(r.messageId) || seenDue.has(r.messageId);
+  });
   return { leads, market: marketN, seen: seenN, leadIds: [...leadIds] };
 }
 
@@ -448,6 +533,7 @@ export function optOutSender(senderPhone: string, o: IntakeOptions = {}): Promis
     }).length;
     const seen = c.store.removeWhere<SeenRow>("seen", (r) => r.senderPhone === senderPhone).length;
     c.store.removeWhere<LiveRow>("live", (r) => r.senderPhone === senderPhone);
+    c.store.removeWhere<PostRecord>("posts", (r) => r.senderPhone === senderPhone);
     c.store.pruneMatchStatuses();
     dropFromFlowState(c.root, leadIds);
     await queueMarket(c, { kind: "optout", senderHash: senderHashOf(senderPhone) });
@@ -466,19 +552,20 @@ const definedOnly = <T extends object>(o: T): Partial<T> => Object.fromEntries(O
 
 /**
  * Creates or updates a group's consent record. Partial: a field left out stays as it was. A group is
- * accepted only once both noticePostedAt and adminOkAt are set and active is not false. When the record
- * becomes complete, kind=group (active: true) is queued for market-ingest. Revoke with active: false
- * (the same call, not by clearing adminOkAt).
+ * accepted only once adminOkAt is set and either noticePostedAt or noticeWaivedAt is set, and active is
+ * not false. When the record becomes complete, kind=group (active: true) is queued for market-ingest.
+ * Revoke with active: false (the same call, not by clearing adminOkAt).
  */
 export function setConsent(patch: ConsentPatch, o: IntakeOptions = {}): Promise<GroupConsent> {
   return exclusive(async () => {
     const c = context(o);
-    const base: GroupConsent = c.store.consent(patch.chatId) ?? { chatId: patch.chatId, groupName: null, noticePostedAt: null, adminOkBy: null, adminOkAt: null, active: true };
+    const base: GroupConsent = c.store.consent(patch.chatId) ?? { chatId: patch.chatId, groupName: null, noticePostedAt: null, noticeWaivedAt: null, noticeWaivedBy: null, adminOkBy: null, adminOkAt: null, active: true };
     const before = { complete: consentIsComplete(base) && base.active !== false, active: base.active !== false };
     const raw = { ...base, ...definedOnly(patch) };
     const next = c.store.setConsent({
       ...raw,
       noticePostedAt: isoOrSame(raw.noticePostedAt),
+      noticeWaivedAt: isoOrSame(raw.noticeWaivedAt ?? null),
       adminOkAt: isoOrSame(raw.adminOkAt),
     });
     const complete = consentIsComplete(next) && next.active !== false;

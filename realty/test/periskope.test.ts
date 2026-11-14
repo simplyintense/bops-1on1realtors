@@ -15,6 +15,7 @@ import {
   aliasItem,
   marketWriteConfigFromEnv,
   parseConsentPatch,
+  categoryOf,
   postMarketItem,
   recordsDueForPurge,
   retentionFromEnv,
@@ -151,7 +152,7 @@ test("a wrong event type, a message from us, media, and a 1:1 chat are ignored w
   await withConsent(w);
   assert.equal((await w.post(envelope({ event_type: "message.updated" }))).status, 200);
   assert.match(String((await w.post(envelope({}, { from_me: true }))).body.result), /sent by us/);
-  assert.match(String((await w.post(envelope({}, { message_type: "image", has_media: true, body: "photo" }))).body.result), /not a text message/);
+  assert.match(String((await w.post(envelope({}, { message_type: "image", has_media: true, body: "" }))).body.result), /not a text message/);
   assert.match(String((await w.post(envelope({}, { chat_id: "18685550201@c.us" }))).body.result), /dropped: not allowlisted/);
 });
 
@@ -544,3 +545,87 @@ test("senderHashOf is a stable sha256 hex of the number", () => {
   assert.equal(senderHashOf("+18685550201"), senderHashOf("+18685550201"));
 });
 
+
+/* ---------------- Owner waiver, captions, original text ---------------- */
+
+test("an owner waiver plus admin OK accepts the group, without inventing noticePostedAt", async () => {
+  const w = world();
+  await setConsent({ chatId: CHAT, groupName: GROUP, noticeWaivedAt: "2026-11-14T13:39:00Z", noticeWaivedBy: "owner", adminOkBy: "Miles Abraham", adminOkAt: "2026-11-14T13:39:00Z" }, w.opts);
+  const consent = w.store().consent(CHAT);
+  assert.equal(consent?.noticePostedAt ?? null, null);
+  assert.ok(consent?.noticeWaivedAt);
+  const r = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-waiver" }));
+  assert.match(String(r.body.result), /listing recorded/);
+  const waivedOnly = world();
+  await setConsent({ chatId: CHAT, noticeWaivedAt: "2026-11-14T13:39:00Z", noticeWaivedBy: "owner" }, waivedOnly.opts);
+  assert.match(String((await waivedOnly.post(envelope({}, { body: LISTING_TEXT, message_id: "m-waiver-only" }))).body.result), /group not accepted/);
+});
+
+test("noticeWaivedBy is rejected when it is a phone number", () => {
+  const bad = parseConsentPatch({ chatId: CHAT, noticeWaivedBy: "868-555-0201" });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.match(bad.error, /phone/);
+});
+
+test("a captioned listing image is stored with photos and original text; a non-listing image is not given photos", async () => {
+  const w = world();
+  await withConsent(w);
+  const listed = await w.post(envelope({}, {
+    body: LISTING_TEXT,
+    message_id: "m-photo-listing",
+    message_type: "image",
+    has_media: true,
+    media: { path: "https://example.com/listing.jpg", mimetype: "image/jpeg" },
+    contact_name: "Agent Ann",
+    timestamp: "2026-11-10T14:00:00.000Z",
+  }));
+  assert.match(String(listed.body.result), /listing recorded/);
+  const post = w.store().post("m-photo-listing");
+  assert.equal(post?.category, "listing_for_sale");
+  assert.equal(post?.cobroke, true);
+  assert.equal(post?.originalText, LISTING_TEXT);
+  assert.equal(post?.senderName, "Agent Ann");
+  assert.deepEqual(post?.mediaUrls, ["https://example.com/listing.jpg"]);
+  assert.ok(post?.mediaFiles && post.mediaFiles.length === 1);
+  assert.equal(post?.sentAt, "2026-11-10T14:00:00.000Z");
+
+  const other = await w.post(envelope({}, {
+    body: OTHER_TEXT,
+    message_id: "m-photo-other",
+    message_type: "image",
+    has_media: true,
+    media: { path: "https://example.com/chat.jpg" },
+  }));
+  assert.match(String(other.body.result), /not a buyer request/);
+  const otherPost = w.store().post("m-photo-other");
+  assert.equal(otherPost?.category, "other");
+  assert.equal(otherPost?.originalText, OTHER_TEXT);
+  assert.equal(otherPost?.mediaUrls, undefined);
+});
+
+test("a second delivery of an already-seen post refills missing original text and does not duplicate", async () => {
+  const w = world();
+  await withConsent(w);
+  await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-refill" }));
+  const first = w.store().post("m-refill");
+  assert.ok(first);
+  w.store().updatePost("m-refill", { originalText: null });
+  assert.equal(w.store().post("m-refill")?.originalText, null);
+  const listingsBefore = w.store().market().filter((r) => r.item.kind === "listing").length;
+  const again = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-refill" }));
+  assert.match(String(again.body.result), /already seen/);
+  assert.equal(w.store().post("m-refill")?.originalText, LISTING_TEXT);
+  assert.equal(w.store().posts().filter((p) => p.messageId === "m-refill").length, 1);
+  assert.equal(w.store().market().filter((r) => r.item.kind === "listing").length, listingsBefore);
+});
+
+test("categoryOf splits rental requests from buyer requests, and sale listings from rent listings", () => {
+  assert.equal(categoryOf(interpret(REQUEST_TEXT), REQUEST_TEXT).category, "rental_request");
+  assert.equal(categoryOf(interpret("Client looking for 2 bed house Maraval under 1.2M"), "Client looking for 2 bed house Maraval under 1.2M").category, "buyer_request");
+  const sale = categoryOf(interpret(LISTING_TEXT), LISTING_TEXT);
+  assert.equal(sale.category, "listing_for_sale");
+  assert.equal(sale.cobroke, true);
+  const rentListing = "2 bed apartment Westmoorings for rent TT$8,000 available";
+  const rent = categoryOf(interpret(rentListing), rentListing);
+  assert.equal(rent.category, "listing_for_rent");
+});

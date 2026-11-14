@@ -7,6 +7,7 @@ const PAGES = [
   { href: "/realty/desk", label: "Desk", ownerOnly: false },
   { href: "/realty/market", label: "Market search", ownerOnly: false },
   { href: "/realty/requests", label: "Requests", ownerOnly: true },
+  { href: "/realty/posts", label: "Group posts", ownerOnly: true },
   { href: "/realty/digest", label: "Digest", ownerOnly: true },
 ] as const;
 

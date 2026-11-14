@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LiveMatchStatus, LiveRequest } from "../flow/live-match.ts";
-import type { GroupConsent, Kind, MarketIngestItem } from "../flow/periskope.ts";
+import type { GroupConsent, Kind, MarketIngestItem, PostRecord } from "../flow/periskope.ts";
 import { applyStatus, type MatchStatus, type StatusRow } from "../flow/match-status.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
@@ -65,6 +65,7 @@ const FILES = {
   leads: "leads.jsonl",
   live: "live-matches.jsonl",
   matchStatus: "match-status.jsonl",
+  posts: "posts.jsonl",
 } as const;
 
 export type Collection = keyof typeof FILES;
@@ -129,6 +130,53 @@ export class PeriskopeStore {
 
   markSeen(row: SeenRow): void {
     this.add("seen", row);
+  }
+
+  /* ---- structured posts (no message body) ---- */
+
+  posts(): PostRecord[] {
+    return this.rows<PostRecord>("posts");
+  }
+
+  post(messageId: string): PostRecord | null {
+    return this.posts().find((r) => r.messageId === messageId) ?? null;
+  }
+
+  /** False if this messageId is already stored. */
+  addPost(row: PostRecord): boolean {
+    if (this.post(row.messageId)) return false;
+    this.add("posts", row);
+    return true;
+  }
+
+  /**
+   * Insert a post, or fill only fields that were missing (originalText, photos, senderName). Does not
+   * duplicate, and does not overwrite text that is already stored.
+   */
+  upsertPost(row: PostRecord): "added" | "refilled" | "unchanged" {
+    const existing = this.post(row.messageId);
+    if (!existing) {
+      this.add("posts", row);
+      return "added";
+    }
+    const patch: Partial<PostRecord> = {};
+    if (!existing.originalText && row.originalText) patch.originalText = row.originalText;
+    if (!existing.senderName && row.senderName) patch.senderName = row.senderName;
+    if ((!existing.mediaFiles || !existing.mediaFiles.length) && row.mediaFiles?.length) patch.mediaFiles = row.mediaFiles;
+    if ((!existing.mediaUrls || !existing.mediaUrls.length) && row.mediaUrls?.length) patch.mediaUrls = row.mediaUrls;
+    if (!Object.keys(patch).length) return "unchanged";
+    this.updatePost(row.messageId, patch);
+    return "refilled";
+  }
+
+  updatePost(messageId: string, patch: Partial<PostRecord>): PostRecord | null {
+    const all = this.posts();
+    const i = all.findIndex((r) => r.messageId === messageId);
+    if (i < 0) return null;
+    const next = { ...all[i], ...patch, messageId };
+    all[i] = next;
+    this.replace("posts", all);
+    return next;
   }
 
   /* ---- opt-outs (normalized sender numbers) ---- */
