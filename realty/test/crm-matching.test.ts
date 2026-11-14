@@ -137,7 +137,7 @@ test("our listings match by the co-broke rules: rent vs sale, same or nearby are
 function world(ours: { listings: () => Promise<Listing[]> } | null) {
   const root = mkdtempSync(join(tmpdir(), "crm-match-"));
   const KEY = "k";
-  const opts = { root, env: { PERISKOPE_SIGNING_KEY: KEY }, now: () => new Date("2026-11-14T04:00:00Z"), crm: null, ours, market: fakeCaller({ match_buyer: { matches: [] } }).caller, fetch: (async () => { throw new Error("no network"); }) as typeof fetch };
+  const opts = { root, env: { PERISKOPE_SIGNING_KEY: KEY, PERISKOPE_ALLOWED_CHAT_IDS: SAMPLE_CHAT }, now: () => new Date("2026-11-14T04:00:00Z"), crm: null, ours, market: fakeCaller({ match_buyer: { matches: [] } }).caller, fetch: (async () => { throw new Error("no network"); }) as typeof fetch };
   const post = (payload: unknown) => {
     const raw = Buffer.from(JSON.stringify(payload));
     return handleWebhook(raw, createHmac("sha256", KEY).update(raw).digest("hex"), opts);

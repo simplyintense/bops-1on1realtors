@@ -386,6 +386,7 @@ never inline. Item payloads do not include a consent field; the group is allowli
 Config:
 
 - `PERISKOPE_SIGNING_KEY`: required for the webhook to accept posts.
+- `PERISKOPE_ALLOWED_GROUPS`: exact group names, `|`-separated. `PERISKOPE_ALLOWED_CHAT_IDS`: exact `@g.us` chat ids, `|`-separated. A group is read only if its name or id is listed; both empty drops every message (deny by default). Direct messages are always dropped. Names come from the webhook's `chat_name`; a group with no name is dropped when only names are listed. Dropped messages are counted in the log, never their content.
 - `PERISKOPE_ALLOWED_CHATS`: optional extra comma-separated chat ids. Empty or unset means consent
   records alone decide (an empty list is not "accept none").
 - `PERISKOPE_REQUEST_RETENTION_DAYS`: default `60` (buyer requests and their seen metadata).

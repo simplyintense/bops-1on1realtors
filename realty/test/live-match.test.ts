@@ -39,7 +39,7 @@ const HIT = {
 
 function world(market = fakeCaller({ match_buyer: { matches: [HIT] } })) {
   const root = mkdtempSync(join(tmpdir(), "live-match-"));
-  const opts = { root, env: { PERISKOPE_SIGNING_KEY: KEY }, now: () => NOW, crm: null, market: market.caller, fetch: (async () => { throw new Error("no network in tests"); }) as typeof fetch };
+  const opts = { root, env: { PERISKOPE_SIGNING_KEY: KEY, PERISKOPE_ALLOWED_CHAT_IDS: SAMPLE_CHAT }, now: () => NOW, crm: null, market: market.caller, fetch: (async () => { throw new Error("no network in tests"); }) as typeof fetch };
   const post = (payload: unknown) => {
     const raw = Buffer.from(JSON.stringify(payload));
     return handleWebhook(raw, createHmac("sha256", KEY).update(raw).digest("hex"), opts);

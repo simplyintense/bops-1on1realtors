@@ -52,7 +52,7 @@ export async function replaySamples(o: ReplayOptions = {}): Promise<ReplayResult
   const base = o.env ?? runtimeEnv();
   const root = mkdtempSync(join(tmpdir(), "bops-replay-"));
   const key = randomBytes(32).toString("hex");
-  const env: Env = { ...base, PERISKOPE_SIGNING_KEY: key, PERISKOPE_ALLOWED_CHATS: "", ONEON1_MARKET_WRITE_URL: "", ONEON1_MARKET_INGEST_TOKEN: "" };
+  const env: Env = { ...base, PERISKOPE_SIGNING_KEY: key, PERISKOPE_ALLOWED_CHATS: "", PERISKOPE_ALLOWED_GROUPS: "", PERISKOPE_ALLOWED_CHAT_IDS: SAMPLE_CHAT, ONEON1_MARKET_WRITE_URL: "", ONEON1_MARKET_INGEST_TOKEN: "" };
   const ours = o.ours !== undefined ? o.ours : sharedCrmSource(base);
   const opts = { root, areasRoot: join(root, "areas"), env, crm: null, ours, market: o.market, fetch: o.fetch, now: o.now };
   const deliver = async (m: SampleMessage) => {

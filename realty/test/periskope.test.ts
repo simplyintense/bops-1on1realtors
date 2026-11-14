@@ -29,6 +29,8 @@ import { PeriskopeStore } from "../node/periskope-store.ts";
 
 const KEY = "test-signing-key";
 const CHAT = "120363000000000000@g.us";
+/** The test group's name. The default world allowlists it by name (PERISKOPE_ALLOWED_GROUPS). */
+const GROUP = "Co-broke Tobago";
 const SENDER = "18685550201@c.us";
 const LISTING_TEXT = "3 bed townhouse Maraval TT$1.2M co-broke 50/50";
 const REQUEST_TEXT = "Client looking for 2 bed rental Westmoorings under 8k";
@@ -44,6 +46,7 @@ const envelope = (over: Record<string, unknown> = {}, dataOver: Record<string, u
   data: {
     message_id: "false_" + CHAT + "_aaaaaaaa",
     chat_id: CHAT,
+    chat_name: GROUP,
     sender_phone: SENDER,
     body: REQUEST_TEXT,
     from_me: false,
@@ -79,7 +82,7 @@ function world(env: Record<string, string | undefined> = {}, fetchReplies: { sta
     if (next.error) throw next.error;
     return new Response(JSON.stringify(next.body ?? {}), { status: next.status ?? 200, headers: { "content-type": "application/json" } });
   };
-  const baseEnv = { PERISKOPE_SIGNING_KEY: KEY, ...env };
+  const baseEnv = { PERISKOPE_SIGNING_KEY: KEY, PERISKOPE_ALLOWED_GROUPS: GROUP, ...env };
   const opts = {
     root,
     env: baseEnv,
@@ -149,7 +152,7 @@ test("a wrong event type, a message from us, media, and a 1:1 chat are ignored w
   assert.equal((await w.post(envelope({ event_type: "message.updated" }))).status, 200);
   assert.match(String((await w.post(envelope({}, { from_me: true }))).body.result), /sent by us/);
   assert.match(String((await w.post(envelope({}, { message_type: "image", has_media: true, body: "photo" }))).body.result), /not a text message/);
-  assert.match(String((await w.post(envelope({}, { chat_id: "18685550201@c.us" }))).body.result), /not a group chat/);
+  assert.match(String((await w.post(envelope({}, { chat_id: "18685550201@c.us" }))).body.result), /dropped: not allowlisted/);
 });
 
 test("a group is ignored until both noticePostedAt and adminOkAt are set, and after staff set them it is accepted", async () => {
@@ -169,6 +172,73 @@ test("PERISKOPE_ALLOWED_CHATS is an extra restriction when set, and an empty val
   const open = world({ PERISKOPE_ALLOWED_CHATS: "" });
   await withConsent(open);
   assert.match(String((await open.post(envelope({}, { body: LISTING_TEXT, message_id: "m-open" }))).body.result), /listing recorded/);
+});
+
+/* ---------------- Group allowlist (deny by default) ---------------- */
+
+/** Listing and request rows only: setConsent also queues kind=group, which isn't a message. */
+const sourceRows = (w: ReturnType<typeof world>) => w.store().market().filter((row) => row.item.kind === "listing" || row.item.kind === "request");
+
+test("an allowlisted group is stored: its exact name, trimmed, in a |-separated list", async () => {
+  const w = world({ PERISKOPE_ALLOWED_GROUPS: " Other group | Co-broke Tobago " });
+  await withConsent(w);
+  const r = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-allowed" }));
+  assert.match(String(r.body.result), /listing recorded/);
+  assert.ok(w.store().isSeen("m-allowed"));
+  assert.equal(w.store().market().filter((row) => row.item.kind === "listing").length, 1);
+});
+
+test("a message from another group is dropped before it is classified or stored, with 200", async () => {
+  const w = world();
+  await withConsent(w);
+  const r = await w.post(envelope({}, { body: REQUEST_TEXT, message_id: "m-other-group", chat_name: "Area Registered Agents" }));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.result, "dropped: not allowlisted");
+  assert.ok(!w.store().isSeen("m-other-group"), "not marked seen");
+  assert.equal(w.store().leads().length, 0);
+  assert.equal(w.store().live().length, 0);
+  assert.equal(sourceRows(w).length, 0);
+  assert.equal(w.calls.length, 0);
+  const decision = decide({ payload: envelope({}, { body: REQUEST_TEXT, chat_name: "Area Registered Agents" }), at: NOW, env: { PERISKOPE_ALLOWED_GROUPS: GROUP }, optedOut: [], consentOf: () => okConsent(), seen: () => false });
+  assert.deepEqual(decision, { action: "drop", reason: "other-group" });
+});
+
+test("a group with no name in the payload is dropped when only names are allowlisted", async () => {
+  const w = world();
+  await withConsent(w);
+  const r = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-no-name", chat_name: undefined }));
+  assert.equal(r.body.result, "dropped: not allowlisted");
+  assert.equal(sourceRows(w).length, 0);
+});
+
+test("PERISKOPE_ALLOWED_CHAT_IDS pins a group by chat id, and the name in chat.chat_name counts when chat_name is absent", async () => {
+  const byId = world({ PERISKOPE_ALLOWED_GROUPS: "", PERISKOPE_ALLOWED_CHAT_IDS: CHAT });
+  await withConsent(byId);
+  assert.match(String((await byId.post(envelope({}, { body: LISTING_TEXT, message_id: "m-by-id", chat_name: "Renamed" }))).body.result), /listing recorded/);
+  const byNested = world();
+  await withConsent(byNested);
+  const nested = await byNested.post(envelope({}, { body: LISTING_TEXT, message_id: "m-nested", chat_name: undefined, chat: { chat_name: GROUP } }));
+  assert.match(String(nested.body.result), /listing recorded/);
+});
+
+test("a direct message is dropped the same way, even when its name matches", async () => {
+  const w = world();
+  await withConsent(w);
+  const r = await w.post(envelope({}, { chat_id: "18685550201@c.us", body: LISTING_TEXT, message_id: "m-dm" }));
+  assert.equal(r.body.result, "dropped: not allowlisted");
+  assert.ok(!w.store().isSeen("m-dm"));
+  assert.equal(sourceRows(w).length, 0);
+});
+
+test("an empty allowlist drops everything, including a consented group with a matching name", async () => {
+  const w = world({ PERISKOPE_ALLOWED_GROUPS: "", PERISKOPE_ALLOWED_CHAT_IDS: "" });
+  await withConsent(w);
+  const r = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-empty" }));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.result, "dropped: not allowlisted");
+  assert.ok(!w.store().isSeen("m-empty"));
+  assert.equal(sourceRows(w).length, 0);
+  assert.equal(decide({ payload: envelope({}, { body: LISTING_TEXT }), at: NOW, env: {}, optedOut: [], consentOf: () => okConsent(), seen: () => false }).action, "drop");
 });
 
 test("a second delivery of the same message_id is 200 and does not create another record", async () => {

@@ -18,7 +18,9 @@ import { propertyKindFromCrm } from "./taxonomy.ts";
  * name when the text names a firm, and the agent's own number (sender_phone). Never the body, and never
  * a name or phone found in the body. A group is accepted only once staff have recorded its notice and
  * an admin's OK, and the record is still active (consentAllows). An opted-out sender is dropped before
- * the body is read.
+ * the body is read. Deny by default: a message passes the allowlist only from a group named in
+ * PERISKOPE_ALLOWED_GROUPS or whose chat id is in PERISKOPE_ALLOWED_CHAT_IDS (allowlistCheck); anything
+ * else is dropped before consent, classification or storage.
  *
  * Market-ingest (Builder, HOSTING.md on tt-market-search): POST one item at a time. Listing and request
  * items do not carry a consent field; the group is allowlisted separately with kind=group. The adapter
@@ -95,8 +97,11 @@ export type MarketAliasItem = { kind: "alias"; alias: string; canonical: string 
 
 export type MarketIngestItem = MarketSourceItem | MarketOptOutItem | MarketGroupItem | MarketAliasItem;
 
+export type DropReason = "empty-allowlist" | "dm" | "other-group" | "no-name";
+
 export type Decision =
   | { action: "ignore"; reason: string }
+  | { action: "drop"; reason: DropReason }
   | { action: "other"; messageId: string; phone: string }
   | { action: "buyer_request"; messageId: string; chatId: string; phone: string; facts: Facts; inquiry: Inquiry; item: MarketSourceItem | null }
   | { action: "cobroke_listing"; messageId: string; phone: string; item: MarketSourceItem | null };
@@ -119,6 +124,8 @@ export type ParsedMessage = {
   chatId: string;
   /** sender_phone as Periskope sends it, e.g. "18685550201@c.us". */
   sender: string;
+  /** The group's name from the payload (chat_name, or chat.chat_name); null if the payload has none. */
+  chatName: string | null;
   body: string;
   fromMe: boolean;
   /** A plain text chat message: message_type "chat", a non-empty body, and no media at all. */
@@ -132,13 +139,15 @@ export function parseMessage(data: unknown): ParsedMessage | null {
   const chatId = str(data.chat_id);
   const sender = str(data.sender_phone);
   if (!messageId || !chatId || !sender) return null;
+  const chat: Obj = isObj(data.chat) ? data.chat : {};
+  const chatName = str(data.chat_name) ?? str(chat.chat_name);
   // Without a clear from_me we can't tell whether it's ours, so the message is ignored.
   if (typeof data.from_me !== "boolean") return null;
   const body = typeof data.body === "string" ? data.body : "";
   const hasMedia = data.has_media;
   const textOnly =
     data.message_type === "chat" && body.trim() !== "" && (hasMedia === undefined || hasMedia === null || hasMedia === false) && (data.media === undefined || data.media === null);
-  return { messageId, chatId, sender, body, fromMe: data.from_me, textOnly };
+  return { messageId, chatId, sender, chatName, body, fromMe: data.from_me, textOnly };
 }
 
 export const isGroupChat = (chatId: string) => chatId.endsWith(GROUP_SUFFIX);
@@ -162,6 +171,31 @@ export function allowedChatsFromEnv(env: Env = runtimeEnv()): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** PERISKOPE_ALLOWED_GROUPS (exact group names) and PERISKOPE_ALLOWED_CHAT_IDS (exact chat ids), each separated by "|". */
+export function allowlistFromEnv(env: Env = runtimeEnv()): { names: string[]; chatIds: string[] } {
+  const list = (raw: string | undefined) =>
+    (raw ?? "")
+      .split("|")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  return { names: list(env.PERISKOPE_ALLOWED_GROUPS), chatIds: list(env.PERISKOPE_ALLOWED_CHAT_IDS) };
+}
+
+/**
+ * Deny by default. Null if the message may go on; else why it is dropped. A direct message is always
+ * dropped. A group passes if its chat id is listed, or if its name is listed exactly. With names only and
+ * no name in the payload, it can't be confirmed, so it is dropped.
+ */
+export function allowlistCheck(chatId: string, chatName: string | null, env: Env = runtimeEnv()): DropReason | null {
+  const { names, chatIds } = allowlistFromEnv(env);
+  if (!names.length && !chatIds.length) return "empty-allowlist";
+  if (!isGroupChat(chatId)) return "dm";
+  if (chatIds.includes(chatId)) return null;
+  if (!names.length) return "other-group";
+  if (!chatName) return "no-name";
+  return names.includes(chatName) ? null : "other-group";
 }
 
 /**
@@ -361,8 +395,8 @@ export function toMarketGroupItem(consent: GroupConsent): MarketGroupItem {
 
 /**
  * What to do with one webhook payload. Checks run in this order, and the body is read only after the
- * sender's opt-out check: envelope → event type → message fields → from_me → group chat → sender number
- * → opt-out → consent (and the optional allowlist) → text only → already seen → classify.
+ * sender's opt-out check: envelope → event type → message fields → from_me → allowlist → sender number
+ * → opt-out → consent (and the optional PERISKOPE_ALLOWED_CHATS) → text only → already seen → classify.
  */
 export function decide(input: {
   payload: unknown;
@@ -379,7 +413,8 @@ export function decide(input: {
   const m = parseMessage(e.data);
   if (!m) return { action: "ignore", reason: "message fields missing or wrong" };
   if (m.fromMe) return { action: "ignore", reason: "sent by us" };
-  if (!isGroupChat(m.chatId)) return { action: "ignore", reason: "not a group chat" };
+  const dropped = allowlistCheck(m.chatId, m.chatName, env);
+  if (dropped) return { action: "drop", reason: dropped };
   const phone = phoneOf(m.sender);
   if (!phone) return { action: "ignore", reason: "no usable sender number" };
   if (isOptedOut(input.optedOut, phone)) return { action: "ignore", reason: "sender opted out" };

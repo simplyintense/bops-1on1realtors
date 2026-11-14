@@ -50,6 +50,9 @@ import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type 
 
 export const SIGNATURE_HEADER = "x-periskope-signature";
 
+/** Messages dropped by the group allowlist since this process started. Only the count is logged, never the content. */
+let droppedNotAllowlisted = 0;
+
 /** The admin address the dry-run outbox uses. None is configured yet, so admin messages go nowhere real. */
 const ADMIN = { name: "Admin", address: "(no admin address set)" };
 
@@ -157,8 +160,8 @@ export function signatureOk(raw: Uint8Array, signature: string | null, key: stri
 
 /**
  * POST /api/intake/periskope. 503 with no signing key; 401 for a missing or wrong signature; otherwise 200
- * for everything it accepts or ignores (wrong event, from us, not a group, no consent, opted out, media,
- * already seen, other). 500 only if taking a buyer request fails, so Periskope can retry it.
+ * for everything it accepts, ignores or drops (wrong event, from us, not allowlisted, no consent, opted
+ * out, media, already seen, other). 500 only if taking a buyer request fails, so Periskope can retry it.
  */
 export async function handleWebhook(raw: Uint8Array, signature: string | null, o: IntakeOptions = {}): Promise<Reply> {
   const env = o.env ?? runtimeEnv();
@@ -192,6 +195,11 @@ async function act(d: Decision, c: Ctx): Promise<Reply> {
   switch (d.action) {
     case "ignore":
       return reply(200, { result: `ignored: ${d.reason}` });
+    case "drop":
+      // Counted only: nothing is stored or marked seen, and the body is never read.
+      droppedNotAllowlisted += 1;
+      console.info(`periskope: dropped not allowlisted, total=${droppedNotAllowlisted} reason=${d.reason}`);
+      return reply(200, { result: "dropped: not allowlisted" });
     case "other":
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "other", at });
       return reply(200, { result: "dropped: not a buyer request or a co-broke listing" });
