@@ -1,3 +1,5 @@
+"use client";
+
 import { contactLinks, whatsappText } from "@/realty/flow/listing-contact.ts";
 
 /**
@@ -13,11 +15,6 @@ export type Contact = {
   agentWhatsapp?: string | null;
   agentEmail?: string | null;
 };
-
-/** Whether there is anything to show for this listing's contact. */
-export function hasContact(c: Contact): boolean {
-  return !!(c.agent || c.agency || c.agentPhone || c.agentWhatsapp || c.agentEmail);
-}
 
 const BUTTON = "rounded border px-3 py-1.5 text-sm font-medium";
 

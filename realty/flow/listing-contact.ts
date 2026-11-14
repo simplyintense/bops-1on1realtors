@@ -64,6 +64,17 @@ export function mailtoHref(email: string | null | undefined): string | null {
  * The contact links for one listing. WhatsApp uses the WhatsApp number when it's valid, else the phone. Each field is null
  * when it isn't valid, so a caller shows only the buttons that have a target.
  */
+/** Whether a listing has any agent, agency or contact field to show. */
+export function hasContact(c: {
+  agent?: string | null;
+  agency?: string | null;
+  agentPhone?: string | null;
+  agentWhatsapp?: string | null;
+  agentEmail?: string | null;
+}): boolean {
+  return !!(c.agent || c.agency || c.agentPhone || c.agentWhatsapp || c.agentEmail);
+}
+
 export function contactLinks(
   c: { phone?: string | null; whatsapp?: string | null; email?: string | null },
   text?: string | null,

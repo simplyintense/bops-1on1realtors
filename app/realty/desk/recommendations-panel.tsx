@@ -4,7 +4,8 @@ import { listingKey, type FollowUp } from "@/realty/flow/match-status.ts";
 import { CRM_MISSING_TEXT, type BuyerMatch, type MatchItem, type Recommendations } from "@/realty/flow/recommendations.ts";
 import type { DeskView } from "@/realty/node/requests.ts";
 import { Notice } from "../notice";
-import { ContactBlock, hasContact } from "../contact-block";
+import { ContactBlock } from "../contact-block";
+import { hasContact } from "@/realty/flow/listing-contact.ts";
 import { FollowUpButtons } from "./follow-up-buttons";
 
 /**
