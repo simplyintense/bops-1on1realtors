@@ -1,7 +1,7 @@
-import { join } from "node:path";
 import { ownerAccess } from "@/realty/node/periskope-intake.ts";
 import { listPostViews } from "@/realty/node/group-posts.ts";
 import { PeriskopeStore } from "@/realty/node/periskope-store.ts";
+import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +12,6 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const denied = await ownerAccess(request);
   if (denied) return Response.json(denied.body, { status: denied.status });
-  const store = new PeriskopeStore(join(process.cwd(), ".data", "realty", "periskope"));
+  const store = new PeriskopeStore(periskopeRoot());
   return Response.json({ posts: listPostViews(store, true) });
 }

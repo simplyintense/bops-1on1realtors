@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { join } from "node:path";
 import { dateAst, listPostViews } from "@/realty/node/group-posts.ts";
 import { PeriskopeStore } from "@/realty/node/periskope-store.ts";
 import { viewer } from "../viewer";
+import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Group posts · 1on1 Realtors staff", robots: { index: false, follow: false } };
@@ -16,7 +16,7 @@ export const metadata: Metadata = { title: "Group posts · 1on1 Realtors staff",
 export default async function PostsPage() {
   const { owner } = await viewer();
   if (!owner) redirect("/realty/desk");
-  const store = new PeriskopeStore(join(process.cwd(), ".data", "realty", "periskope"));
+  const store = new PeriskopeStore(periskopeRoot());
   const posts = listPostViews(store, true);
 
   return (

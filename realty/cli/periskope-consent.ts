@@ -1,13 +1,15 @@
-import { join } from "node:path";
 import { INTAKE_GROUPS } from "../node/periskope-backfill.ts";
 import { setConsent, listConsents } from "../node/periskope-intake.ts";
+import { waiverPatch } from "../node/periskope-discover.ts";
+import { periskopeRoot } from "../node/periskope-root.ts";
 
 /**
- * Record Miles's owner waiver on the allowlisted groups. Usage:
+ * Record Miles's owner waiver on the pinned groups (the same waiver the poller records for auto-discovered ones:
+ * OWNER_WAIVER in periskope-discover.ts). Usage:
  *   node --experimental-strip-types realty/cli/periskope-consent.ts --root /app/.data/realty/periskope
  * Does not post in WhatsApp. noticePostedAt stays null. Prints chat ids and completeness only.
  *
- * The recorded approval is 2026-11-14T13:39:00.000Z (9:39 AM AST); adminOkBy "Miles Abraham";
+ * The recorded approval is OWNER_WAIVER.at (2026-11-14T13:39:00.000Z, 9:39 AM AST); adminOkBy "Miles Abraham";
  * noticeWaivedBy "owner".
  */
 
@@ -16,8 +18,7 @@ function arg(name: string, fallback = ""): string {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const WAIVED_AT = "2026-11-14T13:39:00.000Z";
-const root = arg("root", join(process.cwd(), ".data", "realty", "periskope"));
+const root = arg("root", periskopeRoot());
 const opts = { root };
 
 if (process.argv.includes("--list")) {
@@ -35,16 +36,7 @@ if (process.argv.includes("--list")) {
 
 const written = [];
 for (const g of INTAKE_GROUPS) {
-  const row = await setConsent({
-    chatId: g.chatId,
-    groupName: g.chatName,
-    noticePostedAt: null,
-    noticeWaivedAt: WAIVED_AT,
-    noticeWaivedBy: "owner",
-    adminOkBy: "Miles Abraham",
-    adminOkAt: WAIVED_AT,
-    active: true,
-  }, opts);
+  const row = await setConsent(waiverPatch(g.chatId, g.chatName), opts);
   written.push({
     chatId: row.chatId,
     groupName: row.groupName,

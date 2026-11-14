@@ -1,8 +1,8 @@
-import { join } from "node:path";
 import { crmSourceFromEnv } from "../flow/live-crm.ts";
 import type { LiveRequest } from "../flow/live-match.ts";
 import { veryStrongOurListings } from "../flow/observe.ts";
 import { PeriskopeStore } from "../node/periskope-store.ts";
+import { periskopeRoot } from "../node/periskope-root.ts";
 
 /**
  * Rematch stored demand posts against our CRM and write very-strong alerts only.
@@ -15,7 +15,7 @@ function arg(name: string, fallback = ""): string {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const root = arg("root", join(process.cwd(), ".data", "realty", "periskope"));
+const root = arg("root", periskopeRoot());
 const store = new PeriskopeStore(root);
 const listings = await crmSourceFromEnv().listings();
 let considered = 0;

@@ -38,6 +38,7 @@ import { GATE_COOKIE, gateConfig, ownerAllowed, publicDemo, readSession } from "
 import { appendJsonl } from "./jsonl.ts";
 import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
 import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
+import { periskopeRoot } from "./periskope-root.ts";
 
 /**
  * The Periskope WhatsApp intake, Node side: the signature check, the webhook's ingest, opt-outs, group
@@ -100,7 +101,7 @@ type Ctx = {
 
 function context(o: IntakeOptions): Ctx {
   const env = o.env ?? runtimeEnv();
-  const root = o.root ?? join(process.cwd(), ".data", "realty", "periskope");
+  const root = o.root ?? periskopeRoot(env);
   const crm = o.crm !== undefined ? o.crm : liveCrm(env);
   return {
     env,

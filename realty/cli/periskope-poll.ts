@@ -1,5 +1,5 @@
-import { join } from "node:path";
 import { pollOnce } from "../node/periskope-poll.ts";
+import { periskopeRoot } from "../node/periskope-root.ts";
 
 /**
  * One read-only poll of the six pinned WhatsApp groups (GET only). Usage:
@@ -12,7 +12,7 @@ function arg(name: string, fallback = ""): string {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const root = arg("root", join(process.cwd(), ".data", "realty", "periskope"));
+const root = arg("root", periskopeRoot());
 const result = await pollOnce({
   root,
   keyFile: arg("key-file") || undefined,

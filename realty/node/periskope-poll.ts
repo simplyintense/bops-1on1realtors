@@ -1,12 +1,24 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { runtimeEnv, type Env } from "../flow/env.ts";
-import { INTAKE_GROUPS, backfillGroup, getJson } from "./periskope-backfill.ts";
+import { backfillGroup, getJson, startTimeDaysAgo } from "./periskope-backfill.ts";
+import {
+  codeOf,
+  discoverGroups,
+  discoveryDue,
+  ensureOwnerWaiver,
+  FIRST_BACKFILL_DAYS,
+  pollGroups,
+  type AddedGroup,
+} from "./periskope-discover.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
+import { periskopeRoot } from "./periskope-root.ts";
+import { syncFromJsonl, type SyncResult } from "./search-store.ts";
 
 /**
- * Read-only live observation: GET new messages for the six pinned groups every 10 minutes, then push
- * each through ingestEvent (parse, dedupe by message_id, supply/demand store, very-strong alerts).
+ * Read-only live observation: GET new messages for the pinned groups and the auto-discovered ones every 10
+ * minutes, then push each through ingestEvent (parse, dedupe by message_id, supply/demand store, very-strong
+ * alerts). Once an hour it also lists the groups (periskope-discover.ts) and auto-adds real-estate ones.
  * Never POST/PUT/PATCH/DELETE, and never sends, flags, or replies. The API key is read from
  * PERISKOPE_API_KEY or a 0600 key file (PERISKOPE_API_KEY_FILE, or `<root>/.api-key`); it is never logged.
  */
@@ -36,9 +48,15 @@ export type PollResult = {
   fetched: number;
   added: number;
   alertsAdded: number;
+  /** Groups auto-added by this poll's discovery (names and ids only). */
+  groupsAdded: AddedGroup[];
+  /** This poll's discovery attempt, if one was due. A code on failure, never a message. */
+  discovery?: { ran: true; ok: true; checked: number } | { ran: true; ok: false; code: string } | { ran: false };
+  /** The search index rebuild after this poll. Counts only; a failure here never fails the poll. */
+  searchSync?: { ok: true; counts: SyncResult } | { ok: false; code: string };
 };
 
-type Cursor = { lastRunAt: string | null; byChat: Record<string, { lastSentAt: string | null }> };
+type Cursor = { lastRunAt: string | null; lastDiscoveryAt: string | null; byChat: Record<string, { lastSentAt: string | null }> };
 
 export type PollOptions = {
   apiKey?: string;
@@ -52,10 +70,6 @@ export type PollOptions = {
   crm?: null;
 };
 
-function defaultRoot(env: Env): string {
-  return env.PERISKOPE_ROOT?.trim() || join(process.cwd(), ".data", "realty", "periskope");
-}
-
 function keyFileCandidates(root: string, env: Env, explicit?: string): string[] {
   return [explicit, env.PERISKOPE_API_KEY_FILE, join(root, ".api-key")].filter((p): p is string => !!p && p.trim().length > 0);
 }
@@ -65,7 +79,7 @@ export function readApiKey(opts: { apiKey?: string; keyFile?: string; root?: str
   const env = opts.env ?? runtimeEnv();
   const fromEnv = (opts.apiKey ?? env.PERISKOPE_API_KEY ?? "").trim();
   if (fromEnv) return fromEnv;
-  const root = opts.root ?? defaultRoot(env);
+  const root = opts.root ?? periskopeRoot(env);
   for (const path of keyFileCandidates(root, env, opts.keyFile)) {
     try {
       if (existsSync(path)) {
@@ -86,9 +100,9 @@ function cursorPath(root: string): string {
 function loadCursor(root: string): Cursor {
   try {
     const j = JSON.parse(readFileSync(cursorPath(root), "utf8")) as Cursor;
-    if (j && typeof j === "object") return { lastRunAt: j.lastRunAt ?? null, byChat: j.byChat ?? {} };
+    if (j && typeof j === "object") return { lastRunAt: j.lastRunAt ?? null, lastDiscoveryAt: j.lastDiscoveryAt ?? null, byChat: j.byChat ?? {} };
   } catch {}
-  return { lastRunAt: null, byChat: {} };
+  return { lastRunAt: null, lastDiscoveryAt: null, byChat: {} };
 }
 
 function saveCursor(root: string, cursor: Cursor): void {
@@ -113,29 +127,64 @@ function startTimeFor(store: PeriskopeStore, chatId: string, cursor: Cursor, now
   return iso(new Date(now.getTime() - POLL_EVERY_MS));
 }
 
+/** Groups new to the store (no cursor, no posts): the first fetch covers the last seven days. */
+function isFirstFetch(store: PeriskopeStore, chatId: string, cursor: Cursor): boolean {
+  return !cursor.byChat[chatId] && !store.posts().some((p) => p.chatId === chatId);
+}
+
 function emptyGroup(chatId: string, chatName: string, error?: string): PollGroupResult {
   return { chatId, chatName, fetched: 0, added: 0, refilled: 0, unchanged: 0, ignored: 0, dropped: 0, alertsAdded: 0, ...(error ? { error } : {}) };
 }
 
 export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
   const env = { ...runtimeEnv(), ...(opts.env ?? {}) };
-  const root = opts.root ?? defaultRoot(env);
+  const root = opts.root ?? periskopeRoot(env);
   const at = opts.now?.() ?? new Date();
   const apiKey = readApiKey({ apiKey: opts.apiKey, keyFile: opts.keyFile, root, env });
   if (!apiKey) {
-    return { at: iso(at), ok: false, reason: "no API key", groups: [], fetched: 0, added: 0, alertsAdded: 0 };
+    return { at: iso(at), ok: false, reason: "no API key", groups: [], fetched: 0, added: 0, alertsAdded: 0, groupsAdded: [] };
   }
   const phoneId = (opts.phoneId ?? env.PERISKOPE_PHONE_ID ?? DEFAULT_PHONE_ID).trim() || undefined;
   const store = new PeriskopeStore(root);
   const cursor = loadCursor(root);
   const fetcher = opts.fetcher ?? getJson;
+  const intake = { root, env, now: () => at, crm: opts.crm };
   const groups: PollGroupResult[] = [];
   let fetched = 0;
   let added = 0;
   let alertsAdded = 0;
 
-  for (const g of INTAKE_GROUPS) {
-    const startTime = startTimeFor(store, g.chatId, cursor, at);
+  // Discovery first, so a group added now is polled in this same run. Throttled to once an hour; a failure
+  // (or a thrown error) is logged as a code and never stops the poll.
+  let groupsAdded: AddedGroup[] = [];
+  let discovery: PollResult["discovery"] = { ran: false };
+  if (discoveryDue(cursor.lastDiscoveryAt, at)) {
+    cursor.lastDiscoveryAt = iso(at);
+    try {
+      const d = await discoverGroups({ apiKey, phoneId, fetcher, intake });
+      if (d.ok) {
+        groupsAdded = d.added;
+        discovery = { ran: true, ok: true, checked: d.checked };
+      } else {
+        discovery = { ran: true, ok: false, code: d.code };
+      }
+    } catch (e) {
+      discovery = { ran: true, ok: false, code: codeOf(e) };
+    }
+  }
+
+  for (const g of pollGroups(root, env)) {
+    // Consent before any fetch: the ingest gate drops a group with no record. Pinned groups without one (e.g.
+    // Co-Broke) get the owner waiver here, the same as a newly discovered group.
+    try {
+      await ensureOwnerWaiver(root, g.chatId, g.chatName, intake);
+    } catch (e) {
+      groups.push(emptyGroup(g.chatId, g.chatName, `consent:${codeOf(e)}`));
+      continue;
+    }
+    const startTime = isFirstFetch(store, g.chatId, cursor)
+      ? startTimeDaysAgo(FIRST_BACKFILL_DAYS, at)
+      : startTimeFor(store, g.chatId, cursor, at);
     const beforeIds = new Set(new PeriskopeStore(root).posts().map((p) => p.messageId));
     const alertsBefore = new PeriskopeStore(root).alerts().length;
     const listed = await backfillGroup({
@@ -179,7 +228,16 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
   }
   cursor.lastRunAt = iso(at);
   saveCursor(root, cursor);
-  return { at: iso(at), ok: true, groups, fetched, added, alertsAdded };
+  return { at: iso(at), ok: true, groups, fetched, added, alertsAdded, groupsAdded, discovery, searchSync: searchSyncSafely(root) };
+}
+
+/** Rebuilds <root>/search.db from the JSONL when it changed. Never throws: the poll must not fail on the index. */
+function searchSyncSafely(root: string): NonNullable<PollResult["searchSync"]> {
+  try {
+    return { ok: true, counts: syncFromJsonl(root) };
+  } catch (e) {
+    return { ok: false, code: (e as { code?: string }).code ?? (e as Error).name };
+  }
 }
 
 const g = globalThis as typeof globalThis & { __bopsPeriskopePoll?: ReturnType<typeof setInterval>; __bopsPeriskopePollKick?: ReturnType<typeof setTimeout> };
@@ -200,6 +258,9 @@ export function startPeriskopePoller(opts: PollOptions = {}): void {
           fetched: r.fetched,
           added: r.added,
           alertsAdded: r.alertsAdded,
+          search: r.searchSync?.ok ? { supply: r.searchSync.counts.supply, demand: r.searchSync.counts.demand, needsExplanation: r.searchSync.counts.needsExplanation, rebuilt: r.searchSync.counts.rebuilt } : (r.searchSync ?? null),
+          discovery: r.discovery ?? null,
+          groupsAdded: r.groupsAdded.map((x) => ({ group: x.group, chatId: x.chatId, members: x.members, source: x.source })),
           groups: r.groups.map((x) => ({ group: x.chatName, fetched: x.fetched, added: x.added, unchanged: x.unchanged, alertsAdded: x.alertsAdded, error: x.error ?? null })),
         }));
       })

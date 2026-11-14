@@ -1,11 +1,11 @@
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { LiveRequest } from "../flow/live-match.ts";
 import { crmSourceFromEnv } from "../flow/live-crm.ts";
 import { veryStrongOurListings } from "../flow/observe.ts";
 import { reparsePost } from "../flow/periskope.ts";
 import { postsToCsv } from "../node/group-posts.ts";
 import { PeriskopeStore } from "../node/periskope-store.ts";
+import { periskopeRoot } from "../node/periskope-root.ts";
 
 /**
  * Re-parse stored posts with the current classifier, rebuild supply/demand/price ranges, rematch
@@ -19,7 +19,7 @@ function arg(name: string, fallback = ""): string {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const root = arg("root", join(process.cwd(), ".data", "realty", "periskope"));
+const root = arg("root", periskopeRoot());
 const csvPath = arg("csv", "");
 const store = new PeriskopeStore(root);
 const before = { posts: store.posts().length, supply: store.supply().length, demand: store.demand().length, other: 0, alerts: store.alerts().length };

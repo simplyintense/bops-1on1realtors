@@ -1,8 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { INTAKE_GROUPS, backfillGroup } from "../node/periskope-backfill.ts";
 import { postsToCsv } from "../node/group-posts.ts";
 import { PeriskopeStore } from "../node/periskope-store.ts";
+import { periskopeRoot } from "../node/periskope-root.ts";
 
 /**
  * One-time listen-only backfill of the allowlisted Periskope groups. Usage:
@@ -25,7 +26,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const root = arg("root", join(process.cwd(), ".data", "realty", "periskope"));
+const root = arg("root", periskopeRoot());
 const days = Math.max(1, Number(arg("days", "7")) || 7);
 const onlyId = arg("chat-id");
 const onlyName = arg("chat-name");

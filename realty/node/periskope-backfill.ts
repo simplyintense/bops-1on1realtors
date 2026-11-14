@@ -1,6 +1,7 @@
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import { ingestEvent, type IntakeOptions, type Reply } from "./periskope-intake.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
+import { periskopeRoot } from "./periskope-root.ts";
 
 /**
  * One-time, listen-only backfill of an allowlisted Periskope group: GET messages for that chat_id,
@@ -11,7 +12,7 @@ import { PeriskopeStore } from "./periskope-store.ts";
 export const AREA_REGISTERED_AGENTS_CHAT_ID = "18686789715-1444916451@g.us";
 export const AREA_REGISTERED_AGENTS_NAME = "AREA Registered Agents";
 
-/** The listen-only groups Miles allowlisted. Names are exact WhatsApp titles. */
+/** The listen-only groups Miles allowlisted (pinned in code). Auto-discovered groups are added on top: periskope-discover.ts. */
 export const INTAKE_GROUPS = [
   { chatId: "18686789715-1444916451@g.us", chatName: "AREA Registered Agents" },
   { chatId: "120363139007270954@g.us", chatName: "R. E. SEARCHES ONLY" },
@@ -19,6 +20,7 @@ export const INTAKE_GROUPS = [
   { chatId: "18686894126-1467511703@g.us", chatName: "REAL ESTATE AGENTS OF T&T" },
   { chatId: "18683898353-1597076235@g.us", chatName: "Top Notch Realtors" },
   { chatId: "18687143939-1555072973@g.us", chatName: "T&T Realty Co Broke Group" },
+  { chatId: "120363421375699959@g.us", chatName: "Co-Broke 🤝" },
 ] as const;
 
 const API = "https://api.periskope.app";
@@ -156,7 +158,7 @@ export async function backfillGroup(args: {
   });
   if (!listed.ok) return { ok: false, error: listed.error, status: listed.status };
   const names = await memberNames({ apiKey: args.apiKey, chatId, phoneId: args.phoneId, fetcher: args.fetcher });
-  const store = new PeriskopeStore(args.opts.root ?? `${process.cwd()}/.data/realty/periskope`);
+  const store = new PeriskopeStore(args.opts.root ?? periskopeRoot());
   const before = new Map(
     store.posts()
       .filter((p) => p.chatId === chatId)

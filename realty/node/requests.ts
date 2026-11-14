@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { emailAllowed, ownerAllowed, parseAllowlist } from "../../lib/gate.ts";
 import { CRM_UNREACHABLE_TEXT, toMatchListing, type CrmListingsState, type CrmSeam } from "../flow/crm-seam.ts";
 import { digestOf, liveDesk, type Digest, type LiveDesk } from "../flow/live-match.ts";
@@ -8,6 +7,7 @@ import { recommendationsFor, type DeskListing, type Recommendations } from "../f
 import { crmSeamFromEnv } from "./crm-shared.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 import { OPEN_REQUESTS, REQUEST_LIMIT, searchRequests, type RequestCriteria, type RequestsResult } from "../flow/requests.ts";
+import { periskopeRoot } from "./periskope-root.ts";
 
 /**
  * The staff buyer-request feed and the desk's recommendations, with this server's settings: the market config from
@@ -18,7 +18,7 @@ import { OPEN_REQUESTS, REQUEST_LIMIT, searchRequests, type RequestCriteria, typ
 type Opts = { env?: Env; fetcher?: typeof fetch };
 
 /** Where the Periskope intake keeps its files (realty/node/periskope-intake.ts uses the same default). */
-export const defaultIntakeRoot = () => join(process.cwd(), ".data", "realty", "periskope");
+export const defaultIntakeRoot = () => periskopeRoot();
 
 /** The desk: the market-side recommendations, the live WhatsApp side, and what the CRM seam said about our listings. */
 /** `crmText` is the honest "CRM not connected / unreachable" line, or null when our listings were read. */
