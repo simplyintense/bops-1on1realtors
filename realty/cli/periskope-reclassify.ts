@@ -6,6 +6,7 @@ import { reparsePost } from "../flow/periskope.ts";
 import { postsToCsv } from "../node/group-posts.ts";
 import { PeriskopeStore } from "../node/periskope-store.ts";
 import { periskopeRoot } from "../node/periskope-root.ts";
+import { taughtTermsFrom } from "../node/search-store.ts";
 
 /**
  * Re-parse stored posts with the current classifier, rebuild supply/demand/price ranges, rematch
@@ -25,7 +26,8 @@ const store = new PeriskopeStore(root);
 const before = { posts: store.posts().length, supply: store.supply().length, demand: store.demand().length, other: 0, alerts: store.alerts().length };
 before.other = before.posts - before.supply - before.demand;
 
-const posts = store.posts().map((p) => reparsePost(p));
+const terms = taughtTermsFrom(root);
+const posts = store.posts().map((p) => reparsePost(p, terms));
 const prior = new Map(store.posts().map((p) => [p.messageId, p.set ?? null]));
 const toSupply = posts.filter((p) => p.set === "supply" && prior.get(p.messageId) === "demand").length;
 const toDemand = posts.filter((p) => p.set === "demand" && prior.get(p.messageId) === "supply").length;

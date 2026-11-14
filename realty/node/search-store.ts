@@ -1,9 +1,14 @@
 /// <reference path="./node-sqlite.d.ts" />
 import { createHash } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { DEVELOPMENTS } from "../extract.ts";
+import { applyKnownTerms, bestGuess, termIn, type KnownTerm } from "../flow/knowledge.ts";
+import { reparsePost, type PostRecord } from "../flow/periskope.ts";
 import { dateAst } from "./group-posts.ts";
+import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
+import { PeriskopeStore } from "./periskope-store.ts";
 
 /**
  * Searchable index over the Periskope supply and demand JSONL files, in <root>/search.db (SQLite via the built-in
@@ -11,9 +16,10 @@ import { dateAst } from "./group-posts.ts";
  * transaction whenever the JSONL files change (a size+mtime fingerprint makes unchanged reruns a no-op). Because the
  * JSONL is rewritten in place on reparse and rematch, a rebuild is safer than incremental upserts.
  *
- * Owner-only state lives outside the rebuilt tables and survives it: `aliases` (term -> area/development/type, set by
- * the owner) and `explanations` (message id -> the owner's note). A note follows its message into whichever tab the
- * item lands in, so an explained item keeps its explanation after it is promoted out of the queue.
+ * Bops's shared knowledge lives in `knowledge` (same file): seeded from the area knowledge and the development gazetteer,
+ * then taught by the owner. A term there (a place, development, alias, rule or note) is read by the parser at ingest, by
+ * the sync (which fills empty fields), and by matching. Owner state also lives outside the rebuilt tables: `explanations`
+ * (message id -> the owner's answer). An answer follows its message into whichever tab the item lands in.
  *
  * Privacy: this module holds phone numbers and original text, the same as the JSONL. It never logs them. Only the
  * owner-gated routes and the owner's CLI return them.
@@ -23,11 +29,13 @@ export type Side = "supply" | "demand";
 /** The search tabs. "vague" is the needs-explanation queue (both sides). */
 export type Tab = "supply" | "demand" | "vague";
 
+export type { KnownTerm };
+
 /** Cross-posts from the same sender within this many days, with the same parsed ask, are one record. */
 export const CROSS_POST_DAYS = 3;
 /** Token-set similarity at or above this counts as near-identical text. */
 const NEAR_IDENTICAL = 0.9;
-const SCHEMA_VERSION = "2";
+const SCHEMA_VERSION = "3";
 export const SEARCH_DB = "search.db";
 const DAY_MS = 86_400_000;
 /** Places are Trinidad and Tobago, which does not observe DST: AST is always UTC-4. */
@@ -38,9 +46,32 @@ const TABLE: Record<Tab, string> = { supply: "supply", demand: "demand", vague: 
 /** One JSONL line from supply.jsonl or demand.jsonl. Read defensively: any field may be missing or the wrong type. */
 export type SourceRow = Record<string, unknown>;
 
-export type AliasInput = { term: string; area?: string | null; development?: string | null; type?: string | null };
-export type AliasRow = { term: string; area: string | null; development: string | null; type: string | null };
-export type ExplainInput = { explanation: string; aliases?: AliasInput[] };
+/** What the owner teaches about one queued item. `answer` is one line; the rest are optional parts. */
+export type TeachInput = {
+  answer: string;
+  term?: string | null;
+  area?: string | null;
+  development?: string | null;
+  type?: string | null;
+  listingType?: string | null;
+  note?: string | null;
+};
+export type TeachResult = {
+  id: string;
+  /** What was saved in knowledge: an alias (term + place or type), a rule (term + sale/rent), or a note. */
+  saved: "alias" | "rule" | "note";
+  term: string | null;
+  stillVague: boolean;
+  /** This item moved out of the queue. */
+  promoted: boolean;
+  /** Stored posts whose text contains the term, parsed again with the new knowledge. */
+  reparsed: number;
+  /** Queue items (any) that moved out of the queue because of this answer. */
+  promotedRecords: number;
+};
+
+/** A past answer: a taught knowledge row, newest first on the teach page. */
+export type TaughtRow = { kind: string; term: string | null; area: string | null; development: string | null; type: string | null; listingType: string | null; note: string | null; taughtBy: string | null; taughtAt: string | null };
 
 export class SearchInputError extends Error {}
 export class NotInQueueError extends Error {}
@@ -146,27 +177,6 @@ export function isVague(f: { area?: string | null; development?: string | null; 
   return !hasText(f.type) && !place;
 }
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/** The term appears as a whole word or phrase, case-insensitive (letters and digits on either side are not allowed). */
-export function termIn(text: string, term: string): boolean {
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, "iu").test(text);
-}
-
-type Fields = { area: string | null; development: string | null; price: number | null; type: string | null };
-
-/** Fill only the fields that are missing. Aliases must already be sorted longest term first. */
-export function applyAliases(f: Fields, text: string, aliases: AliasRow[]): Fields {
-  const out = { ...f };
-  for (const a of aliases) {
-    if (!termIn(text, a.term)) continue;
-    if (a.area && !hasText(out.area)) out.area = a.area;
-    if (a.development && !hasText(out.development)) out.development = a.development;
-    if (a.type && !hasText(out.type)) out.type = a.type;
-  }
-  return out;
-}
-
 /** Stable record id: the hash of the first message id, so the queue and pages keep their ids across rebuilds. */
 export function recordId(messageId: string): string {
   return createHash("sha256").update(messageId).digest("hex").slice(0, 24);
@@ -217,20 +227,20 @@ const RECORD_COLS = [
 
 const INDEXED = ["area", "development", "price", "beds", "type", "listing_type", "sender_phone", "first_sent_at", "last_sent_at"] as const;
 
-/** Normalize one JSONL row. The file it came from sets the side; a row that can't be keyed or dated is skipped. */
-function toItem(raw: SourceRow, side: Side, aliases: AliasRow[]): Item | null {
+/**
+ * Normalize one JSONL row. The file it came from sets the side; a row that can't be keyed or dated is skipped. Taught terms
+ * fill whatever the row leaves empty (never overwrite), so a record stored before a term was taught is read with it too.
+ */
+function toItem(raw: SourceRow, side: Side, terms: readonly KnownTerm[]): Item | null {
   const messageId = str(raw.messageId);
   const at = typeof raw.sentAt === "string" ? Date.parse(raw.sentAt) : NaN;
   if (!messageId || !Number.isFinite(at)) return null;
-  const base: Fields = { area: str(raw.area), development: str(raw.development), price: num(raw.price), type: str(raw.type) };
+  const price = num(raw.price);
   const text = str(raw.originalText) ?? "";
-  let fields = base;
-  let promoted = false;
-  if (isVague(base)) {
-    fields = applyAliases(base, text, aliases);
-    promoted = !isVague(fields);
-  }
-  const tab: Tab = isVague(fields) ? "vague" : side;
+  const row = { area: str(raw.area), development: str(raw.development), type: str(raw.type), listingType: str(raw.listingType) };
+  const fields = applyKnownTerms(row, text, terms);
+  const promoted = isVague({ ...row, price }) && !isVague({ ...fields, price });
+  const tab: Tab = isVague({ ...fields, price }) ? "vague" : side;
   return {
     messageId,
     side,
@@ -244,12 +254,12 @@ function toItem(raw: SourceRow, side: Side, aliases: AliasRow[]): Item | null {
     category: str(raw.category) ?? side,
     area: fields.area,
     development: fields.development,
-    price: fields.price,
+    price,
     currency: str(raw.currency),
     beds: num(raw.beds),
     baths: num(raw.baths),
     type: fields.type,
-    listingType: str(raw.listingType),
+    listingType: fields.listingType,
     intent: str(raw.intent),
     propertyClass: str(raw.propertyClass),
     notes: str(raw.notes),
@@ -425,13 +435,22 @@ function ensureSchema(db: DatabaseSync): void {
       demand_posts INTEGER NOT NULL,
       needs_posts INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS aliases (
-      term TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS knowledge (
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('place', 'development', 'alias', 'rule', 'note')),
+      term TEXT,
       area TEXT,
       development TEXT,
       type TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      listing_type TEXT,
+      lat REAL,
+      lng REAL,
+      payload TEXT,
+      note TEXT,
+      source TEXT NOT NULL CHECK (source IN ('area-knowledge', 'gazetteer', 'taught')),
+      taught_by TEXT,
+      taught_at TEXT,
+      UNIQUE (kind, term)
     );
     CREATE TABLE IF NOT EXISTS explanations (
       message_id TEXT PRIMARY KEY,
@@ -447,6 +466,12 @@ function ensureSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS record_groups_name ON record_groups (group_name);
     CREATE VIRTUAL TABLE IF NOT EXISTS search_text USING fts5(tab UNINDEXED, record_id UNINDEXED, body, tokenize = 'unicode61 remove_diacritics 2');
   `);
+  // The old owner alias table is folded into knowledge once, then dropped (INSERT OR IGNORE keeps a re-run harmless).
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'aliases'").get()) {
+    db.exec(`INSERT OR IGNORE INTO knowledge (kind, term, area, development, type, source, taught_at, note)
+      SELECT 'alias', term, area, development, type, 'taught', updated_at, NULL FROM aliases;
+      DROP TABLE aliases;`);
+  }
   const EXPLAIN_COLS = ["explanation TEXT", "explained_at TEXT"];
   db.exec(recordTableSql("supply", EXPLAIN_COLS) + ";\n" + recordTableSql("demand", EXPLAIN_COLS) + ";\n" + recordTableSql("needs_explanation", EXPLAIN_COLS) + ";");
   for (const t of ["supply", "demand", "needs_explanation"]) {
@@ -491,24 +516,61 @@ export class SearchStore {
     return Number(this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n ?? 0);
   }
 
-  private aliasRows(): AliasRow[] {
+  /** Every taught or seeded term, longest first. Read by the parser, the sync and the matcher. */
+  knownTerms(): KnownTerm[] {
     return this.db
-      .prepare("SELECT term, area, development, type FROM aliases ORDER BY length(term) DESC, term ASC")
+      .prepare("SELECT term, area, development, type, listing_type FROM knowledge WHERE kind IN ('place', 'development', 'alias', 'rule') AND term IS NOT NULL ORDER BY length(term) DESC, term ASC")
       .all()
-      .map((r) => ({ term: String(r.term), area: r.area == null ? null : String(r.area), development: r.development == null ? null : String(r.development), type: r.type == null ? null : String(r.type) }));
+      .map((r) => ({ term: String(r.term), area: str(r.area), development: str(r.development), type: str(r.type), listingType: str(r.listing_type) }));
   }
 
   /**
-   * Idempotent. Rebuilds every derived table from supply.jsonl and demand.jsonl when their fingerprint has changed (or
-   * when force is set). Owner state (aliases, explanations) is kept. Counts only: no text, no phone numbers.
+   * Seeds the knowledge store from the area knowledge (the volume file, else the bundled snapshot) and the development
+   * gazetteer. INSERT OR IGNORE: a re-run adds only what is new, and never touches a taught row.
+   */
+  seed(): void {
+    const area = resolveAreaKnowledge(join(dirname(this.root), "area-knowledge.json"));
+    const put = this.db.prepare(
+      `INSERT OR IGNORE INTO knowledge (kind, term, area, development, lat, lng, payload, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const p of area?.places ?? []) {
+        const term = p.name.trim().toLowerCase();
+        const coords = p.coords ?? null;
+        if (p.kind === "development") put.run("development", term, null, p.name, coords?.lat ?? null, coords?.lon ?? null, JSON.stringify({ parent: p.parent }), "area-knowledge");
+        else put.run("place", term, p.name, null, coords?.lat ?? null, coords?.lon ?? null, null, "area-knowledge");
+      }
+      for (const d of DEVELOPMENTS) {
+        put.run("development", d.name.toLowerCase(), null, d.name, null, null, JSON.stringify({ parent: d.parent }), "gazetteer");
+        for (const alias of d.aliases) put.run("alias", alias.toLowerCase(), null, d.name, null, null, null, "gazetteer");
+      }
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  /** A stamp that changes when the knowledge does, so an unchanged JSONL still rebuilds after a teach. */
+  private knowledgeStamp(): string {
+    const r = this.db.prepare("SELECT COUNT(*) AS n, COALESCE(MAX(taught_at), '') AS t FROM knowledge").get();
+    return `${Number(r?.n ?? 0)}:${String(r?.t ?? "")}`;
+  }
+
+  /**
+   * Idempotent. Seeds the knowledge, then rebuilds every derived table from supply.jsonl and demand.jsonl when their
+   * fingerprint (JSONL and knowledge) has changed, or when force is set. Owner state (knowledge, explanations) is kept.
+   * Counts only: no text, no phone numbers.
    */
   sync(opts: { force?: boolean } = {}): SyncResult {
-    const fp = fingerprint(this.root);
+    this.seed();
+    const fp = `${fingerprint(this.root)}|${this.knowledgeStamp()}`;
     if (!opts.force && this.meta("fingerprint") === fp) {
       const last = this.meta("last_counts");
       if (last) return { ...(JSON.parse(last) as SyncResult), rebuilt: false };
     }
-    const aliases = this.aliasRows();
+    const terms = this.knownTerms();
     const supplyFile = readJsonl(join(this.root, "supply.jsonl"));
     const demandFile = readJsonl(join(this.root, "demand.jsonl"));
     // Upsert by messageId: a later line for the same message replaces an earlier one (demand after supply).
@@ -516,7 +578,7 @@ export class SearchStore {
     let skipped = supplyFile.skipped + demandFile.skipped;
     for (const [side, rows] of [["supply", supplyFile.rows], ["demand", demandFile.rows]] as const) {
       for (const raw of rows) {
-        const it = toItem(raw, side, aliases);
+        const it = toItem(raw, side, terms);
         if (!it) skipped++;
         else byId.set(it.messageId, it);
       }
@@ -595,37 +657,101 @@ export class SearchStore {
   }
 
   /**
-   * Store the owner's explanation for one queued item, save any aliases (replacing an alias with the same term), then
-   * rebuild so every alias is reapplied to every vague item. Items that are no longer vague move to supply or demand.
+   * Teach Bops from one queued item. The answer is kept on the item, and the teaching is saved to knowledge: an alias (term
+   * plus a place or type), a rule (term plus sale or rent), or else a note. Then the stored posts whose text contains the
+   * term are parsed again with the new knowledge, and the tables are rebuilt, so every affected item is read again and the
+   * ones that are now clear move to supply or demand. Local only: no network, no WhatsApp, no CRM.
    */
-  explain(id: string, input: ExplainInput): { id: string; stillVague: boolean; promoted: boolean; aliasesSaved: number; promotedByAlias: number } {
-    const v = validateExplain(input);
+  teach(id: string, input: TeachInput, by = "owner"): TeachResult {
+    const v = validateTeach(input);
     const row = this.db.prepare("SELECT message_ids FROM needs_explanation WHERE id = ?").get(id);
     if (!row) throw new NotInQueueError("That item isn't in the needs-explanation queue.");
     const messageIds = JSON.parse(String(row.message_ids)) as string[];
     const now = new Date().toISOString();
+    const affected = v.term ? this.recordsWithText(v.term) : [];
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare("UPDATE needs_explanation SET explanation = ?, explained_at = ? WHERE id = ?").run(v.explanation, now, id);
+      this.db.prepare("UPDATE needs_explanation SET explanation = ?, explained_at = ? WHERE id = ?").run(v.answer, now, id);
       const note = this.db.prepare(
         `INSERT INTO explanations (message_id, explanation, explained_at) VALUES (?, ?, ?)
          ON CONFLICT(message_id) DO UPDATE SET explanation = excluded.explanation, explained_at = excluded.explained_at`,
       );
-      for (const mid of messageIds) note.run(mid, v.explanation, now);
-      const upsert = this.db.prepare(
-        `INSERT INTO aliases (term, area, development, type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(term) DO UPDATE SET area = excluded.area, development = excluded.development, type = excluded.type, updated_at = excluded.updated_at`,
-      );
-      for (const a of v.aliases) upsert.run(a.term, a.area, a.development, a.type, now, now);
+      for (const mid of messageIds) note.run(mid, v.answer, now);
+      // One row per (kind, term): a later teaching of the same term replaces the earlier one.
+      this.db.prepare(
+        `INSERT INTO knowledge (kind, term, area, development, type, listing_type, note, source, taught_by, taught_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'taught', ?, ?)
+         ON CONFLICT(kind, term) DO UPDATE SET area = excluded.area, development = excluded.development, type = excluded.type,
+           listing_type = excluded.listing_type, note = excluded.note, taught_by = excluded.taught_by, taught_at = excluded.taught_at`,
+      ).run(v.saved, v.term, v.area, v.development, v.type, v.listingType, v.note, by, now);
       this.db.exec("COMMIT");
     } catch (e) {
       this.db.exec("ROLLBACK");
       throw e;
     }
-    const counts = this.sync({ force: true });
+
+    const reparsed = v.term ? this.reparseStored(v.term) : 0;
+    this.sync({ force: true });
     const stillVague = !!this.db.prepare("SELECT 1 FROM needs_explanation WHERE id = ?").get(id);
     const promoted = !stillVague && !!(this.db.prepare("SELECT 1 FROM supply WHERE id = ?").get(id) ?? this.db.prepare("SELECT 1 FROM demand WHERE id = ?").get(id));
-    return { id, stillVague, promoted, aliasesSaved: v.aliases.length, promotedByAlias: counts.promotedByAlias };
+    const stillQueued = new Set(this.db.prepare("SELECT id FROM needs_explanation").all().map((r) => String(r.id)));
+    const promotedRecords = affected.filter((a) => a.tab === "vague" && !stillQueued.has(a.id)).length;
+    return { id, saved: v.saved, term: v.term, stillVague, promoted, reparsed, promotedRecords };
+  }
+
+  /** Records in any tab whose original text contains the term (whole word). Text is read here and never returned. */
+  private recordsWithText(term: string): { id: string; tab: Tab }[] {
+    const out: { id: string; tab: Tab }[] = [];
+    for (const tab of ["supply", "demand", "vague"] as const) {
+      for (const r of this.db.prepare(`SELECT id, original_text FROM ${TABLE[tab]} WHERE original_text LIKE ? ESCAPE '\\'`).all(likeOf(term))) {
+        if (termIn(String(r.original_text), term)) out.push({ id: String(r.id), tab });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Parses again every stored post whose text contains the term, with the current knowledge (the same parser as ingest),
+   * and rewrites the posts and their projections when any changed. Returns how many posts contain the term.
+   */
+  private reparseStored(term: string): number {
+    const store = new PeriskopeStore(this.root);
+    const posts = store.posts();
+    const hits = posts.filter((p) => !!p.originalText && termIn(p.originalText, term));
+    if (!hits.length) return 0;
+    const terms = this.knownTerms();
+    const next = new Map<string, PostRecord>();
+    for (const p of hits) {
+      const r = reparsePost(p, terms);
+      if (JSON.stringify(r) !== JSON.stringify(p)) next.set(p.messageId, r);
+    }
+    if (next.size) store.reprojectObservation(posts.map((p) => next.get(p.messageId) ?? p));
+    return hits.length;
+  }
+
+  /** The needs-explanation queue, newest first, each with Bops's best guess at what the post means. */
+  openQueue(limit = 200): { total: number; rows: (SearchRow & { guess: string })[] } {
+    const terms = this.knownTerms();
+    const result = this.search({ kind: "vague", limit });
+    return { total: result.total, rows: result.rows.map((r) => ({ ...r, guess: bestGuess(r.originalText ?? "", terms) })) };
+  }
+
+  /** Taught knowledge, newest first: the owner's past answers. */
+  taught(limit = 100): TaughtRow[] {
+    return this.db
+      .prepare("SELECT kind, term, area, development, type, listing_type, note, taught_by, taught_at FROM knowledge WHERE source = 'taught' ORDER BY taught_at DESC, id DESC LIMIT ?")
+      .all(limit)
+      .map((r) => ({
+        kind: String(r.kind),
+        term: str(r.term),
+        area: str(r.area),
+        development: str(r.development),
+        type: str(r.type),
+        listingType: str(r.listing_type),
+        note: str(r.note),
+        taughtBy: str(r.taught_by),
+        taughtAt: str(r.taught_at),
+      }));
   }
 
   /** Search one tab. Times in the filters are AST dates (YYYY-MM-DD, inclusive). Area and development match either column. */
@@ -675,9 +801,6 @@ export class SearchStore {
       .map((r) => toSearchRow(r, tab));
   }
 
-  aliases(): AliasRow[] {
-    return this.aliasRows();
-  }
 }
 
 function toSearchRow(r: Record<string, unknown>, tab: Tab): SearchRow {
@@ -730,23 +853,50 @@ function astStart(ymd: string): string {
   return new Date(`${ymd}T00:00:00${AST_OFFSET}`).toISOString();
 }
 
-function validateExplain(input: ExplainInput): { explanation: string; aliases: { term: string; area: string | null; development: string | null; type: string | null }[] } {
-  const explanation = typeof input?.explanation === "string" ? input.explanation.trim() : "";
-  if (!explanation) throw new SearchInputError("Write an explanation.");
-  if (explanation.length > 2000) throw new SearchInputError("The explanation is too long (2000 characters at most).");
-  const aliases = Array.isArray(input.aliases) ? input.aliases : [];
-  if (aliases.length > 20) throw new SearchInputError("Save at most 20 aliases at a time.");
-  const out = aliases.map((a) => {
-    const term = typeof a?.term === "string" ? a.term.trim().toLowerCase() : "";
-    const clean = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 80) : null);
-    const area = clean(a?.area);
-    const development = clean(a?.development);
-    const type = clean(a?.type);
-    if (term.length < 2 || term.length > 80) throw new SearchInputError("Each alias needs a term of 2 to 80 characters.");
-    if (!area && !development && !type) throw new SearchInputError(`The alias "${term}" needs an area, a development or a type.`);
-    return { term, area, development, type };
-  });
-  return { explanation: explanation.slice(0, 2000), aliases: out };
+type ValidTeach = {
+  answer: string;
+  saved: "alias" | "rule" | "note";
+  term: string | null;
+  area: string | null;
+  development: string | null;
+  type: string | null;
+  listingType: string | null;
+  note: string | null;
+};
+
+/**
+ * One line of answer. A term with a place or type is an alias; a term with sale or rent is a rule; anything else is a note
+ * (kept with its term when it has one). A place, type or sale/rent without a term has nothing to match on, so it's refused.
+ */
+function validateTeach(input: TeachInput): ValidTeach {
+  const answer = typeof input?.answer === "string" ? input.answer.replace(/\s+/g, " ").trim() : "";
+  if (!answer) throw new SearchInputError("Write what this post means.");
+  if (answer.length > 300) throw new SearchInputError("Keep the answer to one line (300 characters at most).");
+  const clean = (v: unknown, max = 80) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s+/g, " ").slice(0, max) : null);
+  const termRaw = clean(input.term);
+  const term = termRaw ? termRaw.toLowerCase() : null;
+  if (term && (term.length < 2 || term.length > 80)) throw new SearchInputError("A term needs 2 to 80 characters.");
+  const area = clean(input.area);
+  const development = clean(input.development);
+  const type = clean(input.type);
+  const listingType = clean(input.listingType, 10);
+  if (listingType && listingType !== "sale" && listingType !== "rent") throw new SearchInputError("listingType must be sale or rent.");
+  const mapping = !!(area || development || type);
+  if (!term && (mapping || listingType)) throw new SearchInputError("A place, type or sale/rent needs a term: the words in posts it should match.");
+  const note = clean(input.note, 2000) ?? answer;
+  const saved = term && mapping ? "alias" : term && listingType ? "rule" : "note";
+  return { answer: answer.slice(0, 300), saved, term, area, development, type, listingType, note };
+}
+
+/** The taught terms in a store's root, for the parser at ingest. No database yet: none (the built-in gazetteer only). */
+export function taughtTermsFrom(root: string): KnownTerm[] {
+  if (!existsSync(join(root, SEARCH_DB))) return [];
+  const store = SearchStore.open(root);
+  try {
+    return store.knownTerms();
+  } finally {
+    store.close();
+  }
 }
 
 /** Reads the search filters from a URL or a Next searchParams object. Throws SearchInputError on a bad value. */

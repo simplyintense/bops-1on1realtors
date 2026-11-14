@@ -9,7 +9,6 @@ import {
   NotInQueueError,
   SearchInputError,
   SearchStore,
-  applyAliases,
   exportSheets,
   isVague,
   nearIdentical,
@@ -17,10 +16,10 @@ import {
   SEARCH_DB,
   searchInputFrom,
   syncFromJsonl,
-  termIn,
   withSearchStore,
   type SearchRow,
 } from "../node/search-store.ts";
+import { applyKnownTerms, termIn } from "../flow/knowledge.ts";
 
 // Invented data only: made-up agents, 555-style numbers, invented listings.
 const AGENT = "+18685550101";
@@ -90,16 +89,17 @@ test("termIn matches whole words and phrases, case-insensitively", () => {
   assert.equal(termIn("price 2.5m", "2.5m"), true);
 });
 
-test("applyAliases only fills missing fields, longest term first", () => {
-  const out = applyAliases(
-    { area: null, development: null, price: null, type: null },
+test("applyKnownTerms only fills missing fields, longest term first", () => {
+  const out = applyKnownTerms(
+    { area: null, development: null, type: null, listingType: null },
     "blue haven townhouse",
     [
-      { term: "blue haven townhouse", area: "Blue Haven", development: null, type: "townhouse" },
-      { term: "blue haven", area: "Elsewhere", development: null, type: "house" },
+      { term: "blue haven", area: "Elsewhere", development: null, type: "house", listingType: null },
+      { term: "blue haven townhouse", area: "Blue Haven", development: null, type: "townhouse", listingType: null },
     ],
   );
-  assert.deepEqual(out, { area: "Blue Haven", development: null, price: null, type: "townhouse" });
+  assert.deepEqual(out, { area: "Blue Haven", development: null, type: "townhouse", listingType: null });
+  assert.deepEqual(applyKnownTerms({ area: "Maraval", development: null, type: null, listingType: null }, "blue haven", [{ term: "blue haven", area: "Blue Haven", development: null, type: null, listingType: null }]).area, "Maraval", "never overwrites");
 });
 
 test("clear posts go to supply and demand; vague posts go to the queue, not the match tables", () => {
@@ -222,7 +222,7 @@ test("aliases set by the owner promote vague posts during a later sync", () => {
   });
   syncFromJsonl(root);
   const [item] = rowsOf(root, "vague").filter((r) => r.messageIds.includes("q-1"));
-  withSearchStore(root, (s) => s.explain(item.id, { explanation: "Blue Haven is a house development", aliases: [{ term: "blue haven", area: "Blue Haven", type: "house" }] }));
+  withSearchStore(root, (s) => s.teach(item.id, { answer: "Blue Haven is a house development", term: "blue haven", area: "Blue Haven", type: "house" }));
 
   // A new vague post with the same term arrives: the saved alias applies during the sync, no owner step needed.
   writeFileSync(join(root, "supply.jsonl"), [
@@ -236,7 +236,7 @@ test("aliases set by the owner promote vague posts during a later sync", () => {
   assert.equal(rowsOf(root, "supply").find((r) => r.messageIds.includes("q-3"))?.area, "Blue Haven");
 });
 
-test("explain stores the explanation, saves the alias, reapplies it to every vague item, and keeps unresolved notes", () => {
+test("teach stores the answer, saves the alias, reapplies it to every vague item, and keeps unresolved notes", () => {
   const root = world({
     supply: [
       post({ messageId: "e-1", area: null, price: null, type: null, originalText: "Blue Haven townhouse, DM me" }),
@@ -251,13 +251,15 @@ test("explain stores the explanation, saves the alias, reapplies it to every vag
 
   const store = SearchStore.open(root);
   try {
-    const first = store.explain(pick("e-1").id, { explanation: "Blue Haven is a townhouse development", aliases: [{ term: "Blue Haven", area: "Blue Haven", type: "townhouse" }] });
+    const first = store.teach(pick("e-1").id, { answer: "Blue Haven is a townhouse development", term: "Blue Haven", area: "Blue Haven", type: "townhouse" });
+    assert.equal(first.saved, "alias");
     assert.equal(first.promoted, true);
     assert.equal(first.stillVague, false);
-    assert.equal(first.aliasesSaved, 1);
-    assert.equal(first.promotedByAlias, 2, "e-1 and e-2 both mention the term");
+    assert.equal(first.reparsed, 0, "no stored posts in this fixture, so nothing to parse again");
+    assert.equal(first.promotedRecords, 2, "e-1 and e-2 both mention the term and are clear now");
 
-    const note = store.explain(pick("e-3").id, { explanation: "Wants a rental, no place named" });
+    const note = store.teach(pick("e-3").id, { answer: "Wants a rental, no place named" });
+    assert.equal(note.saved, "note");
     assert.equal(note.stillVague, true);
     assert.equal(note.promoted, false);
   } finally {
@@ -274,17 +276,19 @@ test("explain stores the explanation, saves the alias, reapplies it to every vag
   assert.equal(rowsOf(root, "supply").find((r) => r.messageIds.includes("e-1"))?.type, "townhouse");
 });
 
-test("explain refuses an id outside the queue and invalid input, and saves nothing", () => {
+test("teach refuses an id outside the queue and invalid input, and saves nothing", () => {
   const root = world({ supply: [post({ messageId: "r-1", area: null, price: null, type: null, originalText: "vague one" })] });
   syncFromJsonl(root);
   const [item] = rowsOf(root, "vague");
   const store = SearchStore.open(root);
   try {
-    assert.throws(() => store.explain("0".repeat(24), { explanation: "nope" }), NotInQueueError);
-    assert.throws(() => store.explain(item.id, { explanation: "   " }), SearchInputError);
-    assert.throws(() => store.explain(item.id, { explanation: "ok", aliases: [{ term: "x" }] }), SearchInputError, "one-letter term");
-    assert.throws(() => store.explain(item.id, { explanation: "ok", aliases: [{ term: "vague one" }] }), SearchInputError, "alias with no area, development or type");
-    assert.deepEqual(store.aliases(), [], "a failed explain saves no alias");
+    assert.throws(() => store.teach("0".repeat(24), { answer: "nope" }), NotInQueueError);
+    assert.throws(() => store.teach(item.id, { answer: "   " }), SearchInputError);
+    assert.throws(() => store.teach(item.id, { answer: "ok", term: "x", area: "Maraval" }), SearchInputError, "one-letter term");
+    assert.throws(() => store.teach(item.id, { answer: "ok", area: "Maraval" }), SearchInputError, "a place with no term to match on");
+    assert.throws(() => store.teach(item.id, { answer: "ok", term: "vague one", listingType: "lease" }), SearchInputError, "sale or rent only");
+    assert.throws(() => store.teach(item.id, { answer: "two\nlines".repeat(100) }), SearchInputError, "one line, 300 characters at most");
+    assert.deepEqual(store.taught(), [], "a failed teach saves nothing");
   } finally {
     store.close();
   }
@@ -408,7 +412,7 @@ test("a queue id from an old rebuild survives as long as one of its messages is 
   assert.equal(before.messageIds.length, 2);
   const store = SearchStore.open(root);
   try {
-    store.explain(before.id, { explanation: "a note" });
+    store.teach(before.id, { answer: "a note" });
   } finally {
     store.close();
   }
@@ -427,7 +431,7 @@ test("an explanation follows its item out of the queue: on the promoted row, in 
   syncFromJsonl(root);
   const item = rowsOf(root, "vague").find((r) => r.messageIds.includes("k-1"))!;
   const note = "Blue Haven is a townhouse development";
-  withSearchStore(root, (s) => s.explain(item.id, { explanation: note, aliases: [{ term: "blue haven", area: "Blue Haven", type: "townhouse" }] }));
+  withSearchStore(root, (s) => s.teach(item.id, { answer: note, term: "blue haven", area: "Blue Haven", type: "townhouse" }));
 
   assert.equal(rowsOf(root, "vague").length, 0, "both items are clear through the alias now");
   const promoted = () => rowsOf(root, "supply").find((r) => r.messageIds.includes("k-1"))!;
@@ -454,7 +458,7 @@ test("a database from before the explanation columns is migrated in place, keepi
   });
   syncFromJsonl(root);
   const [item] = rowsOf(root, "vague");
-  withSearchStore(root, (s) => s.explain(item.id, { explanation: "an old note" }));
+  withSearchStore(root, (s) => s.teach(item.id, { answer: "an old note" }));
 
   // Simulate the old layout: no explanation columns on supply and demand, and the old schema version.
   const raw = new DatabaseSync(join(root, SEARCH_DB));

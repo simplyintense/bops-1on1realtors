@@ -15,7 +15,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-realty-sans", displa
 const playfair = Playfair_Display({ subsets: ["latin"], variable: "--font-realty-serif", display: "swap" });
 
 export default async function RealtyLayout({ children }: { children: ReactNode }) {
-  const { owner } = await viewer();
+  const { owner, teacher } = await viewer();
   return (
     <div className={`realty-theme flex min-h-full flex-col ${inter.variable} ${playfair.variable}`}>
       <header className="rt-header">
@@ -25,7 +25,7 @@ export default async function RealtyLayout({ children }: { children: ReactNode }
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/realty/1on1-realtors-logo.png" alt="1on1 Realtors" className="h-10 w-auto" />
           </Link>
-          <StaffNav owner={owner} />
+          <StaffNav owner={owner} teacher={teacher} />
         </div>
       </header>
       <div className="flex flex-1 flex-col">{children}</div>

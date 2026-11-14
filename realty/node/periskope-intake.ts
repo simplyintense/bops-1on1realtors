@@ -7,6 +7,7 @@ import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "..
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
+import { aliasesOf } from "../flow/knowledge.ts";
 import { CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
 import { liveRequestOf, matchOnArrival, matchOurListings, type LiveRequest } from "../flow/live-match.ts";
 import { veryStrongOurListings, type StrongAlert } from "../flow/observe.ts";
@@ -34,9 +35,10 @@ import {
 } from "../flow/periskope.ts";
 import type { CrmSource, Listing } from "../flow/source.ts";
 import { sharedCrmSource } from "./crm-shared.ts";
-import { GATE_COOKIE, gateConfig, ownerAllowed, publicDemo, readSession } from "../../lib/gate.ts";
+import { GATE_COOKIE, gateConfig, ownerAllowed, publicDemo, readSession, teachAllowed } from "../../lib/gate.ts";
 import { appendJsonl } from "./jsonl.ts";
 import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
+import { taughtTermsFrom } from "./search-store.ts";
 import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 
@@ -130,9 +132,14 @@ function liveCrm(env: Env): CrmSource | null {
 let areaCache: { at: number; resolver: AreaResolver } | null = null;
 const AREA_CACHE_MS = 10 * 60_000;
 
+/** The taught places, as exact-text aliases for the matcher (the knowledge store; none before it exists). */
+function taughtAliases(root: string) {
+  return aliasesOf(taughtTermsFrom(root));
+}
+
 function oursAreas(c: Ctx): AreaResolver {
-  if (!c.shared) return areasFromEnv(c.areas, c.env, c.fetch);
-  if (!areaCache || Date.now() - areaCache.at > AREA_CACHE_MS) areaCache = { at: Date.now(), resolver: new CachedAreaResolver(areasFromEnv(c.areas, c.env)) };
+  if (!c.shared) return areasFromEnv(c.areas, c.env, c.fetch, taughtAliases(c.root));
+  if (!areaCache || Date.now() - areaCache.at > AREA_CACHE_MS) areaCache = { at: Date.now(), resolver: new CachedAreaResolver(areasFromEnv(c.areas, c.env, undefined, taughtAliases(c.root))) };
   return areaCache.resolver;
 }
 
@@ -231,6 +238,7 @@ async function ingest(text: string, c: Ctx): Promise<Reply> {
     optedOut: c.store.optOuts(),
     consentOf: (chatId) => c.store.consent(chatId),
     seen: (id) => c.store.isSeen(id),
+    terms: taughtTermsFrom(c.root),
   });
   if (d.action === "ignore" && d.reason === "already seen") await refillPost(c, payload);
   return act(d, c);
@@ -266,7 +274,7 @@ async function refillPost(c: Ctx, payload: unknown): Promise<void> {
   const phone = phoneOf(m.sender);
   if (!phone) return;
   const sentAt = m.sentAt ?? c.now.toISOString();
-  const post = postRecordOf({ message: m, phone, interpretation: interpret(m.body), sentAt });
+  const post = postRecordOf({ message: m, phone, interpretation: interpret(m.body, taughtTermsFrom(c.root)), sentAt });
   await keepPost(c, post);
 }
 
@@ -410,7 +418,7 @@ function openFlow(c: Ctx, crm: CrmSource, onTick?: (now: Date) => void | Promise
     clock: () => c.now,
     outbox: new DryRunOutbox({ clock: () => c.now, append: (line) => appendJsonl(join(c.root, "outbox.jsonl"), line) }),
     market: marketFrom(c.env),
-    areas: areasFromEnv(c.areas, c.env, c.fetch),
+    areas: areasFromEnv(c.areas, c.env, c.fetch, taughtAliases(c.root)),
     pairStore: c.areas,
     timeoutMs: timeoutMsFromEnv(c.env),
     hours: businessHoursFromEnv(c.env),
@@ -642,6 +650,16 @@ export async function ownerAccess(request: Request, env: Env = runtimeEnv()): Pr
   const denied = await staffAccess(request, env);
   if (denied) return denied;
   return ownerAllowed(await staffEmail(request, env), env) ? null : reply(403, { error: "Owners only." });
+}
+
+/**
+ * staffAccess, then the teachers only (BOPS_TEACH_EMAILS, teachAllowed). A signed-in non-teacher gets a 404, not a 403: the
+ * teach endpoint is not there for them. With the gate off there's no email, so nobody teaches over the API (the CLI does).
+ */
+export async function teacherAccess(request: Request, env: Env = runtimeEnv()): Promise<Reply | null> {
+  const denied = await staffAccess(request, env);
+  if (denied) return denied;
+  return teachAllowed(await staffEmail(request, env), env) ? null : reply(404, { error: "Not found." });
 }
 
 /** The signed-in staff email, or null (gate off, or no valid session). Call after staffAccess has let the request through. */

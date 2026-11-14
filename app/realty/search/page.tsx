@@ -5,7 +5,6 @@ import { dateAst } from "@/realty/node/group-posts.ts";
 import { requestIdOf } from "@/realty/node/periskope-store.ts";
 import { SearchInputError, searchInputFrom, withSearchStore, type SearchInput, type SearchRow, type Tab } from "@/realty/node/search-store.ts";
 import { viewer } from "../viewer";
-import { ExplainForm } from "./explain-form";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 
 export const dynamic = "force-dynamic";
@@ -38,11 +37,11 @@ const snippet = (s: string | null) => {
 
 /**
  * Owners only: search the WhatsApp supply, demand and needs-explanation queue. The filters are a plain GET form. Rows
- * link to the stored post (owners only), and needs-explanation rows take an explanation and an optional alias. Agents
- * never see this page.
+ * link to the stored post (owners only). Needs-explanation rows are taught on the Teach Bops page (teachers only), the one
+ * place to teach Bops. Agents never see this page.
  */
 export default async function SearchPage({ searchParams }: { searchParams: Promise<Params> }) {
-  const { owner } = await viewer();
+  const { owner, teacher } = await viewer();
   if (!owner) redirect("/realty/desk");
   const raw = await searchParams;
 
@@ -137,7 +136,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
               </thead>
               <tbody>
                 {result.rows.map((r) => (
-                  <ResultRows key={r.id} r={r} tab={tab} />
+                  <ResultRows key={r.id} r={r} tab={tab} teacher={teacher} />
                 ))}
               </tbody>
             </table>
@@ -154,7 +153,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   );
 }
 
-function ResultRows({ r, tab }: { r: SearchRow; tab: Tab }) {
+function ResultRows({ r, tab, teacher }: { r: SearchRow; tab: Tab; teacher: boolean }) {
   const place = [r.area, r.development].filter(Boolean).join(" / ");
   const post = r.messageIds[0] ? `/realty/posts/${requestIdOf(r.messageIds[0])}` : null;
   return (
@@ -184,7 +183,11 @@ function ResultRows({ r, tab }: { r: SearchRow; tab: Tab }) {
         <tr className="rt-row">
           <td colSpan={11} className="px-2">
             {r.explanation ? <p className="rt-muted py-1 text-xs">Explained {r.explainedAt ? dateAst(r.explainedAt) : ""}: {r.explanation}</p> : null}
-            <ExplainForm id={r.id} />
+            {teacher ? (
+              <Link href="/realty/learn" className="rt-link py-1 text-xs">
+                Teach Bops
+              </Link>
+            ) : null}
           </td>
         </tr>
       ) : r.explanation ? (

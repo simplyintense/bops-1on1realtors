@@ -1,6 +1,7 @@
 import { developmentOf, findAreas, findBudget, findInterest, findPhones, normalizePhone } from "../extract.ts";
 import type { Currency, Inquiry, ListingType } from "./engine.ts";
 import { runtimeEnv, type Env } from "./env.ts";
+import { applyKnownTerms, type KnownTerm } from "./knowledge.ts";
 import { propertyKindFromCrm } from "./taxonomy.ts";
 
 /**
@@ -348,17 +349,18 @@ export function listingSignals(body: string): boolean {
   return lines.slice(0, 6).some((l) => HEADLINE_LISTING.test(l));
 }
 
-/** The structured facts in a message. Each one is what the text says, nothing more. */
-export function factsOf(body: string): Facts {
+/** The structured facts in a message. Each one is what the text says, plus any taught term that fills a gap. */
+export function factsOf(body: string, terms: readonly KnownTerm[] = []): Facts {
   const interest = findInterest(body);
   const budget = findBudget(body);
+  const place = applyKnownTerms({ area: findAreas(body)[0] ?? null, development: null, type: interest.types[0] ?? null, listingType: null }, body, terms);
   return {
-    area: findAreas(body)[0] ?? null,
+    area: place.area ?? place.development,
     beds: interest.bedrooms,
     baths: bathsOf(body),
-    type: interest.types[0] ?? null,
+    type: place.type,
     budget: budget ? { min: budget.min, max: budget.max, currency: budget.currency, monthly: budget.period === "month" } : null,
-    intent: interest.intent,
+    intent: interest.intent ?? (place.listingType === "rent" ? "rent" : place.listingType === "sale" ? "buy" : null),
   };
 }
 
@@ -414,8 +416,8 @@ const hasListingFacts = (f: Facts) => !!(f.area || f.beds || f.type || f.budget)
  * or a priced headline-style property ad) are supply, even if the copy also says "seeking".
  * Anything else is other.
  */
-export function interpret(body: string): Interpretation {
-  const facts = factsOf(body);
+export function interpret(body: string, terms: readonly KnownTerm[] = []): Interpretation {
+  const facts = factsOf(body, terms);
   const listed = listingSignals(body);
   const demand = DEMAND.test(body) || ANY_UNITS.test(body);
   const supply = listed || SUPPLY.test(body);
@@ -538,6 +540,8 @@ export function decide(input: {
   optedOut: readonly string[];
   consentOf: (chatId: string) => GroupConsent | null;
   seen: (messageId: string) => boolean;
+  /** Taught terms (the knowledge store). Empty: the built-in gazetteer only. */
+  terms?: readonly KnownTerm[];
 }): Decision {
   const env = input.env ?? runtimeEnv();
   const e = envelopeOf(input.payload);
@@ -556,7 +560,7 @@ export function decide(input: {
   if (!m.hasText) return { action: "ignore", reason: "not a text message" };
   if (input.seen(m.messageId)) return { action: "ignore", reason: "already seen" };
 
-  const i = interpret(m.body);
+  const i = interpret(m.body, input.terms);
   const sentAt = m.sentAt ?? input.at.toISOString();
   const itemArgs = { messageId: m.messageId, phone, chatId: m.chatId, seenAt: sentAt, interpretation: i };
   const post = postRecordOf({ message: m, phone, interpretation: i, sentAt });
@@ -603,10 +607,10 @@ export function postRecordOf(args: { message: ParsedMessage; phone: string; inte
 }
 
 /** Re-run interpret on a stored post's original text, keeping identity, sender and media. */
-export function reparsePost(p: PostRecord): PostRecord {
+export function reparsePost(p: PostRecord, terms: readonly KnownTerm[] = []): PostRecord {
   const body = p.originalText?.trim();
   if (!body) return p;
-  const interpretation = interpret(body);
+  const interpretation = interpret(body, terms);
   const next = postRecordOf({
     message: {
       messageId: p.messageId,

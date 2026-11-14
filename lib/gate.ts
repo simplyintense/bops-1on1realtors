@@ -69,6 +69,17 @@ export function ownerAllowed(email: string | null | undefined, env: Env = proces
   return cfg !== "misconfigured" && !!email && emailAllowed(email, parseAllowlist(env.BOPS_OWNER_EMAILS ?? ""));
 }
 
+/**
+ * The teach page and API (BOPS_TEACH_EMAILS, comma-separated, case-insensitive). Unlike ownerAllowed, the gate being off
+ * is no pass: there's no signed-in email, so nobody may teach through the web. Unset or empty: nobody. Misconfigured: nobody.
+ */
+export function teachAllowed(email: string | null | undefined, env: Env = process.env): boolean {
+  const cfg = gateConfig(env);
+  if (!cfg || cfg === "misconfigured") return false;
+  const teachers = parseAllowlist(env.BOPS_TEACH_EMAILS ?? "").filter((a) => !a.startsWith("@"));
+  return !!email && emailAllowed(email, teachers);
+}
+
 /** Paths that skip the gate: they prove themselves (signatures, tokens) or say nothing. */
 export const GATE_OPEN_PATHS = new Set([
   "/api/health",
