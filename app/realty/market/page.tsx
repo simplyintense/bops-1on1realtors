@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { criteriaFromParams, type DeskArea, type DeskCriteria, type DeskResult } from "@/realty/flow/market-desk.ts";
-import type { CoBrokeHit } from "@/realty/flow/market-search.ts";
 import { staffMarketSearch } from "@/realty/node/market-desk.ts";
 import { StaffNav } from "../staff-nav";
+import { ListingTable } from "./listing-table";
 
 /**
  * Market search for staff: other agencies' listings for an area, with filters (realty/flow/market-desk.ts). Read-only:
@@ -30,8 +30,13 @@ export default async function MarketSearchPage({ searchParams }: { searchParams:
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10 text-neutral-900">
       <StaffNav current="market" />
-      <p className="mt-8 text-xs font-semibold uppercase tracking-wider text-amber-700">Staff only · read-only</p>
-      <h1 className="mt-2 text-3xl font-semibold">Market search</h1>
+      <div className="mt-8 flex flex-wrap items-center gap-5">
+        <img src="/realty/1on1-realtors-logo.png" alt="1on1 Realtors" className="h-14 w-auto" />
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Staff only · read-only</p>
+          <h1 className="mt-1 text-3xl font-semibold">Search Full Online Market</h1>
+        </div>
+      </div>
       <p className="mt-3 text-neutral-600">
         Other agencies&apos; listings from the market. Nothing is saved, sent or written to the CRM.
       </p>
@@ -140,61 +145,13 @@ function Results({ result, c }: { result: DeskResult; c: DeskCriteria }) {
           <p className="mb-3 text-sm text-neutral-600">
             {result.listings.length} listing{result.listings.length === 1 ? "" : "s"} from the market.
           </p>
-          <div className="overflow-x-auto rounded-lg border border-neutral-200">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
-                <tr>
-                  <th className="px-3 py-2 font-semibold">Title</th>
-                  <th className="px-3 py-2 font-semibold">Property type</th>
-                  <th className="px-3 py-2 font-semibold">Agency</th>
-                  <th className="px-3 py-2 font-semibold">Area</th>
-                  <th className="px-3 py-2 font-semibold">Beds</th>
-                  <th className="px-3 py-2 font-semibold">Baths</th>
-                  <th className="px-3 py-2 font-semibold">Price</th>
-                  <th className="px-3 py-2 font-semibold">Last seen</th>
-                  <th className="px-3 py-2 font-semibold">Listing</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200">
-                {result.listings.map((h, i) => (
-                  <Row key={`${h.url ?? h.title}-${i}`} h={h} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ListingTable listings={result.listings} />
         </>
       )}
     </>
   );
 }
 
-function Row({ h }: { h: CoBrokeHit }) {
-  const price = h.price === null ? "—" : `${h.price.toLocaleString("en-US")}${h.currency ? ` ${h.currency}` : ""}`;
-  return (
-    <tr className="align-top">
-      <td className="px-3 py-2">
-        {h.title}
-        {h.listingType ? <span className="block text-xs text-neutral-500">{h.listingType}</span> : null}
-      </td>
-      <td className="px-3 py-2 text-neutral-600">{h.propertyClass ?? "—"}</td>
-      <td className="px-3 py-2 text-neutral-600">{h.source}</td>
-      <td className="px-3 py-2 text-neutral-600">{h.area ?? "—"}</td>
-      <td className="px-3 py-2">{h.beds ?? "—"}</td>
-      <td className="px-3 py-2">{h.baths ?? "—"}</td>
-      <td className="whitespace-nowrap px-3 py-2">{price}</td>
-      <td className="whitespace-nowrap px-3 py-2 text-neutral-600">{h.lastSeen ?? "—"}</td>
-      <td className="px-3 py-2">
-        {h.url ? (
-          <a href={h.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">
-            Open
-          </a>
-        ) : (
-          "—"
-        )}
-      </td>
-    </tr>
-  );
-}
 
 function AreaNote({ area, nearby }: { area: DeskArea | null; nearby: boolean }) {
   if (!area) return <p className="mb-4 text-sm text-neutral-600">Searched all areas.</p>;

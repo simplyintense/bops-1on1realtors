@@ -203,6 +203,43 @@ test("property_class on a hit becomes propertyClass; a missing or blank one is n
   assert.equal(byTitle.Missing, null);
 });
 
+test("photo: an http(s) photo URL is kept; a missing, blank or unsafe one is null", async () => {
+  const hits = [
+    hit("Https", { photo: "https://images.example.com/a.jpg" }),
+    hit("Http", { photo: "http://images.example.com/b.jpg" }),
+    hit("Blank", { photo: "  " }),
+    hit("Bad", { photo: "javascript:alert(1)" }),
+    hit("Missing"),
+  ];
+  const { result } = await run(crit({ area: "Woodbrook" }), { hits: () => hits });
+  const byTitle = Object.fromEntries(ok(result).listings.map((h) => [h.title, h.photo]));
+  assert.equal(byTitle.Https, "https://images.example.com/a.jpg");
+  assert.equal(byTitle.Http, "http://images.example.com/b.jpg");
+  assert.equal(byTitle.Blank, null);
+  assert.equal(byTitle.Bad, null);
+  assert.equal(byTitle.Missing, null);
+});
+
+test("first_seen and last_seen (or last_checked) show as dates when present", async () => {
+  const hits = [
+    hit("Dated", { first_seen: "2026-10-01T12:00:00Z", last_seen: "2026-11-10T09:30:00Z" }),
+    hit("Checked", { last_checked: "2026-11-11T08:00:00Z" }),
+    hit("Undated"),
+  ];
+  const { result } = await run(crit({ area: "Woodbrook" }), { hits: () => hits });
+  const byTitle = Object.fromEntries(ok(result).listings.map((h) => [h.title, { first: h.firstSeen, last: h.lastSeen }]));
+  assert.deepEqual(byTitle.Dated, { first: "2026-10-01", last: "2026-11-10" });
+  assert.deepEqual(byTitle.Checked, { first: null, last: "2026-11-11" });
+  assert.deepEqual(byTitle.Undated, { first: null, last: null });
+});
+
+test("a string price like TTD 2,425,000 is read as an amount and currency", async () => {
+  const { result } = await run(crit({ area: "Woodbrook" }), { hits: () => [hit("Priced", { price: "TTD 2,425,000" }), hit("Usd", { price: "USD 1,000/month" })] });
+  const byTitle = Object.fromEntries(ok(result).listings.map((h) => [h.title, { price: h.price, currency: h.currency }]));
+  assert.deepEqual(byTitle.Priced, { price: 2425000, currency: "TTD" });
+  assert.deepEqual(byTitle.Usd, { price: 1000, currency: "USD" });
+});
+
 test("our own listings and unsafe links are dropped; a bad link is shown with no link", async () => {
   const hits = [hit("Ours", { source: "oneonone" }), hit("Bad", { url: "javascript:alert(1)" }), hit("Good")];
   const { result } = await run(crit({ area: "Woodbrook" }), { hits: () => hits });

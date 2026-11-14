@@ -89,7 +89,9 @@ const hit = (area: string | null, over: Partial<CoBrokeHit> = {}): CoBrokeHit =>
   propertyClass: null,
   source: "otheragency",
   url: "https://example.com/a/1",
+  firstSeen: null,
   lastSeen: null,
+  photo: null,
   ...over,
 });
 

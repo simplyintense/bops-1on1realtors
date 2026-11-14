@@ -30,8 +30,12 @@ export type CoBrokeHit = {
   propertyClass: string | null;
   source: string;
   url: string | null;
-  /** last_seen as YYYY-MM-DD when the hit carries a date; the lead flow doesn't use it. */
+  /** first_seen as YYYY-MM-DD when the hit carries a date; the lead flow doesn't use it. */
+  firstSeen: string | null;
+  /** last_seen (or last_checked) as YYYY-MM-DD when the hit carries a date; the lead flow doesn't use it. */
   lastSeen: string | null;
+  /** Main image URL from the source site (`photo`); http(s) only. The lead flow doesn't use it. */
+  photo: string | null;
 };
 
 export type MarketConfig = { url: string; token: string; timeoutMs: number };
@@ -109,20 +113,52 @@ function toHit(h: unknown): CoBrokeHit | null {
   const title = str(o.title);
   const source = str(o.source);
   if (!title || !source || source.toLowerCase() === "oneonone") return null;
-  const url = str(o.url);
+  const money = priceOf(o.price, o.currency);
   return {
     title,
-    price: num(o.price),
-    currency: str(o.currency),
+    price: money.price,
+    currency: money.currency,
     area: str(o.area),
     beds: num(o.beds),
     baths: num(o.baths),
     listingType: str(o.listing_type),
     propertyClass: str(o.property_class),
     source,
-    url: url && /^https?:\/\//i.test(url) ? url : null,
-    lastSeen: day(o.last_seen),
+    url: httpUrl(o.url),
+    firstSeen: day(o.first_seen),
+    lastSeen: day(o.last_seen) ?? day(o.last_checked),
+    photo: httpUrl(o.photo),
   };
+}
+
+/** An http(s) URL, or null. Other schemes (javascript:, data:) are dropped. */
+export function httpUrl(v: unknown): string | null {
+  const s = str(v);
+  return s && /^https?:\/\//i.test(s) ? s : null;
+}
+
+/** A numeric price and currency, from a number or a string like "TTD 2,425,000" or "USD 1,000/month". */
+export function priceOf(price: unknown, currency?: unknown): { price: number | null; currency: string | null } {
+  const stated = str(currency);
+  if (typeof price === "number" && Number.isFinite(price)) return { price, currency: stated };
+  if (typeof price === "string") {
+    const m = price.trim().match(/^([A-Za-z]{3})?\s*\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)/);
+    if (!m) return { price: null, currency: stated };
+    const amount = Number(m[2].replace(/,/g, ""));
+    const fromText = m[1] ? m[1].toUpperCase() : null;
+    return { price: Number.isFinite(amount) ? amount : null, currency: fromText ?? stated };
+  }
+  return { price: null, currency: stated };
+}
+
+/** TT$ / US$ when the currency is known; otherwise the raw amount (and code, if any). */
+export function moneyLabel(price: number | null, currency: string | null): string | null {
+  if (price === null) return null;
+  const n = price.toLocaleString("en-US");
+  const c = (currency ?? "").toUpperCase();
+  if (c === "TTD") return `TT$${n}`;
+  if (c === "USD") return `US$${n}`;
+  return c ? `${c} ${n}` : n;
 }
 
 /** The server's schema: optional listing_type, area, price_max, beds_min, limit. Prices there mix TTD and USD, so only a TTD budget caps price. */
