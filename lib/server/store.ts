@@ -7,6 +7,7 @@ import { fileStore, onPostgres, onRunner, selfHosted, type Persistence, type Sta
 import { cloudStore } from "./persist-cloud";
 import { pgStore } from "./persist-pg";
 import { userBopsHome, userChromeDir, userDataDir } from "./user-paths";
+import { REALTY_TEAM, teamPreset } from "@/lib/realty-team";
 
 /**
  * The app's state: one in-process object, the signed-in Orgo user's. The Mac app keeps it in Bops
@@ -22,8 +23,14 @@ const seedBots: Bot[] = [
   { id: "penny", name: "Penny", role: "Finance", color: "#FF6FB5", isMain: false, computerStatus: "none" },
 ];
 
+/** The bots a fresh start gets: this fork's 1on1 Realtors team (lib/realty-team.ts), or upstream's Boppy alone (BOPS_TEAM_PRESET=bops). */
+const presetBots = (): Bot[] => (teamPreset() === "bops" ? seedBots : REALTY_TEAM.map((b) => ({ ...b, computerStatus: "none" as const })));
+
 /** The main bot as on day one: no computer yet (one launches from the Bops template on its first task), nothing connected. */
-const freshMain = (): Bot => ({ ...seedBots.find((b) => b.isMain)!, computerId: undefined, computerStatus: "none" });
+const freshMain = (): Bot => ({ ...presetBots().find((b) => b.isMain)!, computerId: undefined, computerStatus: "none" });
+
+/** The team on day one: the main bot, then (for the 1on1 Realtors preset) its specialists, on the main bot's computer. */
+const freshTeam = (): Bot[] => [freshMain(), ...(teamPreset() === "bops" ? [] : presetBots().filter((b) => !b.isMain).map((b) => ({ ...b, computer: "shared" as const })))];
 
 const botChat = (botId: string, at = Date.now()): Chat => ({ id: botChatId(botId), kind: "bot", botIds: [botId], createdAt: at, typing: [] });
 
@@ -34,7 +41,7 @@ export const RESTARTED = "Bops restarted while this was running";
 function migrate(raw: Record<string, unknown>): AppState {
   const state = raw as unknown as AppState & { samThinking?: boolean };
   // A fresh start is the main bot (Boppy) alone; it (or you) adds the rest of the team. It can't be removed.
-  state.bots ??= [freshMain()];
+  state.bots ??= freshTeam();
   if (!state.bots.some((x) => x.isMain)) state.bots.unshift(freshMain());
   state.chats ??= [];
   for (const b of state.bots) if (!state.chats.some((c) => c.id === botChatId(b.id))) state.chats.push({ ...botChat(b.id, 0), workspaceId: b.workspaceId });

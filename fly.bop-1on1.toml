@@ -1,0 +1,44 @@
+# bop.1on1realtors.com on Fly.io (1on1 Realtors fork). Not deployed yet: see docs/1on1-realtors.md.
+#   fly apps create bop-1on1realtors
+#   fly volumes create bops_data --size 3 --region iad -a bop-1on1realtors
+#   fly secrets set -a bop-1on1realtors ...   (the list in docs/1on1-realtors.md; never in this file)
+#   fly deploy -c fly.bop-1on1.toml
+app = "bop-1on1realtors"
+# Northern Virginia (iad): a close Fly region to Trinidad and Tobago.
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  BOPS_SELF_HOSTED = "1"
+  BOPS_LOGIN_GATE = "google"
+  BOPS_PUBLIC_URL = "https://bop.1on1realtors.com"
+  # The fly.dev name too, to sign in before DNS points here (add its callback to the Google client).
+  BOPS_PUBLIC_HOST = "bop.1on1realtors.com,bop-1on1realtors.fly.dev"
+
+# Chats, bots and settings (.data/) survive deploys and restarts.
+[[mounts]]
+  source = "bops_data"
+  destination = "/app/.data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always on: bots run routines and answer webhooks while nobody has the page open. One machine only:
+  # the state is a file on its volume, which two machines can't share.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

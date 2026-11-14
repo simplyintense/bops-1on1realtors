@@ -1,0 +1,51 @@
+# bop.1on1realtors.com on Render (1on1 Realtors fork), the alternative to fly.bop-1on1.toml.
+# Not deployed yet: see docs/1on1-realtors.md. Secrets are entered in Render's dashboard (sync: false),
+# never in this file.
+services:
+  - type: web
+    name: bop-1on1realtors
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard
+    region: virginia
+    autoDeploy: false
+    healthCheckPath: /api/health
+    # One instance: the state is a file on this disk, which two instances can't share.
+    numInstances: 1
+    disk:
+      name: bops-data
+      mountPath: /app/.data
+      sizeGB: 3
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: BOPS_SELF_HOSTED
+        value: "1"
+      - key: BOPS_LOGIN_GATE
+        value: google
+      - key: BOPS_PUBLIC_URL
+        value: https://bop.1on1realtors.com
+      - key: BOPS_PUBLIC_HOST
+        value: bop.1on1realtors.com,bop-1on1realtors.onrender.com
+      - key: BOPS_ALLOWED_EMAILS
+        sync: false
+      - key: BOPS_GATE_SECRET
+        generateValue: true
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: ORGO_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_EXECUTOR_API_KEY
+        sync: false
+      - key: ONEON1_CRM_URL
+        sync: false
+      - key: ONEON1_CRM_ANON_KEY
+        sync: false
+      - key: ONEON1_CRM_BOT_EMAIL
+        sync: false
+      - key: ONEON1_CRM_BOT_PASSWORD
+        sync: false

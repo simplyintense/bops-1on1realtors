@@ -12,6 +12,7 @@ import { appsNote, placesNote } from "./skills";
 import { workComputer } from "./screens";
 import { DATA_TOOL_NAMES, DATA_TOOLS, dataNote, runDataTool } from "./treg";
 import { CRM_TOOL_NAMES, CRM_TOOLS, crmNote, crmNowLine, runCrmTool } from "./crm";
+import { REALTY_TOOL_NAMES, REALTY_TOOLS, runRealtyTool } from "./realty-crm";
 import { ORBIT_OWNER_ONLY, ORBIT_TOOL_NAMES, ORBIT_TOOLS, orbitNote, orbitNowLine, runOrbitTool } from "./orbit";
 import type { ResponseInputItem } from "openai/resources/responses/responses";
 import { openaiClient } from "./openai-client";
@@ -834,6 +835,7 @@ const LOOKUPS = new Set([
   "local_app",
   ...DATA_TOOL_NAMES,
   ...CRM_TOOL_NAMES,
+  ...REALTY_TOOL_NAMES,
   ...ORBIT_TOOL_NAMES,
 ]);
 
@@ -1247,7 +1249,7 @@ const ONLY_READS = new Set(["find_app_actions", "recall", "check_email", "read_e
 const notFromMember = (apps: boolean) => (apps ? NOT_FROM_MEMBER : new Set([...NOT_FROM_MEMBER, "make_app", "change_app", "work_on_app", "deploy_app", "local_app"]));
 
 /** Lookups whose answers come from outside Bops: the web, email, apps and data. A turn that read one can't save a skill. */
-const OUTSIDE_READS = new Set(["web_fetch", "check_email", "read_email", "use_app", "call_api", ...DATA_TOOL_NAMES, ...CRM_TOOL_NAMES, ...ORBIT_TOOL_NAMES]);
+const OUTSIDE_READS = new Set(["web_fetch", "check_email", "read_email", "use_app", "call_api", ...DATA_TOOL_NAMES, ...CRM_TOOL_NAMES, ...REALTY_TOOL_NAMES, ...ORBIT_TOOL_NAMES]);
 
 /** Work the bot starts or passes on, which may open web addresses in its signed-in browser: checked for them (turn's workRefused). */
 const WORK = new Set(["start_task", "hand_off", "tell_task", "create_bot", "work_on_app"]);
@@ -2123,6 +2125,8 @@ async function turn(botId: string, chatId: string, opts: TurnOptions = {}): Prom
       ...(opts.outside ? [] : DATA_TOOLS(b)),
       // The user's own CRM (crm.ts): not for a turn someone else started, like business data.
       ...(opts.outside ? [] : CRM_TOOLS(b)),
+      // 1on1 Realtors' CRM (realty-crm.ts), read-only: likewise only on the user's own turns.
+      ...(opts.outside ? [] : REALTY_TOOLS(b)),
       // Orbit (orbit.ts), the user's people, tasks and events: likewise only on their own turns. (Not for a bot that keeps
       // its memory to itself and doesn't read the team's: orbit.ts.)
       ...(opts.outside ? [] : ORBIT_TOOLS(b)),
@@ -2502,6 +2506,7 @@ async function turn(botId: string, chatId: string, opts: TurnOptions = {}): Prom
       if (name === "check_email" || name === "read_email") readFrom.add(`Email in ${b.name}'s inbox`);
       if (DATA_TOOL_NAMES.has(name)) readFrom.add("Business data (companies and people)");
       if (CRM_TOOL_NAMES.has(name)) readFrom.add("Your CRM");
+      if (REALTY_TOOL_NAMES.has(name)) readFrom.add("1on1 Realtors CRM");
       if (ORBIT_TOOL_NAMES.has(name)) readFrom.add("Knowledge");
       // Into and out of its memory scope: its own bank while it keeps its memory to itself (lib/chain.ts).
       if (name === "remember") return learn(scopeOf(botId), a.fact ?? "", chatId).catch(failed);
@@ -2519,6 +2524,7 @@ async function turn(botId: string, chatId: string, opts: TurnOptions = {}): Prom
           })
           .catch(failed);
       if (CRM_TOOL_NAMES.has(name)) return runCrmTool(botId, name, a, { chatId }).catch(failed);
+      if (REALTY_TOOL_NAMES.has(name)) return runRealtyTool(name, a).then((out) => (bring(out), out)).catch(failed);
       if (ORBIT_TOOL_NAMES.has(name)) return runOrbitTool(botId, name, a, { chatId, routineId: bg?.routineId, readIn: (key) => read.accountsWith(key) }).catch(failed);
       if (name === "ask_teammate") return askTeammate(b, String(a.bot_id ?? ""), String(a.question ?? ""), chatId, asked, member).catch((e: Error) => `Couldn't reach them: ${e.message}`);
       if (name === "web_fetch") {

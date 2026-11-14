@@ -5,6 +5,11 @@ import type { NextConfig } from "next";
 // This app's version, built in: the server tells Bops Cloud which app is calling (lib/server/app-version.ts).
 const { version } = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { version: string };
 
+// 1on1 Realtors fork: on Vercel (VERCEL set at build time) the Mac app's packaging settings (standalone
+// output, the trace excludes) are left off: Vercel builds its own functions, and with them its page
+// functions shipped without Next's own server files.
+const onVercel = !!process.env.VERCEL;
+
 const nextConfig: NextConfig = {
   env: { BOPS_APP_VERSION: version },
   // The desktop app is the product; Next's floating dev badge sat on top of the sidebar footer.
@@ -13,7 +18,7 @@ const nextConfig: NextConfig = {
   // (@x402/fetch, mppx) that aren't installed, which the bundler can't resolve.
   serverExternalPackages: ["agentmail"],
   // The Mac app ships this server prebuilt (.next/standalone, started by desktop/main.cjs).
-  output: "standalone",
+  output: onVercel ? undefined : "standalone",
   // Images are served as they are: resizing them on a local server isn't worth shipping sharp and
   // libvips (about 18 MB) in the app. next/image still renders, with the original file.
   images: { unoptimized: true },
@@ -39,7 +44,7 @@ const nextConfig: NextConfig = {
   // Reading .data/ and vm/ through process.cwd() makes the tracer take the whole project. Only
   // the built server, node_modules and the files above ship: never source, docs, the encrypted
   // envs/, local state or the desktop build itself.
-  outputFileTracingExcludes: {
+  outputFileTracingExcludes: onVercel ? undefined : {
     "/*": [
       "./.data/**",
       "./.env*",

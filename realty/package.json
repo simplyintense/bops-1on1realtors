@@ -1,0 +1,1 @@
+{ "private": true, "type": "module", "description": "1on1 Realtors tools (WhatsApp export reader, agent inbox sorter). Plain Node 22.18+/24 TypeScript, no build: docs/1on1-realtors.md." }
