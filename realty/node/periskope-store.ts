@@ -32,6 +32,8 @@ export type LiveRow = {
   status: LiveMatchStatus | "pending";
   matchedAt: string | null;
   matches: MatchItem[];
+  /** Our own CRM listings that fit, each with its holder agent. Missing on rows from before the CRM was connected. */
+  ours?: MatchItem[];
 };
 
 /** A queued market-ingest POST (listing, request, group or optout). status pending is retried later, never inline. */

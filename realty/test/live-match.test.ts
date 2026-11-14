@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { SAMPLE_CHAT, SAMPLE_MESSAGES, sampleEnvelope } from "../fixtures/whatsapp-samples.ts";
-import { crmSeam, fixedCrmSeam, NOT_CONNECTED } from "../flow/crm-seam.ts";
+import { NOT_CONNECTED } from "../flow/crm-seam.ts";
 import { digestOf, liveBuyerArgs, liveDesk, liveRequestOf, matchOnArrival, requestLabel } from "../flow/live-match.ts";
 import { interpret } from "../flow/periskope.ts";
 import { parseMatch, slugTitle } from "../flow/recommendations.ts";
@@ -168,7 +168,7 @@ test("the desk's live side: an agent sees only their own requests; unassigned re
   for (const m of SAMPLE_MESSAGES) await w.post(sampleEnvelope(m));
   const rows = w.store().live();
   assert.equal(rows.length, 3);
-  const agents = [{ email: "kerry@1on1.example", phone: "+18685550101" }];
+  const agents = [{ id: 7, email: "kerry@1on1.example", phone: "+18685550101" }];
 
   const agent = liveDesk({ email: "Kerry@1on1.example", owner: false, agents, rows });
   assert.equal(agent.unassigned, null, "staff never get the unassigned list");
@@ -182,7 +182,7 @@ test("the desk's live side: an agent sees only their own requests; unassigned re
   assert.doesNotMatch(JSON.stringify(owner), /\+1868|sample-/, "cards carry no phone or message id");
 
   // No CRM: nobody is an agent, so staff see "no-agent" and owners see every request as unassigned.
-  assert.deepEqual(liveDesk({ email: "kerry@1on1.example", owner: false, agents: [], rows }), { yours: { status: "no-agent" }, unassigned: null });
+  assert.deepEqual(liveDesk({ email: "kerry@1on1.example", owner: false, agents: [], rows }), { yours: { status: "no-agent" }, onListings: [], unassigned: null, unheld: null });
   assert.equal(liveDesk({ email: "miles@1on1.example", owner: true, agents: [], rows }).unassigned?.length, 3);
   assert.deepEqual(liveDesk({ email: null, owner: false, agents, rows }).yours, { status: "signed-out" });
 });
@@ -193,9 +193,6 @@ test("the CRM seam: not connected says so honestly, with no listings and no agen
   assert.equal(l.status, "not-connected");
   assert.match(l.status === "not-connected" ? l.text : "", /CRM not connected/);
   assert.deepEqual(await NOT_CONNECTED.agents(), []);
-  assert.equal(crmSeam(), NOT_CONNECTED);
-  const fixed = fixedCrmSeam([{ id: "L1" }], [{ email: " Kerry@1on1.example ", phone: "868-555-0101" }, { email: "x@1on1.example", phone: "n/a" }]);
-  assert.deepEqual(await fixed.agents(), [{ email: "kerry@1on1.example", phone: "+18685550101" }]);
 });
 
 test("the daily digest counts the last 24 hours and is for owners only", async () => {
@@ -209,10 +206,10 @@ test("the daily digest counts the last 24 hours and is for owners only", async (
   assert.equal(digestOf(w.store().live(), new Date(NOW.getTime() + 25 * 3_600_000)).requests, 0, "older than a day is out");
 
   const env = { BOPS_OWNER_EMAILS: "miles@1on1.example, wendy@1on1.example" };
-  assert.deepEqual(staffDigest({ email: "kerry@1on1.example", env, intakeRoot: w.root }), { owner: false });
-  assert.deepEqual(staffDigest({ email: null, env, intakeRoot: w.root }), { owner: false });
-  const owner = staffDigest({ email: "wendy@1on1.example", env, intakeRoot: w.root, now: new Date(NOW.getTime() + 60_000) });
-  assert.ok(owner.owner && owner.digest.requests === 3 && owner.crm === "not-connected");
+  assert.deepEqual(await staffDigest({ email: "kerry@1on1.example", env, intakeRoot: w.root }), { owner: false });
+  assert.deepEqual(await staffDigest({ email: null, env, intakeRoot: w.root }), { owner: false });
+  const owner = await staffDigest({ email: "wendy@1on1.example", env, intakeRoot: w.root, now: new Date(NOW.getTime() + 60_000) });
+  assert.ok(owner.owner && owner.digest.requests === 3 && /CRM not connected/.test(owner.crmText ?? ""));
 });
 
 test("the replay endpoint's gate: owners only when sign-in is on, 401 signed out, 403 on the public demo", async () => {

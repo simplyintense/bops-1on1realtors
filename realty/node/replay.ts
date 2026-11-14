@@ -9,15 +9,18 @@ import { requestLabel, type LiveMatchStatus, type LiveRequest } from "../flow/li
 import type { MatchItem } from "../flow/recommendations.ts";
 import { SAMPLE_CHAT, SAMPLE_MESSAGES, sampleEnvelope, type SampleMessage } from "../fixtures/whatsapp-samples.ts";
 import { handleWebhook, setConsent } from "./periskope-intake.ts";
+import type { CrmSource } from "../flow/source.ts";
+import { sharedCrmSource } from "./crm-shared.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 
 /**
  * The owners' dry run: the sample WhatsApp messages (fixtures/whatsapp-samples.ts) go through the real webhook path,
  * signature check included, into a throwaway store, and come back as what the intake made of them: kind, the parsed
- * request and its live matches. The matches are real (match_buyer on the market) when market search is set up here.
+ * request and its live matches. The matches are real when market search is set up here (match_buyer on the market) and
+ * when the CRM is (our own listings, read-only through crm-shared.ts).
  *
  * Nothing persists and nothing is sent: the store is a temp directory removed afterwards, the signing key is random
- * for this run only (never stored or shown), no CRM is used (so no lead flow), and the market-ingest adapter is
+ * for this run only (never stored or shown), the CRM is used only to read our listings (no lead flow), and the market-ingest adapter is
  * switched off for the run, so no sample reaches market-ingest. The server's real intake data is never touched.
  */
 
@@ -30,24 +33,28 @@ export type ReplayMessage = {
   label: string | null;
   status: LiveMatchStatus | "pending" | null;
   matches: MatchItem[];
+  /** Our own CRM listings that fit. */
+  ours: MatchItem[];
 };
 
 export type ReplayResult = {
   ranAt: string;
   market: "configured" | "not-configured";
+  crm: "configured" | "not-configured";
   messages: ReplayMessage[];
   /** The first sample delivered a second time: it must be "ignored: already seen". */
   duplicate: string;
 };
 
-export type ReplayOptions = { env?: Env; market?: ToolCaller | null; fetch?: typeof fetch; now?: () => Date };
+export type ReplayOptions = { env?: Env; market?: ToolCaller | null; ours?: Pick<CrmSource, "listings"> | null; fetch?: typeof fetch; now?: () => Date };
 
 export async function replaySamples(o: ReplayOptions = {}): Promise<ReplayResult> {
   const base = o.env ?? runtimeEnv();
   const root = mkdtempSync(join(tmpdir(), "bops-replay-"));
   const key = randomBytes(32).toString("hex");
   const env: Env = { ...base, PERISKOPE_SIGNING_KEY: key, PERISKOPE_ALLOWED_CHATS: "", ONEON1_MARKET_WRITE_URL: "", ONEON1_MARKET_INGEST_TOKEN: "" };
-  const opts = { root, areasRoot: join(root, "areas"), env, crm: null, market: o.market, fetch: o.fetch, now: o.now };
+  const ours = o.ours !== undefined ? o.ours : sharedCrmSource(base);
+  const opts = { root, areasRoot: join(root, "areas"), env, crm: null, ours, market: o.market, fetch: o.fetch, now: o.now };
   const deliver = async (m: SampleMessage) => {
     const raw = Buffer.from(JSON.stringify(sampleEnvelope(m)));
     const sig = createHmac("sha256", key).update(raw).digest("hex");
@@ -66,6 +73,7 @@ export async function replaySamples(o: ReplayOptions = {}): Promise<ReplayResult
     return {
       ranAt: at,
       market: (o.market !== undefined ? o.market !== null : marketConfigFromEnv(base) !== null) ? "configured" : "not-configured",
+      crm: ours ? "configured" : "not-configured",
       messages: results.map(({ m, result }) => {
         const row = live.find((l) => l.messageId === m.id) ?? null;
         return {
@@ -76,6 +84,7 @@ export async function replaySamples(o: ReplayOptions = {}): Promise<ReplayResult
           label: row ? requestLabel(row.request) : null,
           status: row?.status ?? null,
           matches: row?.matches ?? [],
+          ours: row?.ours ?? [],
         };
       }),
       duplicate: String(again.body.result ?? again.status),

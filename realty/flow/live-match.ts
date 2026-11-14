@@ -1,8 +1,9 @@
-import type { ToolCaller } from "./areas.ts";
+import { areaTier, refFor, type AreaResolver, type ToolCaller } from "./areas.ts";
 import type { SeamAgent } from "./crm-seam.ts";
 import { moneyLabel } from "./market-search.ts";
 import { listingTypeOf, type Facts } from "./periskope.ts";
 import { parseMatch, type MatchItem } from "./recommendations.ts";
+import type { Listing } from "./source.ts";
 import { jsonHits, readOnlyCall, timedOut } from "./requests.ts";
 
 /**
@@ -13,7 +14,8 @@ import { jsonHits, readOnlyCall, timedOut } from "./requests.ts";
  * The co-broke rules are the market's (tt-market-search src/match/score.ts): same island, same or neighbouring
  * area, price within 20% of the budget, beds within one, sale vs rent, compatible type. 1on1 scoring is not
  * decided yet, so nothing is scored here: scores and grades are dropped (parseMatch), only the listing and the
- * reason are kept. Our own CRM listings are not part of this until the CRM is connected (crm-seam.ts).
+ * reason are kept. Our own CRM listings (crm-seam.ts) are matched here with the same rules, by matchOurListings, and
+ * kept apart as `ours`, each with the CRM agent holding it.
  *
  * Read only: match_buyer is on the desk's read-only list (DESK_TOOLS). Nothing is sent to anyone.
  * Portable: no node:*, no next, no bare process.
@@ -54,11 +56,14 @@ export type LiveEntry = {
   receivedAt: string;
   request: LiveRequest;
   status: LiveMatchStatus | "pending";
+  /** Other agencies' listings, from the market. */
   matches: MatchItem[];
+  /** Our own CRM listings, each with its holder. Missing on rows stored before the CRM was connected. */
+  ours?: MatchItem[];
 };
 
 /** A request with its matches, as a page shows it: no phone number, no message id, no message text. */
-export type LiveCard = { label: string; receivedAt: string; status: LiveMatchStatus | "pending"; statusText: string | null; matches: MatchItem[] };
+export type LiveCard = { label: string; receivedAt: string; status: LiveMatchStatus | "pending"; statusText: string | null; matches: MatchItem[]; ours: MatchItem[] };
 
 /** Newest first, at most `limit`. */
 export function liveCards(rows: readonly LiveEntry[], limit = 10): LiveCard[] {
@@ -71,7 +76,70 @@ export function liveCards(rows: readonly LiveEntry[], limit = 10): LiveCard[] {
       status: r.status,
       statusText: r.status === "matched" ? null : r.status === "pending" ? "Matching hasn't finished." : STATUS_TEXT[r.status],
       matches: r.matches,
+      ours: r.ours ?? [],
     }));
+}
+
+/* ---------------- Our own listings ---------------- */
+
+export const OUR_AGENCY = "1on1 Realtors";
+/** The market's price band: a listing's price within 20% of the budget. */
+export const PRICE_BAND = 0.2;
+
+type Category = "land" | "commercial" | "residential";
+const categoryOfRequest = (t: string | null): Category | null => (t === "land" || t === "commercial" ? t : t ? "residential" : null);
+const categoryOfListing = (l: Listing): Category => (l.propertyKind === "land" || l.propertyKind === "commercial" ? l.propertyKind : "residential");
+
+/**
+ * Our active CRM listings that fit the request, by the market's co-broke rules with no scoring: sale vs rent; same or a
+ * nearby area (same-area or neighbour tier, same island; same region alone isn't nearby); price within 20% of the budget
+ * (above the most, below the least) in the same currency; beds within one; and the same kind of place (land, commercial or
+ * residential). A field the listing doesn't give (no price, no beds) can't be checked, so it passes, as on the market.
+ * Same area first, then nearby, then cheapest. Never throws: an area that can't be resolved only matches its own name.
+ */
+export async function matchOurListings(r: LiveRequest, listings: readonly Listing[], areas: AreaResolver, limit = LIVE_LIMIT): Promise<MatchItem[]> {
+  if (!r.intent || !r.area) return [];
+  const type = r.intent === "rent" ? "rent" : "sale";
+  const cat = categoryOfRequest(r.propertyType);
+  const hi = r.priceMax !== null ? r.priceMax * (1 + PRICE_BAND) : null;
+  const lo = r.priceMin !== null ? r.priceMin * (1 - PRICE_BAND) : null;
+  const fits = listings.filter(
+    (l) =>
+      l.status === "active" &&
+      l.listingType === type &&
+      (!cat || categoryOfListing(l) === cat) &&
+      (!l.price || ((hi === null && lo === null) || (l.currency === (r.currency ?? "TTD") && (hi === null || l.price <= hi) && (lo === null || l.price >= lo)))) &&
+      (r.beds === null || !l.beds || Math.abs(l.beds - r.beds) <= 1),
+  );
+  if (!fits.length) return [];
+  const want = await refFor(areas, r.area);
+  // One lookup per distinct area, not per listing.
+  const refs = new Map<string, Awaited<ReturnType<typeof refFor>>>();
+  for (const a of new Set(fits.map((l) => l.area).filter(Boolean))) refs.set(a, await refFor(areas, a));
+  const ranked = fits.flatMap((l) => {
+    const ref = refs.get(l.area);
+    if (!ref) return [];
+    const v = areaTier(want, ref);
+    return v.tier === "same-area" || v.tier === "neighbour" ? [{ l, v }] : [];
+  });
+  ranked.sort((a, b) => (a.v.tier === b.v.tier ? 0 : a.v.tier === "same-area" ? -1 : 1) || (a.l.price || Infinity) - (b.l.price || Infinity));
+  return ranked.slice(0, limit).map(({ l, v }) => ({
+    title: l.title || `${OUR_AGENCY} listing ${l.id}`,
+    url: /^https?:\/\//i.test(l.url) ? l.url : null,
+    area: l.area || null,
+    price: l.price ? moneyLabel(l.price, l.currency) : null,
+    beds: l.beds || null,
+    source: OUR_AGENCY,
+    reason: ourReason(r, l, v.tier === "same-area" ? `in ${l.area}` : `${l.area}, near ${r.area}`),
+    holder: l.agentId > 0 ? l.agentId : null,
+  }));
+}
+
+function ourReason(r: LiveRequest, l: Listing, where: string): string {
+  const money = (n: number) => moneyLabel(n, l.currency) ?? String(n);
+  const budget = r.priceMax !== null ? money(r.priceMax) : r.priceMin !== null ? `from ${money(r.priceMin)}` : null;
+  const price = !l.price ? "no price listed" : budget ? `${money(l.price)} for a ${budget} budget` : money(l.price);
+  return [where, price, l.beds ? `${l.beds} bed` : null, "our listing"].filter(Boolean).join(", ");
 }
 
 /** The request from the parser's facts. Intent falls back to sale/rent from the budget (listingTypeOf). */
@@ -138,25 +206,41 @@ export const STATUS_TEXT: Record<Exclude<LiveMatchStatus, "matched">, string> = 
 };
 
 /**
- * The live side of the desk. "Yours": the signed-in agent's own WhatsApp requests and their matches, found by the agent's
- * number (from the CRM seam). "Unassigned": requests from a number that isn't one of our agents. Owners only: for anyone
- * else it is null, so those requests are not in the view at all. Until the CRM is connected there are no agents, so
- * every request is unassigned and staff see "no-agent".
+ * The live side of the desk, for the signed-in person (matched to a CRM agent by email):
+ *   yours       their own WhatsApp requests (by the agent's number) with every match
+ *   onListings  anyone's requests that matched a listing they hold (only those matches of ours are shown)
+ *   unassigned  owners only: requests from a number that isn't one of our agents
+ *   unheld      owners only: requests that matched one of our listings with no agent assigned
+ * For anyone who isn't an owner, unassigned and unheld are null, so those requests aren't in the view at all.
  */
 export type LiveDesk = {
-  yours: { status: "signed-out" } | { status: "no-agent" } | { status: "ok"; cards: LiveCard[] };
+  yours: { status: "signed-out" } | { status: "no-agent" } | { status: "ok"; phoneKnown: boolean; cards: LiveCard[] };
+  onListings: LiveCard[];
   unassigned: LiveCard[] | null;
+  unheld: LiveCard[] | null;
 };
 
 export function liveDesk(i: { email: string | null; owner: boolean; agents: readonly SeamAgent[]; rows: readonly LiveEntry[] }): LiveDesk {
-  const phones = new Set(i.agents.map((a) => a.phone));
-  const me = i.email ? i.agents.find((a) => a.email === i.email!.trim().toLowerCase()) ?? null : null;
-  const yours: LiveDesk["yours"] = !i.email
+  const phones = new Set(i.agents.flatMap((a) => (a.phone ? [a.phone] : [])));
+  const email = i.email?.trim().toLowerCase() ?? null;
+  const me = email ? (i.agents.find((a) => a.email === email) ?? null) : null;
+  const yours: LiveDesk["yours"] = !email
     ? { status: "signed-out" }
     : !me
       ? { status: "no-agent" }
-      : { status: "ok", cards: liveCards(i.rows.filter((r) => r.senderPhone === me.phone)) };
-  return { yours, unassigned: i.owner ? liveCards(i.rows.filter((r) => !phones.has(r.senderPhone))) : null };
+      : { status: "ok", phoneKnown: !!me.phone, cards: me.phone ? liveCards(i.rows.filter((r) => r.senderPhone === me.phone)) : [] };
+  const keepOurs = (keep: (m: MatchItem) => boolean) => (rows: readonly LiveEntry[]) =>
+    rows.flatMap((r) => {
+      const ours = (r.ours ?? []).filter(keep);
+      return ours.length ? [{ ...r, ours, matches: [] }] : [];
+    });
+  const mine = me ? keepOurs((m) => m.holder === me.id)(i.rows.filter((r) => r.senderPhone !== me.phone)) : [];
+  return {
+    yours,
+    onListings: liveCards(mine),
+    unassigned: i.owner ? liveCards(i.rows.filter((r) => !phones.has(r.senderPhone))) : null,
+    unheld: i.owner ? liveCards(keepOurs((m) => m.holder == null)(i.rows)) : null,
+  };
 }
 
 /** The owners' daily digest: the requests that came in over the last `hours`, how many found matches, and the cards. */

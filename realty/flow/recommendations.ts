@@ -43,6 +43,8 @@ export type MatchItem = {
   source: string | null;
   /** Why the market matched it, with phone numbers and emails taken out. Never a score or a grade. */
   reason: string | null;
+  /** Set only on one of our own CRM listings: the CRM agent id holding it, or null when no agent is assigned. */
+  holder?: number | null;
 };
 
 export type BuyerMatch = MatchItem & {
@@ -73,8 +75,10 @@ export type RecommendationsInput = {
   email: string | null;
   /** BOPS_OWNER_EMAILS, parsed with parseAllowlist (lib/gate.ts). */
   owners: string[];
-  /** CRM listings, when a provider has them. Empty or absent means "missing". */
+  /** CRM listings, when a provider has them (crm-seam.ts toMatchListing). Empty or absent means "missing". */
   listings?: DeskListing[] | null;
+  /** The signed-in person's CRM agent id, if they are one: they see the market requests matched to listings they hold. */
+  agentId?: number | null;
   /** The buyer requests (searchRequests). */
   requests: RequestsResult;
   /** The market client, or null when market search isn't configured. */
@@ -85,7 +89,7 @@ export async function recommendationsFor(input: RecommendationsInput): Promise<R
   const owner = !!input.email && emailAllowed(input.email, input.owners);
   const buyers: BuyerSide = owner ? await buyerSide(input) : { buyers: { status: "owners-only" }, unassigned: [] };
   return {
-    listings: await listingSide(input),
+    listings: await listingSide(input, owner),
     buyers: buyers.buyers,
     owner,
     unassigned: owner ? buyers.unassigned : null,
@@ -170,10 +174,18 @@ function forRequest(q: BuyerRequest): BuyerMatch["forRequest"] {
 
 /* ---------------- CRM listings: match_requests, only with a real listings array ---------------- */
 
-async function listingSide(input: RecommendationsInput): Promise<Recommendations["listings"]> {
+/**
+ * Other agencies' open requests that fit our listings. The market routes each match to the listing's holder
+ * (holder_agent_id → route_to). An owner sees every match; an agent sees only the matches on listings they hold; a
+ * match on a listing with no agent ("unassigned") is for owners only. Anyone who is neither gets none, and the market
+ * isn't asked.
+ */
+async function listingSide(input: RecommendationsInput, owner: boolean): Promise<Recommendations["listings"]> {
   const listings = (input.listings ?? []).filter((l) => l && typeof l.id === "string" && l.id.trim() !== "");
   if (!listings.length) return { status: "missing", missing: "crm-listings" };
   if (!input.caller) return { status: "not-configured" };
+  const agent = input.agentId ? String(input.agentId) : null;
+  if (!owner && !agent) return { status: "ok", items: [] };
   try {
     const hits = jsonHits(await readOnlyCall(input.caller, "match_requests", { listings, limit: BUYER_LIMIT }));
     if (!hits) return { status: "error" };
@@ -181,7 +193,9 @@ async function listingSide(input: RecommendationsInput): Promise<Recommendations
       status: "ok",
       items: hits.flatMap((h) => {
         const m = parseMatch(h);
-        return m ? [m.item] : [];
+        if (!m) return [];
+        const route = str((h as Record<string, unknown>)?.route_to);
+        return owner || (agent !== null && route === agent) ? [m.item] : [];
       }),
     };
   } catch {

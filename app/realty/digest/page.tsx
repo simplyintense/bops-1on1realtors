@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { GATE_COOKIE, gateConfig, readSession } from "@/lib/gate";
-import { CRM_NOT_CONNECTED_TEXT } from "@/realty/flow/crm-seam.ts";
 import { staffDigest } from "@/realty/node/requests.ts";
 import { Cards, portOfSpainTime } from "../desk/recommendations-panel";
 import { Notice } from "../notice";
@@ -27,7 +26,7 @@ async function signedInEmail(): Promise<string | null> {
 }
 
 export default async function RealtyDigest() {
-  const view = staffDigest({ email: await signedInEmail() });
+  const view = await staffDigest({ email: await signedInEmail() });
   if (!view.owner) {
     return (
       <main className="mx-auto w-full max-w-5xl px-5 py-10">
@@ -55,9 +54,9 @@ export default async function RealtyDigest() {
         <Stat label="Not matched" value={d.notMatched} />
       </ul>
 
-      {view.crm === "not-connected" ? (
+      {view.crmText ? (
         <div className="mt-6">
-          <Notice tone="warn">{CRM_NOT_CONNECTED_TEXT}</Notice>
+          <Notice tone="warn">{view.crmText}</Notice>
         </div>
       ) : null}
 
@@ -79,7 +78,7 @@ export default async function RealtyDigest() {
           Replay sample messages
         </h2>
         <p className="rt-muted mt-2 mb-4 text-sm">
-          A dry run: five made-up group messages go through the real intake (signature check, parsing, matching) into a throwaway store. Nothing is kept or sent.
+          A dry run: five made-up group messages go through the real intake (signature check, parsing, matching against the market and our CRM listings) into a throwaway store. Nothing is kept or sent, and the CRM is only read.
         </p>
         <ReplayButton />
       </section>

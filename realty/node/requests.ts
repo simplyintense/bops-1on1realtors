@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { emailAllowed, parseAllowlist } from "../../lib/gate.ts";
-import { crmSeam, type CrmListingsState, type CrmSeam } from "../flow/crm-seam.ts";
+import { CRM_UNREACHABLE_TEXT, toMatchListing, type CrmListingsState, type CrmSeam } from "../flow/crm-seam.ts";
 import { digestOf, liveDesk, type Digest, type LiveDesk } from "../flow/live-match.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import { MarketClient, marketConfigFromEnv } from "../flow/market-search.ts";
 import { recommendationsFor, type DeskListing, type Recommendations } from "../flow/recommendations.ts";
+import { crmSeamFromEnv } from "./crm-shared.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 import { OPEN_REQUESTS, REQUEST_LIMIT, searchRequests, type RequestCriteria, type RequestsResult } from "../flow/requests.ts";
 
@@ -20,7 +21,8 @@ type Opts = { env?: Env; fetcher?: typeof fetch };
 export const defaultIntakeRoot = () => join(process.cwd(), ".data", "realty", "periskope");
 
 /** The desk: the market-side recommendations, the live WhatsApp side, and what the CRM seam said about our listings. */
-export type DeskView = Recommendations & { live: LiveDesk; crm: CrmListingsState["status"] };
+/** `crmText` is the honest "CRM not connected / unreachable" line, or null when our listings were read. */
+export type DeskView = Recommendations & { live: LiveDesk; crm: CrmListingsState["status"]; crmText: string | null };
 
 /** How many open requests the desk reads (it only matches the newest three). */
 const DESK_REQUESTS = 10;
@@ -45,8 +47,13 @@ export async function staffRequests(c: RequestCriteria, o: Opts & { limit?: numb
  */
 export async function staffRecommendations(o: Opts & { email: string | null; listings?: DeskListing[] | null; intakeRoot?: string; seam?: CrmSeam }): Promise<DeskView> {
   const env = o.env ?? runtimeEnv();
-  const seam = o.seam ?? crmSeam();
-  const crm = await seam.listings().catch((): CrmListingsState => ({ status: "not-connected", text: "" }));
+  const seam = o.seam ?? crmSeamFromEnv(env);
+  const [crm, agents] = await Promise.all([
+    seam.listings().catch((): CrmListingsState => ({ status: "not-connected", text: CRM_UNREACHABLE_TEXT })),
+    seam.agents().catch(() => []),
+  ]);
+  const email = o.email?.trim().toLowerCase() ?? null;
+  const agentId = email ? (agents.find((a) => a.email === email)?.id ?? null) : null;
   const owners = parseAllowlist(env.BOPS_OWNER_EMAILS ?? "");
   const caller = clientFrom({ env, fetcher: o.fetcher });
   // Only an owner gets the market side, so only an owner's desk reads the market's requests.
@@ -57,19 +64,20 @@ export async function staffRecommendations(o: Opts & { email: string | null; lis
   const recs = await recommendationsFor({
     email: o.email,
     owners,
-    listings: o.listings ?? (crm.status === "ok" ? crm.listings : null),
+    listings: o.listings ?? (crm.status === "ok" ? crm.listings.filter((l) => l.status === "active").map(toMatchListing) : null),
+    agentId,
     requests,
     caller,
   });
   const rows = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot()).live();
-  const agents = await seam.agents().catch(() => []);
-  return { ...recs, live: liveDesk({ email: o.email, owner: recs.owner, agents, rows }), crm: crm.status };
+  return { ...recs, live: liveDesk({ email: o.email, owner: recs.owner, agents, rows }), crm: crm.status, crmText: crm.status === "ok" ? null : crm.text };
 }
 
 /** The owners' daily digest (app/realty/digest). Anyone who isn't an owner gets { owner: false } and no data. */
-export function staffDigest(o: { email: string | null; env?: Env; intakeRoot?: string; now?: Date }): { owner: false } | { owner: true; digest: Digest; crm: "not-connected" | "ok" } {
+export async function staffDigest(o: { email: string | null; env?: Env; intakeRoot?: string; now?: Date; seam?: CrmSeam }): Promise<{ owner: false } | { owner: true; digest: Digest; crmText: string | null }> {
   const env = o.env ?? runtimeEnv();
   if (!o.email || !emailAllowed(o.email, parseAllowlist(env.BOPS_OWNER_EMAILS ?? ""))) return { owner: false };
   const rows = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot()).live();
-  return { owner: true, digest: digestOf(rows, o.now ?? new Date()), crm: crmSeam().connected ? "ok" : "not-connected" };
+  const crm = await (o.seam ?? crmSeamFromEnv(env)).listings();
+  return { owner: true, digest: digestOf(rows, o.now ?? new Date()), crmText: crm.status === "ok" ? null : crm.text };
 }

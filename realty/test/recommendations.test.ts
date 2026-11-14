@@ -199,7 +199,7 @@ test("the node wrapper: the market's settings and BOPS_OWNER_EMAILS, read-only, 
   assert.deepEqual(fake.tools(), ["match_buyer", "search_market_requests"]);
 
   assert.equal(recs.crm, "not-connected");
-  assert.deepEqual(recs.live, { yours: { status: "no-agent" }, unassigned: [] });
+  assert.deepEqual(recs.live, { yours: { status: "no-agent" }, onListings: [], unassigned: [], unheld: [] });
 
   const noMarket = await staffRecommendations({ email: "miles@example.test", env: { BOPS_OWNER_EMAILS: "miles@example.test" }, fetcher: fake.fetcher, intakeRoot });
   assert.deepEqual(noMarket.buyers, { status: "not-configured" });

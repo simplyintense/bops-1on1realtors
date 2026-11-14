@@ -34,7 +34,8 @@ export function ReplayButton() {
       {result ? (
         <div className="grid gap-3">
           <p className="rt-muted text-sm">
-            Dry run. Market search {result.market === "configured" ? "is live, so these are real market matches" : "isn't set up here, so nothing was matched"}. A second delivery of the first sample:
+            Dry run. Market search {result.market === "configured" ? "is live, so these are real market matches" : "isn't set up here, so nothing was matched"}.{" "}
+            {result.crm === "configured" ? "Our own listings were read from the 1on1 CRM (read only)." : "The 1on1 CRM isn't connected here, so none of our listings were checked."} A second delivery of the first sample:
             &ldquo;{result.duplicate}&rdquo;.
           </p>
           <ul className="grid gap-3">
@@ -43,11 +44,11 @@ export function ReplayButton() {
                 <p className="font-medium">{m.label ?? m.id}</p>
                 <p className="rt-muted mt-1 text-xs">
                   Expected {m.expect.replace("_", " ")} · {m.result}
-                  {m.status ? ` · ${m.status === "matched" ? `${m.matches.length} ${m.matches.length === 1 ? "match" : "matches"}` : m.status}` : ""}
+                  {m.status ? ` · ${m.status === "matched" ? `${m.ours.length} on our listings, ${m.matches.length} at other agencies` : m.status}` : ""}
                 </p>
-                {m.matches.length ? (
+                {m.ours.length + m.matches.length ? (
                   <ul className="mt-2 grid gap-1 text-sm">
-                    {m.matches.map((x, i) => (
+                    {[...m.ours, ...m.matches].map((x, i) => (
                       <li key={`${x.url ?? x.title}-${i}`}>
                         {x.url ? (
                           <a href={x.url} target="_blank" rel="noopener noreferrer" className="rt-link">

@@ -6,8 +6,9 @@ import { Notice } from "../notice";
 
 /**
  * "Top recommendations for you" on the desk. It renders the view the server built (realty/node/requests.ts DeskView): the
- * signed-in agent's own WhatsApp requests with their live matches, our listings (the CRM seam), and, for owners only, the
- * unassigned WhatsApp requests and other agencies' open requests. Match reasons and listings, never a score or a grade
+ * signed-in agent's own WhatsApp requests with their live matches (other agencies' listings and ours from the 1on1 CRM),
+ * WhatsApp requests that fit listings they hold, other agencies' open requests that fit listings they hold, and, for
+ * owners only, the unassigned WhatsApp requests, matches on our listings with no agent, and every open market request. Match reasons and listings, never a score or a grade
  * (the view has none). The owner blocks are rendered only when the view has them, which is only for an owner. Nothing here
  * is sent or written.
  */
@@ -20,15 +21,23 @@ export function RecommendationsPanel({ recs }: { recs: DeskView | null }) {
         <Yours yours={recs.live.yours} />
       </Block>
 
-      <Block title="Suggested from our listings">
-        {recs.listings.status === "missing" ? <Notice tone="warn">{CRM_MISSING_TEXT}</Notice> : null}
+      {recs.live.onListings.length ? (
+        <Block title="WhatsApp requests that fit your listings">
+          <p className="rt-muted text-sm">Requests from the agents&apos; group that match a listing you hold in the 1on1 CRM.</p>
+          <Cards cards={recs.live.onListings} oursOnly />
+        </Block>
+      ) : null}
+
+      <Block title={recs.owner ? "Market requests that fit our listings" : "Market requests that fit your listings"}>
+        {recs.crmText ? <Notice tone="warn">{recs.crmText}</Notice> : null}
+        {recs.listings.status === "missing" && !recs.crmText ? <Notice tone="warn">{CRM_MISSING_TEXT}</Notice> : null}
         {recs.listings.status === "not-configured" ? <Notice tone="warn">Market search isn&apos;t set up on this server, so requests can&apos;t be checked against listings.</Notice> : null}
         {recs.listings.status === "error" ? <Notice tone="error">Checking requests against our listings failed. Try again in a minute.</Notice> : null}
         {recs.listings.status === "ok" ? (
           recs.listings.items.length ? (
             <MatchList items={recs.listings.items} />
           ) : (
-            <Notice>No suggestions from our listings right now.</Notice>
+            <Notice>{recs.owner ? "No open market request fits our listings right now." : "No open market request fits a listing you hold right now."}</Notice>
           )
         ) : null}
       </Block>
@@ -37,6 +46,13 @@ export function RecommendationsPanel({ recs }: { recs: DeskView | null }) {
         <Block title="Unassigned WhatsApp requests">
           <p className="rt-muted text-sm">Owners only. Requests from the agents&apos; group that aren&apos;t tied to one of our agents yet, with their live matches.</p>
           {recs.live.unassigned.length ? <Cards cards={recs.live.unassigned} /> : <Notice>No unassigned WhatsApp requests right now.</Notice>}
+        </Block>
+      ) : null}
+
+      {recs.live.unheld?.length ? (
+        <Block title="Matches on our listings with no agent">
+          <p className="rt-muted text-sm">Owners only. WhatsApp requests that fit one of our listings that has no agent assigned in the CRM.</p>
+          <Cards cards={recs.live.unheld} oursOnly />
         </Block>
       ) : null}
 
@@ -62,26 +78,43 @@ function Yours({ yours }: { yours: LiveDesk["yours"] }) {
   if (yours.status === "no-agent") {
     return (
       <Notice tone="warn">
-        Your sign-in isn&apos;t linked to your WhatsApp number yet (that link comes from the 1on1 CRM, which isn&apos;t connected), so your requests&apos; matches can&apos;t show here yet.
+        Your sign-in email isn&apos;t on an agent in the 1on1 CRM (or the CRM can&apos;t be reached right now), so your requests&apos; matches can&apos;t show here yet.
       </Notice>
     );
+  }
+  if (!yours.phoneKnown) {
+    return <Notice tone="warn">Your agent record in the 1on1 CRM has no phone number, so your WhatsApp requests can&apos;t be linked to you. Ask the office to add it.</Notice>;
   }
   if (!yours.cards.length) return <Notice>No requests from you in the agents&apos; WhatsApp group yet. Post one there and its matches show here.</Notice>;
   return <Cards cards={yours.cards} />;
 }
 
-export function Cards({ cards }: { cards: LiveCard[] }) {
+/** `oursOnly` shows just the matches on our own listings (for a holder, or the owners' "no agent" list). */
+export function Cards({ cards, oursOnly = false }: { cards: LiveCard[]; oursOnly?: boolean }) {
   return (
     <ul className="grid gap-4">
       {cards.map((c, i) => (
         <li key={`${c.receivedAt}-${i}`} className="rt-card p-4">
           <p className="font-medium">{c.label}</p>
           <p className="rt-muted mt-1 text-xs">
-            Posted {portOfSpainTime(c.receivedAt)} · {c.status === "matched" ? `${c.matches.length} ${c.matches.length === 1 ? "match" : "matches"}` : c.statusText}
+            Posted {portOfSpainTime(c.receivedAt)}
+            {oursOnly ? ` · ${count(c.ours.length)} on our listings` : c.status === "matched" ? ` · ${count(c.matches.length + c.ours.length)}` : ` · ${c.statusText}`}
           </p>
-          {c.status === "matched" && !c.matches.length ? <p className="rt-muted mt-2 text-sm">No listing at other agencies fits this request yet.</p> : null}
-          {c.matches.length ? (
+          {!oursOnly && c.ours.length ? (
             <div className="mt-3">
+              <h4 className="text-sm font-medium">From our listings</h4>
+              <MatchList items={c.ours} />
+            </div>
+          ) : null}
+          {oursOnly ? (
+            <div className="mt-3">
+              <MatchList items={c.ours} />
+            </div>
+          ) : null}
+          {!oursOnly && c.status === "matched" && !c.matches.length ? <p className="rt-muted mt-2 text-sm">No listing at other agencies fits this request yet.</p> : null}
+          {!oursOnly && c.matches.length ? (
+            <div className="mt-3">
+              {c.ours.length ? <h4 className="text-sm font-medium">Other agencies</h4> : null}
               <MatchList items={c.matches} />
             </div>
           ) : null}
@@ -89,6 +122,10 @@ export function Cards({ cards }: { cards: LiveCard[] }) {
       ))}
     </ul>
   );
+}
+
+function count(n: number): string {
+  return `${n} ${n === 1 ? "match" : "matches"}`;
 }
 
 /** The time in Port of Spain (AST), e.g. "Nov 13, 9:05 PM AST". */

@@ -7,8 +7,8 @@ import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "..
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
-import type { ToolCaller } from "../flow/areas.ts";
-import { liveRequestOf, matchOnArrival } from "../flow/live-match.ts";
+import { CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
+import { liveRequestOf, matchOnArrival, matchOurListings, type LiveRequest } from "../flow/live-match.ts";
 import { MarketClient, marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
 import { DryRunOutbox } from "../flow/outbox.ts";
 import {
@@ -25,8 +25,8 @@ import {
   type MarketIngestItem,
   type MarketSourceItem,
 } from "../flow/periskope.ts";
-import { crmSourceFromEnv } from "../flow/live-crm.ts";
-import type { CrmSource } from "../flow/source.ts";
+import type { CrmSource, Listing } from "../flow/source.ts";
+import { sharedCrmSource } from "./crm-shared.ts";
 import { emailAllowed, GATE_COOKIE, gateConfig, parseAllowlist, publicDemo, readSession } from "../../lib/gate.ts";
 import { appendJsonl } from "./jsonl.ts";
 import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
@@ -66,25 +66,42 @@ export type IntakeOptions = {
   areasRoot?: string;
   /** The market client for live matching (match_buyer). Unset: from ONEON1_MARKET_SEARCH_* (null when they aren't set). */
   market?: ToolCaller | null;
+  /** Where our own listings come from for live matching. Unset: the same CRM as `crm`. Null: no listings of ours. */
+  ours?: Pick<CrmSource, "listings"> | null;
 };
 
 export type Reply = { status: number; body: Record<string, unknown> };
 const reply = (status: number, body: Record<string, unknown>): Reply => ({ status, body });
 
-type Ctx = { env: Env; now: Date; root: string; store: PeriskopeStore; areas: AreaStore; crm: CrmSource | null; fetch: typeof fetch; market: ToolCaller | null };
+type Ctx = {
+  env: Env;
+  now: Date;
+  root: string;
+  store: PeriskopeStore;
+  areas: AreaStore;
+  crm: CrmSource | null;
+  fetch: typeof fetch;
+  market: ToolCaller | null;
+  ours: Pick<CrmSource, "listings"> | null;
+  /** Injected fetch means a test: no shared area cache then. */
+  shared: boolean;
+};
 
 function context(o: IntakeOptions): Ctx {
   const env = o.env ?? runtimeEnv();
   const root = o.root ?? join(process.cwd(), ".data", "realty", "periskope");
+  const crm = o.crm !== undefined ? o.crm : liveCrm(env);
   return {
     env,
     now: o.now?.() ?? new Date(),
     root,
     store: new PeriskopeStore(root),
     areas: new AreaStore(o.areasRoot ?? join(dirname(root), "areas")),
-    crm: o.crm !== undefined ? o.crm : liveCrm(env),
+    crm,
     fetch: o.fetch ?? fetch,
     market: o.market !== undefined ? o.market : marketClient(env, o.fetch ?? fetch),
+    ours: o.ours !== undefined ? o.ours : crm,
+    shared: !o.fetch,
   };
 }
 
@@ -94,11 +111,29 @@ function marketClient(env: Env, fetcher: typeof fetch): ToolCaller | null {
 }
 
 function liveCrm(env: Env): CrmSource | null {
+  return sharedCrmSource(env);
+}
+
+/** The area resolver for matching our listings, kept for ten minutes so a request doesn't resolve the same areas again. */
+let areaCache: { at: number; resolver: AreaResolver } | null = null;
+const AREA_CACHE_MS = 10 * 60_000;
+
+function oursAreas(c: Ctx): AreaResolver {
+  if (!c.shared) return areasFromEnv(c.areas, c.env, c.fetch);
+  if (!areaCache || Date.now() - areaCache.at > AREA_CACHE_MS) areaCache = { at: Date.now(), resolver: new CachedAreaResolver(areasFromEnv(c.areas, c.env)) };
+  return areaCache.resolver;
+}
+
+/** Our own listings that fit, or none if the CRM can't be read: the request is still taken (fail closed). */
+async function oursFor(request: LiveRequest, c: Ctx) {
+  if (!c.ours) return [];
+  let listings: Listing[];
   try {
-    return crmSourceFromEnv(env);
+    listings = await c.ours.listings();
   } catch {
-    return null;
+    return [];
   }
+  return matchOurListings(request, listings, oursAreas(c)).catch(() => []);
 }
 
 let chain: Promise<unknown> = Promise.resolve();
@@ -165,18 +200,19 @@ async function act(d: Decision, c: Ctx): Promise<Reply> {
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "cobroke_listing", at });
       return reply(200, { result: d.item ? "listing recorded for market-ingest" : "listing noted (not enough fields for market-ingest)" });
     case "buyer_request": {
-      // With a CRM the request also enters the lead flow (routing, timeouts); without one it is still stored and matched.
-      const lead = c.crm ? await receive(d.inquiry, c, c.crm) : null;
+      // With a CRM the request also enters the lead flow (routing, timeouts, dry-run messages only); without one, or if the
+      // CRM can't be reached, it is still stored and matched.
+      const lead = c.crm ? await receive(d.inquiry, c, c.crm).catch(() => null) : null;
       if (lead) c.store.addLead({ leadId: lead.id, messageId: d.messageId, senderPhone: d.phone, receivedAt: at });
       const request = liveRequestOf(d.facts);
       c.store.addLive({ messageId: d.messageId, chatId: d.chatId, senderPhone: d.phone, receivedAt: at, request, status: "pending", matchedAt: null, matches: [] });
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at });
       if (d.item) await queueMarket(c, d.item);
       // Seen is marked first, so a slow or failed match never makes Periskope deliver the message twice.
-      const m = await matchOnArrival(request, d.messageId, at, c.market);
-      c.store.updateLive(d.messageId, { status: m.status, matches: m.matches, matchedAt: c.now.toISOString() });
-      const taken = lead ? `buyer request taken as ${lead.id}` : "buyer request stored (no CRM: not routed)";
-      return reply(200, { result: taken, matching: m.status, matches: m.matches.length });
+      const [m, ours] = await Promise.all([matchOnArrival(request, d.messageId, at, c.market), oursFor(request, c)]);
+      c.store.updateLive(d.messageId, { status: m.status, matches: m.matches, ours, matchedAt: c.now.toISOString() });
+      const taken = lead ? `buyer request taken as ${lead.id}` : c.crm ? "buyer request stored (CRM unreachable: not routed)" : "buyer request stored (no CRM: not routed)";
+      return reply(200, { result: taken, matching: m.status, matches: m.matches.length, ours: ours.length });
     }
   }
 }
