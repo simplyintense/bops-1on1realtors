@@ -37,6 +37,7 @@ import { sharedCrmSource } from "./crm-shared.ts";
 import { GATE_COOKIE, gateConfig, ownerAllowed, publicDemo, readSession } from "../../lib/gate.ts";
 import { appendJsonl } from "./jsonl.ts";
 import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
+import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
 
 /**
  * The Periskope WhatsApp intake, Node side: the signature check, the webhook's ingest, opt-outs, group
@@ -143,7 +144,7 @@ async function oursFor(request: LiveRequest, c: Ctx) {
   } catch {
     return [];
   }
-  return matchOurListings(request, listings, oursAreas(c)).catch(() => []);
+  return matchOurListings(request, listings, oursAreas(c), undefined, resolveAreaKnowledge(join(dirname(c.root), "area-knowledge.json"))).catch(() => []);
 }
 
 /** Very strong CRM matches only (same development or area, exact beds, in-band). Never a neighbour. */

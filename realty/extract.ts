@@ -172,6 +172,22 @@ export const DEVELOPMENTS: Development[] = [
 /** West Hills is on Morne Coco Road in Petit Valley; Glencoe is next to that west cluster, but is not used as a neighbour in matching until Miles confirms. */
 export const WEST_HILLS_UNCONFIRMED_NEIGHBOURS = ["Glencoe"];
 
+
+/** Canonical area and development names for the knowledge layer (deduped aliases). */
+export function gazetteerPlaces(): { name: string; kind: "area" | "development"; parent: string | null }[] {
+  const seen = new Set<string>();
+  const out: { name: string; kind: "area" | "development"; parent: string | null }[] = [];
+  const add = (name: string, kind: "area" | "development", parent: string | null) => {
+    const k = name.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
+    if (!k || seen.has(k) || k === "trinidad" || k === "tobago") return;
+    seen.add(k);
+    out.push({ name, kind, parent });
+  };
+  for (const d of DEVELOPMENTS) add(d.name, "development", d.parent);
+  for (const a of AREAS) add(CANON[a.toLowerCase().replace(/\./g, "")] ?? a, "area", null);
+  return out;
+}
+
 export function developmentOf(name: string | null | undefined): Development | null {
   const k = (name ?? "").replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
   if (!k) return null;

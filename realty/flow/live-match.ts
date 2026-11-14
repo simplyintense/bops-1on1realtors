@@ -1,4 +1,5 @@
 import { areasForMatch, developmentOf, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from "../extract.ts";
+import { knowledgeOf, nearbyByKnowledge, nearbyReason, type AreaKnowledgeIndex } from "./area-knowledge.ts";
 import { areaTier, refFor, type AreaResolver, type ToolCaller } from "./areas.ts";
 import type { SeamAgent } from "./crm-seam.ts";
 import { moneyLabel } from "./market-search.ts";
@@ -154,7 +155,7 @@ function gazetteerTier(requestArea: string, l: Listing): { tier: "same-area" | "
 }
 
 
-export async function matchOurListings(r: LiveRequest, listings: readonly Listing[], areas: AreaResolver, limit = LIVE_LIMIT): Promise<MatchItem[]> {
+export async function matchOurListings(r: LiveRequest, listings: readonly Listing[], areas: AreaResolver, limit = LIVE_LIMIT, knowledge: AreaKnowledgeIndex | null = null): Promise<MatchItem[]> {
   if (!r.intent || !r.area) return [];
   const area = r.area;
   const type = r.intent === "rent" ? "rent" : "sale";
@@ -181,10 +182,22 @@ export async function matchOurListings(r: LiveRequest, listings: readonly Listin
   const refs = new Map<string, Awaited<ReturnType<typeof refFor>>>();
   for (const a of new Set(fits.map((l) => l.area).filter(Boolean))) refs.set(a, await refFor(areas, a));
   const ranked = fits.flatMap((l) => {
-    if (blockedWestHillsGlencoe(area, l)) return [];
-    let best: { tier: "same-area" | "neighbour" } | null = gazetteerTier(area, l);
+    // Without coordinates, Glencoe stays out of West Hills matches. With knowledge, it may be a nearby recommendation, never a very-strong alert.
+    const known = r.area && l.area ? nearbyByKnowledge(knowledge, r.area, l.area) : null;
+    const bothCoords = !!(knowledge && knowledgeOf(knowledge, r.area)?.coords && l.area && knowledgeOf(knowledge, l.area)?.coords);
+    if (!bothCoords && blockedWestHillsGlencoe(area, l)) return [];
+    let best: { tier: "same-area" | "neighbour"; via?: "knowledge"; relKm?: number; relMin?: number } | null = gazetteerTier(area, l);
+    if (bothCoords) {
+      if (best?.tier === "same-area") {
+        /* same development or area stays exact */
+      } else if (known) {
+        best = { tier: "neighbour", via: "knowledge", relKm: known.km, relMin: known.minutes };
+      } else {
+        best = null;
+      }
+    }
     const ref = refs.get(l.area);
-    if (!best && ref) {
+    if (!best && !bothCoords && ref) {
       for (const want of wants) {
         const v = areaTier(want, ref);
         if (v.tier === "same-area") {
@@ -204,7 +217,9 @@ export async function matchOurListings(r: LiveRequest, listings: readonly Listin
     price: l.price ? moneyLabel(l.price, l.currency) : null,
     beds: l.beds || null,
     source: OUR_AGENCY,
-    reason: ourReason(r, l, v.tier === "same-area" ? `in ${l.area}` : `${l.area}, near ${r.area}`),
+    reason: v.via === "knowledge"
+      ? nearbyReason(l.area || "", r.area || "", v.relMin != null ? { name: l.area || "", km: v.relKm ?? 0, minutes: v.relMin } : null, true)
+      : ourReason(r, l, v.tier === "same-area" ? `in ${l.area}` : `${l.area}, near ${r.area}`),
     holder: l.agentId > 0 ? l.agentId : null,
   }));
 }

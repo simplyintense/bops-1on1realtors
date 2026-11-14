@@ -1,4 +1,4 @@
-import type { Env } from "../flow/env.ts";
+import { runtimeEnv, type Env } from "../flow/env.ts";
 import { ingestEvent, type IntakeOptions, type Reply } from "./periskope-intake.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 
@@ -184,7 +184,7 @@ export async function backfillGroup(args: {
     byResult: {},
   };
 
-  const env: Env = { ...(args.opts.env ?? {}), PERISKOPE_ALLOWED_CHAT_IDS: chatId, PERISKOPE_ALLOWED_GROUPS: chatName };
+  const env: Env = { ...runtimeEnv(), ...(args.opts.env ?? {}), PERISKOPE_ALLOWED_CHAT_IDS: chatId, PERISKOPE_ALLOWED_GROUPS: chatName };
 
   for (const msg of ordered) {
     if (!msg || typeof msg !== "object" || !msg.message_id) {

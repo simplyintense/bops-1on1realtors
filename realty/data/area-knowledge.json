@@ -1,0 +1,4438 @@
+{
+  "source": "OpenStreetMap Nominatim (https://nominatim.openstreetmap.org) for coordinates and named points of interest (schools, malls and supermarkets, highways, hospitals, airports); drive times estimated at 35 km/h from great-circle distance unless an OSRM duration is stored.",
+  "builtAt": "2026-11-14T14:40:49.541Z",
+  "places": [
+    {
+      "name": "La Fontaine",
+      "kind": "development",
+      "parent": "Westmoorings",
+      "coords": {
+        "lat": 10.6751284,
+        "lon": -61.5570333
+      },
+      "neighbours": [
+        {
+          "name": "La Riviera",
+          "km": 0.1,
+          "minutes": 1
+        },
+        {
+          "name": "The Towers",
+          "km": 0.4,
+          "minutes": 1
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "Westmoorings",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 1.2,
+          "minutes": 2
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 0.4
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 0.5
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 0.9
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 2.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 25.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "West Hills",
+      "kind": "development",
+      "parent": "Petit Valley",
+      "coords": {
+        "lat": 10.7126971,
+        "lon": -61.5419394
+      },
+      "neighbours": [
+        {
+          "name": "Petit Valley",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Fairways",
+          "km": 3.1,
+          "minutes": 5
+        },
+        {
+          "name": "Maraval",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Cocorite",
+          "km": 3.6,
+          "minutes": 6
+        },
+        {
+          "name": "Haleland Park",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 4.1,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "Petit Valley Girls RC School",
+          "km": 0.6
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 4
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 4
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 26
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "One Woodbrook Place",
+      "kind": "development",
+      "parent": "Woodbrook",
+      "coords": {
+        "lat": 10.6678786,
+        "lon": -61.5283602
+      },
+      "neighbours": [
+        {
+          "name": "Woodbrook",
+          "km": 0.8,
+          "minutes": 1
+        },
+        {
+          "name": "St. Clair",
+          "km": 0.8,
+          "minutes": 1
+        },
+        {
+          "name": "Federation Park",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "St. James",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "Ellerslie Park",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Newtown",
+          "km": 1.2,
+          "minutes": 2
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 0.9
+        },
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 1
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 1
+        },
+        {
+          "kind": "hospital",
+          "name": "St. James Medical Complex",
+          "km": 1.3
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 22.5
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "La Riviera",
+      "kind": "development",
+      "parent": "Westmoorings",
+      "coords": {
+        "lat": 10.6748142,
+        "lon": -61.5580311
+      },
+      "neighbours": [
+        {
+          "name": "La Fontaine",
+          "km": 0.1,
+          "minutes": 1
+        },
+        {
+          "name": "The Towers",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "Westmoorings",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 1.2,
+          "minutes": 2
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 0.5
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 0.6
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 1
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 2.5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 25.8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "The Towers",
+      "kind": "development",
+      "parent": "Westmoorings",
+      "coords": {
+        "lat": 10.6768622,
+        "lon": -61.5534252
+      },
+      "neighbours": [
+        {
+          "name": "La Fontaine",
+          "km": 0.4,
+          "minutes": 1
+        },
+        {
+          "name": "La Riviera",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "Westmoorings",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "Cocorite",
+          "km": 1,
+          "minutes": 2
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 1.5,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 0.2
+        },
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 0.5
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 0.5
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 2.1
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 25.4
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Victoria Keyes",
+      "kind": "development",
+      "parent": "Diego Martin",
+      "coords": {
+        "lat": 10.6803933,
+        "lon": -61.5608469
+      },
+      "neighbours": [
+        {
+          "name": "Westmoorings",
+          "km": 0,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "La Fontaine",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "La Riviera",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "The Towers",
+          "km": 0.9,
+          "minutes": 2
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 0.4
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 0.8
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 1.4
+        },
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 2.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 26.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim (parent fallback: Westmoorings; no OSM point for Victoria Keyes)"
+    },
+    {
+      "name": "Aquaria",
+      "kind": "development",
+      "parent": "Carenage",
+      "coords": {
+        "lat": 10.6809335,
+        "lon": -61.5771852
+      },
+      "neighbours": [
+        {
+          "name": "Glencoe",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 1.8,
+          "minutes": 3
+        },
+        {
+          "name": "Westmoorings",
+          "km": 1.8,
+          "minutes": 3
+        },
+        {
+          "name": "Carenage",
+          "km": 1.9,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 1
+        },
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 2.1
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 2.5
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 3.1
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 28
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Goodwood Heights",
+      "kind": "development",
+      "parent": "Westmoorings",
+      "coords": {
+        "lat": 10.6820798,
+        "lon": -61.5658358
+      },
+      "neighbours": [
+        {
+          "name": "Goodwood Park",
+          "km": 0,
+          "minutes": 1
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Westmoorings",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Glencoe",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "La Fontaine",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "La Riviera",
+          "km": 1.2,
+          "minutes": 2
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 0.9
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 1.3
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 2
+        },
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 2.2
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 26.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim (parent fallback: Goodwood Park; no OSM point for Goodwood Heights)"
+    },
+    {
+      "name": "Federation Park",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6757042,
+        "lon": -61.5262776
+      },
+      "neighbours": [
+        {
+          "name": "Ellerslie Park",
+          "km": 0.3,
+          "minutes": 1
+        },
+        {
+          "name": "One Woodbrook Place",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "St. James",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "St. Clair",
+          "km": 1.1,
+          "minutes": 2
+        },
+        {
+          "name": "Woodbrook",
+          "km": 1.5,
+          "minutes": 3
+        },
+        {
+          "name": "Newtown",
+          "km": 1.6,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 0.5
+        },
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 1.1
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 1.4
+        },
+        {
+          "kind": "hospital",
+          "name": "St. James Medical Complex",
+          "km": 1.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 22.6
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Ellerslie Park",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6777765,
+        "lon": -61.5246773
+      },
+      "neighbours": [
+        {
+          "name": "Federation Park",
+          "km": 0.3,
+          "minutes": 1
+        },
+        {
+          "name": "St. James",
+          "km": 1.1,
+          "minutes": 2
+        },
+        {
+          "name": "One Woodbrook Place",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "St. Clair",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Fairways",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Woodbrook",
+          "km": 1.7,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 0.6
+        },
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 1.2
+        },
+        {
+          "kind": "hospital",
+          "name": "St. James Medical Complex",
+          "km": 1.6
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 1.7
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 22.5
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Port of Spain",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6572678,
+        "lon": -61.5180173
+      },
+      "neighbours": [
+        {
+          "name": "Newtown",
+          "km": 0.8,
+          "minutes": 1
+        },
+        {
+          "name": "Woodbrook",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "St. Clair",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "One Woodbrook Place",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Belmont",
+          "km": 1.7,
+          "minutes": 3
+        },
+        {
+          "name": "Federation Park",
+          "km": 2.2,
+          "minutes": 4
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "St. Mary's College",
+          "km": 0.9
+        },
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 1.2
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 2.3
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 2.5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 21
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Westmoorings",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6803933,
+        "lon": -61.5608469
+      },
+      "neighbours": [
+        {
+          "name": "Victoria Keyes",
+          "km": 0,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "La Fontaine",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "La Riviera",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "The Towers",
+          "km": 0.9,
+          "minutes": 2
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 0.4
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 0.8
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 1.4
+        },
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 2.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 26.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Goodwood Park",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6820798,
+        "lon": -61.5658358
+      },
+      "neighbours": [
+        {
+          "name": "Goodwood Heights",
+          "km": 0,
+          "minutes": 1
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Westmoorings",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Glencoe",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "La Fontaine",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "La Riviera",
+          "km": 1.2,
+          "minutes": 2
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 0.9
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 1.3
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 2
+        },
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 2.2
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 26.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "St. Augustine",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6464474,
+        "lon": -61.4008066
+      },
+      "neighbours": [
+        {
+          "name": "Curepe",
+          "km": 1,
+          "minutes": 2
+        },
+        {
+          "name": "Tunapuna",
+          "km": 1.1,
+          "minutes": 2
+        },
+        {
+          "name": "Valsayn",
+          "km": 2.1,
+          "minutes": 4
+        },
+        {
+          "name": "Aranguez",
+          "km": 4.7,
+          "minutes": 8
+        },
+        {
+          "name": "Trincity",
+          "km": 5,
+          "minutes": 9
+        },
+        {
+          "name": "San Juan",
+          "km": 5.5,
+          "minutes": 9
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 2.4
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 5.5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Sangre Grande",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6375402,
+        "lon": -61.1177499
+      },
+      "neighbours": [],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 24.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Haleland Park",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.712981,
+        "lon": -61.5082922
+      },
+      "neighbours": [
+        {
+          "name": "Moka",
+          "km": 0.8,
+          "minutes": 1
+        },
+        {
+          "name": "Maraval",
+          "km": 2.7,
+          "minutes": 5
+        },
+        {
+          "name": "Fairways",
+          "km": 2.8,
+          "minutes": 5
+        },
+        {
+          "name": "West Hills",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Santa Cruz",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Cascade",
+          "km": 4,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "Petit Valley Girls RC School",
+          "km": 4.2
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 4.7
+        },
+        {
+          "kind": "hospital",
+          "name": "St. James Medical Complex",
+          "km": 5.5
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 5.9
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 22.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Long Circular",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.3377962,
+        "lon": -61.4522706
+      },
+      "neighbours": [
+        {
+          "name": "Claxton Bay",
+          "km": 1.8,
+          "minutes": 3
+        },
+        {
+          "name": "Marabella",
+          "km": 3.4,
+          "minutes": 6
+        },
+        {
+          "name": "Bayshore",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "San Fernando",
+          "km": 6.5,
+          "minutes": 11
+        },
+        {
+          "name": "Point Lisas",
+          "km": 7.6,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Solomon Hochoy Highway",
+          "km": 4.5
+        },
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 6.8
+        },
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 8.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 31.4
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Diego Martin",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.7138597,
+        "lon": -61.5793555
+      },
+      "neighbours": [
+        {
+          "name": "Carenage",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Petit Valley",
+          "km": 3.6,
+          "minutes": 6
+        },
+        {
+          "name": "Aquaria",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Glencoe",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 3.8,
+          "minutes": 7
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 3.8,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 3.4
+        },
+        {
+          "kind": "school",
+          "name": "Petit Valley Girls RC School",
+          "km": 3.6
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 4.8
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 5.3
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 29.6
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "San Fernando",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.2807069,
+        "lon": -61.4645896
+      },
+      "neighbours": [
+        {
+          "name": "Palmiste",
+          "km": 2.1,
+          "minutes": 4
+        },
+        {
+          "name": "Gulf View",
+          "km": 2.5,
+          "minutes": 4
+        },
+        {
+          "name": "Bayshore",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "Marabella",
+          "km": 3.3,
+          "minutes": 6
+        },
+        {
+          "name": "La Romaine",
+          "km": 5.1,
+          "minutes": 9
+        },
+        {
+          "name": "Long Circular",
+          "km": 6.5,
+          "minutes": 11
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 0.5
+        },
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 2.3
+        },
+        {
+          "kind": "supermarket",
+          "name": "PriceSmart",
+          "km": 4.2
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 37.8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Princes Town",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.2048004,
+        "lon": -61.2806186
+      },
+      "neighbours": [],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 43.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Point Fortin",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.1759283,
+        "lon": -61.6827286
+      },
+      "neighbours": [],
+      "pois": [],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Petit Valley",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.7096518,
+        "lon": -61.5468859
+      },
+      "neighbours": [
+        {
+          "name": "West Hills",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Fairways",
+          "km": 3.3,
+          "minutes": 6
+        },
+        {
+          "name": "Cocorite",
+          "km": 3.3,
+          "minutes": 6
+        },
+        {
+          "name": "Maraval",
+          "km": 3.4,
+          "minutes": 6
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 3.6,
+          "minutes": 6
+        },
+        {
+          "name": "Westmoorings",
+          "km": 3.6,
+          "minutes": 6
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "Petit Valley Girls RC School",
+          "km": 0
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 3.5
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 3.6
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 4.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 26.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Mt Irvine",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.1863145,
+        "lon": -60.7940042
+      },
+      "neighbours": [
+        {
+          "name": "Buccoo",
+          "km": 1.1,
+          "minutes": 2
+        },
+        {
+          "name": "Black Rock",
+          "km": 2.5,
+          "minutes": 4
+        },
+        {
+          "name": "Signal Hill",
+          "km": 3.4,
+          "minutes": 6
+        },
+        {
+          "name": "Lowlands",
+          "km": 3.5,
+          "minutes": 6
+        },
+        {
+          "name": "Canaan",
+          "km": 3.6,
+          "minutes": 6
+        },
+        {
+          "name": "Plymouth",
+          "km": 4.3,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 5.8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Point Lisas",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.3993799,
+        "lon": -61.4828808
+      },
+      "neighbours": [
+        {
+          "name": "Couva",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Claxton Bay",
+          "km": 5.8,
+          "minutes": 10
+        },
+        {
+          "name": "Long Circular",
+          "km": 7.6,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Solomon Hochoy Highway",
+          "km": 7.6
+        },
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 13.5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 27.1
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Chaguaramas",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.68279,
+        "lon": -61.6392368
+      },
+      "neighbours": [
+        {
+          "name": "Carenage",
+          "km": 5.1,
+          "minutes": 9
+        },
+        {
+          "name": "Aquaria",
+          "km": 6.8,
+          "minutes": 12
+        },
+        {
+          "name": "Diego Martin",
+          "km": 7.4,
+          "minutes": 13
+        },
+        {
+          "name": "Glencoe",
+          "km": 7.4,
+          "minutes": 13
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 8,
+          "minutes": 14
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 8,
+          "minutes": 14
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 5.8
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 9.3
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 9.9
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 34.5
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Claxton Bay",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.3534367,
+        "lon": -61.4569401
+      },
+      "neighbours": [
+        {
+          "name": "Long Circular",
+          "km": 1.8,
+          "minutes": 3
+        },
+        {
+          "name": "Marabella",
+          "km": 5.2,
+          "minutes": 9
+        },
+        {
+          "name": "Bayshore",
+          "km": 5.4,
+          "minutes": 9
+        },
+        {
+          "name": "Point Lisas",
+          "km": 5.8,
+          "minutes": 10
+        },
+        {
+          "name": "Couva",
+          "km": 7.7,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Solomon Hochoy Highway",
+          "km": 4
+        },
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 8.4
+        },
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 10.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 30
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Scarborough",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.1852893,
+        "lon": -60.735024
+      },
+      "neighbours": [
+        {
+          "name": "Signal Hill",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Black Rock",
+          "km": 5.6,
+          "minutes": 10
+        },
+        {
+          "name": "Plymouth",
+          "km": 5.7,
+          "minutes": 10
+        },
+        {
+          "name": "Lowlands",
+          "km": 6,
+          "minutes": 10
+        },
+        {
+          "name": "Mt Irvine",
+          "km": 6.4,
+          "minutes": 11
+        },
+        {
+          "name": "Buccoo",
+          "km": 7.4,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 11.4
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Crown Point",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.1588971,
+        "lon": -60.8346264
+      },
+      "neighbours": [
+        {
+          "name": "Bon Accord",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Canaan",
+          "km": 2.7,
+          "minutes": 5
+        },
+        {
+          "name": "Buccoo",
+          "km": 4.4,
+          "minutes": 8
+        },
+        {
+          "name": "Mt Irvine",
+          "km": 5.4,
+          "minutes": 9
+        },
+        {
+          "name": "Lowlands",
+          "km": 5.8,
+          "minutes": 10
+        },
+        {
+          "name": "Black Rock",
+          "km": 7.7,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 0.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Signal Hill",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.1794289,
+        "lon": -60.76349
+      },
+      "neighbours": [
+        {
+          "name": "Scarborough",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Lowlands",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Mt Irvine",
+          "km": 3.4,
+          "minutes": 6
+        },
+        {
+          "name": "Black Rock",
+          "km": 3.5,
+          "minutes": 6
+        },
+        {
+          "name": "Buccoo",
+          "km": 4.3,
+          "minutes": 7
+        },
+        {
+          "name": "Plymouth",
+          "km": 4.6,
+          "minutes": 8
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 8.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "La Romaine",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.2394811,
+        "lon": -61.4859509
+      },
+      "neighbours": [
+        {
+          "name": "Gulf View",
+          "km": 2.7,
+          "minutes": 5
+        },
+        {
+          "name": "Palmiste",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "San Fernando",
+          "km": 5.1,
+          "minutes": 9
+        },
+        {
+          "name": "Bayshore",
+          "km": 8,
+          "minutes": 14
+        }
+      ],
+      "pois": [
+        {
+          "kind": "supermarket",
+          "name": "PriceSmart",
+          "km": 1
+        },
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 3
+        },
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 4.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 42.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Santa Cruz",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.710225,
+        "lon": -61.4741636
+      },
+      "neighbours": [
+        {
+          "name": "Moka",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "Haleland Park",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Cascade",
+          "km": 4.2,
+          "minutes": 7
+        },
+        {
+          "name": "St. Ann's",
+          "km": 5.1,
+          "minutes": 9
+        },
+        {
+          "name": "Maraval",
+          "km": 5.5,
+          "minutes": 9
+        },
+        {
+          "name": "Fairways",
+          "km": 5.7,
+          "minutes": 10
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 6.5
+        },
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 6.8
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 7.2
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 19.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "El Socorro",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6339464,
+        "lon": -61.4514533
+      },
+      "neighbours": [
+        {
+          "name": "Aranguez",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "San Juan",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Barataria",
+          "km": 2.1,
+          "minutes": 4
+        },
+        {
+          "name": "Morvant",
+          "km": 3.8,
+          "minutes": 7
+        },
+        {
+          "name": "Valsayn",
+          "km": 3.9,
+          "minutes": 7
+        },
+        {
+          "name": "Curepe",
+          "km": 4.9,
+          "minutes": 8
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 3.4
+        },
+        {
+          "kind": "school",
+          "name": "St. Mary's College",
+          "km": 7
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 9.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 13.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Lange Park",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.5235798,
+        "lon": -61.4019168
+      },
+      "neighbours": [
+        {
+          "name": "Chaguanas",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Endeavour",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Cunupia",
+          "km": 4.5,
+          "minutes": 8
+        },
+        {
+          "name": "Freeport",
+          "km": 7,
+          "minutes": 12
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Price Plaza",
+          "km": 0.8
+        },
+        {
+          "kind": "highway",
+          "name": "Uriah Butler Highway",
+          "km": 0.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 10.8
+        },
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 13.8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Bon Accord",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.1549603,
+        "lon": -60.82448
+      },
+      "neighbours": [
+        {
+          "name": "Crown Point",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Canaan",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Buccoo",
+          "km": 3.9,
+          "minutes": 7
+        },
+        {
+          "name": "Lowlands",
+          "km": 4.6,
+          "minutes": 8
+        },
+        {
+          "name": "Mt Irvine",
+          "km": 4.8,
+          "minutes": 8
+        },
+        {
+          "name": "Signal Hill",
+          "km": 7.2,
+          "minutes": 12
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 1.1
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Black Rock",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.2053014,
+        "lon": -60.7816697
+      },
+      "neighbours": [
+        {
+          "name": "Plymouth",
+          "km": 1.8,
+          "minutes": 3
+        },
+        {
+          "name": "Mt Irvine",
+          "km": 2.5,
+          "minutes": 4
+        },
+        {
+          "name": "Buccoo",
+          "km": 3.4,
+          "minutes": 6
+        },
+        {
+          "name": "Signal Hill",
+          "km": 3.5,
+          "minutes": 6
+        },
+        {
+          "name": "Lowlands",
+          "km": 5.4,
+          "minutes": 9
+        },
+        {
+          "name": "Scarborough",
+          "km": 5.6,
+          "minutes": 10
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 8.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "St. Ann's",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6765816,
+        "lon": -61.5061107
+      },
+      "neighbours": [
+        {
+          "name": "Belmont",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "Cascade",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "St. Clair",
+          "km": 1.9,
+          "minutes": 3
+        },
+        {
+          "name": "Newtown",
+          "km": 1.9,
+          "minutes": 3
+        },
+        {
+          "name": "Ellerslie Park",
+          "km": 2,
+          "minutes": 3
+        },
+        {
+          "name": "Federation Park",
+          "km": 2.2,
+          "minutes": 4
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 1.6
+        },
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 1.7
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 2.7
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 3.5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 20.6
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "St. James",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6736224,
+        "lon": -61.5338038
+      },
+      "neighbours": [
+        {
+          "name": "One Woodbrook Place",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "Federation Park",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "Ellerslie Park",
+          "km": 1.1,
+          "minutes": 2
+        },
+        {
+          "name": "Cocorite",
+          "km": 1.4,
+          "minutes": 2
+        },
+        {
+          "name": "Woodbrook",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "St. Clair",
+          "km": 1.6,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 0.5
+        },
+        {
+          "kind": "hospital",
+          "name": "St. James Medical Complex",
+          "km": 0.6
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 0.7
+        },
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 1.7
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 23.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Woodbrook",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6624932,
+        "lon": -61.5239855
+      },
+      "neighbours": [
+        {
+          "name": "St. Clair",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "Newtown",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "One Woodbrook Place",
+          "km": 0.8,
+          "minutes": 1
+        },
+        {
+          "name": "Port of Spain",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "Federation Park",
+          "km": 1.5,
+          "minutes": 3
+        },
+        {
+          "name": "St. James",
+          "km": 1.6,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 0.9
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 1.5
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 1.7
+        },
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 1.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 21.8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "St. Clair",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6679362,
+        "lon": -61.5206933
+      },
+      "neighbours": [
+        {
+          "name": "Newtown",
+          "km": 0.5,
+          "minutes": 1
+        },
+        {
+          "name": "Woodbrook",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "One Woodbrook Place",
+          "km": 0.8,
+          "minutes": 1
+        },
+        {
+          "name": "Federation Park",
+          "km": 1.1,
+          "minutes": 2
+        },
+        {
+          "name": "Ellerslie Park",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Port of Spain",
+          "km": 1.2,
+          "minutes": 2
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 0.2
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 1.4
+        },
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 1.6
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 1.7
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 21.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Chaguanas",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.5147394,
+        "lon": -61.4076757
+      },
+      "neighbours": [
+        {
+          "name": "Lange Park",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Endeavour",
+          "km": 2.8,
+          "minutes": 5
+        },
+        {
+          "name": "Cunupia",
+          "km": 5.7,
+          "minutes": 10
+        },
+        {
+          "name": "Freeport",
+          "km": 6,
+          "minutes": 10
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Uriah Butler Highway",
+          "km": 0.5
+        },
+        {
+          "kind": "mall",
+          "name": "Price Plaza",
+          "km": 1.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 12
+        },
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 14.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Gulf View",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.2606883,
+        "lon": -61.4747379
+      },
+      "neighbours": [
+        {
+          "name": "Palmiste",
+          "km": 1.5,
+          "minutes": 3
+        },
+        {
+          "name": "San Fernando",
+          "km": 2.5,
+          "minutes": 4
+        },
+        {
+          "name": "La Romaine",
+          "km": 2.7,
+          "minutes": 5
+        },
+        {
+          "name": "Bayshore",
+          "km": 5.3,
+          "minutes": 9
+        },
+        {
+          "name": "Marabella",
+          "km": 5.8,
+          "minutes": 10
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 0.6
+        },
+        {
+          "kind": "supermarket",
+          "name": "PriceSmart",
+          "km": 1.7
+        },
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 2.1
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 40.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Marabella",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.3073477,
+        "lon": -61.4518649
+      },
+      "neighbours": [
+        {
+          "name": "Bayshore",
+          "km": 0.5,
+          "minutes": 1
+        },
+        {
+          "name": "San Fernando",
+          "km": 3.3,
+          "minutes": 6
+        },
+        {
+          "name": "Long Circular",
+          "km": 3.4,
+          "minutes": 6
+        },
+        {
+          "name": "Claxton Bay",
+          "km": 5.2,
+          "minutes": 9
+        },
+        {
+          "name": "Palmiste",
+          "km": 5.2,
+          "minutes": 9
+        },
+        {
+          "name": "Gulf View",
+          "km": 5.8,
+          "minutes": 10
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 3.7
+        },
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 5.5
+        },
+        {
+          "kind": "highway",
+          "name": "Solomon Hochoy Highway",
+          "km": 7.3
+        },
+        {
+          "kind": "supermarket",
+          "name": "PriceSmart",
+          "km": 7.5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 34.5
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Barataria",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.64986,
+        "lon": -61.4623113
+      },
+      "neighbours": [
+        {
+          "name": "San Juan",
+          "km": 1.3,
+          "minutes": 2
+        },
+        {
+          "name": "Morvant",
+          "km": 1.7,
+          "minutes": 3
+        },
+        {
+          "name": "El Socorro",
+          "km": 2.1,
+          "minutes": 4
+        },
+        {
+          "name": "Aranguez",
+          "km": 2.3,
+          "minutes": 4
+        },
+        {
+          "name": "Cascade",
+          "km": 4.9,
+          "minutes": 8
+        },
+        {
+          "name": "Belmont",
+          "km": 5.3,
+          "minutes": 9
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 4.3
+        },
+        {
+          "kind": "school",
+          "name": "St. Mary's College",
+          "km": 5.3
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 15
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Endeavour",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.5381714,
+        "lon": -61.3991892
+      },
+      "neighbours": [
+        {
+          "name": "Lange Park",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Chaguanas",
+          "km": 2.8,
+          "minutes": 5
+        },
+        {
+          "name": "Cunupia",
+          "km": 3.3,
+          "minutes": 6
+        },
+        {
+          "name": "Kelly Village",
+          "km": 6.7,
+          "minutes": 11
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Price Plaza",
+          "km": 1.5
+        },
+        {
+          "kind": "highway",
+          "name": "Uriah Butler Highway",
+          "km": 2.3
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 9.4
+        },
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 12.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Newtown",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6640362,
+        "lon": -61.5179066
+      },
+      "neighbours": [
+        {
+          "name": "St. Clair",
+          "km": 0.5,
+          "minutes": 1
+        },
+        {
+          "name": "Woodbrook",
+          "km": 0.7,
+          "minutes": 1
+        },
+        {
+          "name": "Port of Spain",
+          "km": 0.8,
+          "minutes": 1
+        },
+        {
+          "name": "One Woodbrook Place",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Belmont",
+          "km": 1.3,
+          "minutes": 2
+        },
+        {
+          "name": "Federation Park",
+          "km": 1.6,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 0.5
+        },
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 1.1
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 1.9
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 2.1
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 21.2
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Fairways",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6917072,
+        "lon": -61.5226364
+      },
+      "neighbours": [
+        {
+          "name": "Maraval",
+          "km": 0.2,
+          "minutes": 1
+        },
+        {
+          "name": "Ellerslie Park",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Federation Park",
+          "km": 1.8,
+          "minutes": 3
+        },
+        {
+          "name": "St. James",
+          "km": 2.4,
+          "minutes": 4
+        },
+        {
+          "name": "St. Ann's",
+          "km": 2.5,
+          "minutes": 4
+        },
+        {
+          "name": "One Woodbrook Place",
+          "km": 2.7,
+          "minutes": 5
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 1.9
+        },
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 2.6
+        },
+        {
+          "kind": "hospital",
+          "name": "St. James Medical Complex",
+          "km": 2.7
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 3.1
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 23
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Tunapuna",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6436181,
+        "lon": -61.3907206
+      },
+      "neighbours": [
+        {
+          "name": "St. Augustine",
+          "km": 1.1,
+          "minutes": 2
+        },
+        {
+          "name": "Curepe",
+          "km": 2.2,
+          "minutes": 4
+        },
+        {
+          "name": "Valsayn",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "Trincity",
+          "km": 3.9,
+          "minutes": 7
+        },
+        {
+          "name": "Aranguez",
+          "km": 5.7,
+          "minutes": 10
+        },
+        {
+          "name": "San Juan",
+          "km": 6.6,
+          "minutes": 11
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 3.6
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 4.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Trincity",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6343224,
+        "lon": -61.3567735
+      },
+      "neighbours": [
+        {
+          "name": "Tunapuna",
+          "km": 3.9,
+          "minutes": 7
+        },
+        {
+          "name": "Piarco",
+          "km": 4.1,
+          "minutes": 7
+        },
+        {
+          "name": "St. Augustine",
+          "km": 5,
+          "minutes": 9
+        },
+        {
+          "name": "D'Abadie",
+          "km": 5,
+          "minutes": 9
+        },
+        {
+          "name": "Kelly Village",
+          "km": 5.4,
+          "minutes": 9
+        },
+        {
+          "name": "Curepe",
+          "km": 6,
+          "minutes": 10
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 1
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 4.8
+        },
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 7.4
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "D'Abadie",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6289906,
+        "lon": -61.3109079
+      },
+      "neighbours": [
+        {
+          "name": "Arima",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Piarco",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Trincity",
+          "km": 5,
+          "minutes": 9
+        },
+        {
+          "name": "Kelly Village",
+          "km": 7.4,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Churchill Roosevelt Highway",
+          "km": 4.1
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 4.6
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 4.8
+        },
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 12.4
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Carenage",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6881668,
+        "lon": -61.5928155
+      },
+      "neighbours": [
+        {
+          "name": "Aquaria",
+          "km": 1.9,
+          "minutes": 3
+        },
+        {
+          "name": "Glencoe",
+          "km": 2.5,
+          "minutes": 4
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 3,
+          "minutes": 5
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 3,
+          "minutes": 5
+        },
+        {
+          "name": "Diego Martin",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 3.6,
+          "minutes": 6
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 0.9
+        },
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 4
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 4.4
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 29.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Cocorite",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6801341,
+        "lon": -61.5452318
+      },
+      "neighbours": [
+        {
+          "name": "The Towers",
+          "km": 1,
+          "minutes": 2
+        },
+        {
+          "name": "La Fontaine",
+          "km": 1.4,
+          "minutes": 2
+        },
+        {
+          "name": "St. James",
+          "km": 1.4,
+          "minutes": 2
+        },
+        {
+          "name": "La Riviera",
+          "km": 1.5,
+          "minutes": 3
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 1.7,
+          "minutes": 3
+        },
+        {
+          "name": "Westmoorings",
+          "km": 1.7,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 0.5
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 1
+        },
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 1.4
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 1.7
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 24.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "San Juan",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6486053,
+        "lon": -61.450882
+      },
+      "neighbours": [
+        {
+          "name": "Aranguez",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Barataria",
+          "km": 1.3,
+          "minutes": 2
+        },
+        {
+          "name": "El Socorro",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Morvant",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "Valsayn",
+          "km": 4.1,
+          "minutes": 7
+        },
+        {
+          "name": "Curepe",
+          "km": 4.5,
+          "minutes": 8
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 3
+        },
+        {
+          "kind": "school",
+          "name": "St. Mary's College",
+          "km": 6.6
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 9.2
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 13.8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Freeport",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.4611229,
+        "lon": -61.4116022
+      },
+      "neighbours": [
+        {
+          "name": "Chaguanas",
+          "km": 6,
+          "minutes": 10
+        },
+        {
+          "name": "Couva",
+          "km": 6.7,
+          "minutes": 11
+        },
+        {
+          "name": "Lange Park",
+          "km": 7,
+          "minutes": 12
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Uriah Butler Highway",
+          "km": 6.5
+        },
+        {
+          "kind": "mall",
+          "name": "Price Plaza",
+          "km": 7.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 17.1
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Bayshore",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.3050975,
+        "lon": -61.4560686
+      },
+      "neighbours": [
+        {
+          "name": "Marabella",
+          "km": 0.5,
+          "minutes": 1
+        },
+        {
+          "name": "San Fernando",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "Long Circular",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Palmiste",
+          "km": 4.8,
+          "minutes": 8
+        },
+        {
+          "name": "Gulf View",
+          "km": 5.3,
+          "minutes": 9
+        },
+        {
+          "name": "Claxton Bay",
+          "km": 5.4,
+          "minutes": 9
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 3.2
+        },
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 5.1
+        },
+        {
+          "kind": "supermarket",
+          "name": "PriceSmart",
+          "km": 7
+        },
+        {
+          "kind": "highway",
+          "name": "Solomon Hochoy Highway",
+          "km": 7.7
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 34.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Plymouth",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.2199522,
+        "lon": -60.7738418
+      },
+      "neighbours": [
+        {
+          "name": "Black Rock",
+          "km": 1.8,
+          "minutes": 3
+        },
+        {
+          "name": "Mt Irvine",
+          "km": 4.3,
+          "minutes": 7
+        },
+        {
+          "name": "Signal Hill",
+          "km": 4.6,
+          "minutes": 8
+        },
+        {
+          "name": "Buccoo",
+          "km": 5.2,
+          "minutes": 9
+        },
+        {
+          "name": "Scarborough",
+          "km": 5.7,
+          "minutes": 10
+        },
+        {
+          "name": "Lowlands",
+          "km": 7.1,
+          "minutes": 12
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 10.1
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Lowlands",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.1567375,
+        "lon": -60.781963
+      },
+      "neighbours": [
+        {
+          "name": "Canaan",
+          "km": 3.1,
+          "minutes": 5
+        },
+        {
+          "name": "Signal Hill",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Mt Irvine",
+          "km": 3.5,
+          "minutes": 6
+        },
+        {
+          "name": "Buccoo",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Bon Accord",
+          "km": 4.6,
+          "minutes": 8
+        },
+        {
+          "name": "Black Rock",
+          "km": 5.4,
+          "minutes": 9
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 5.6
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Maraval",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6922223,
+        "lon": -61.5207987
+      },
+      "neighbours": [
+        {
+          "name": "Fairways",
+          "km": 0.2,
+          "minutes": 1
+        },
+        {
+          "name": "Ellerslie Park",
+          "km": 1.7,
+          "minutes": 3
+        },
+        {
+          "name": "Federation Park",
+          "km": 1.9,
+          "minutes": 3
+        },
+        {
+          "name": "St. Ann's",
+          "km": 2.4,
+          "minutes": 4
+        },
+        {
+          "name": "St. James",
+          "km": 2.5,
+          "minutes": 4
+        },
+        {
+          "name": "Haleland Park",
+          "km": 2.7,
+          "minutes": 5
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 2.1
+        },
+        {
+          "kind": "school",
+          "name": "Queen's Royal College",
+          "km": 2.6
+        },
+        {
+          "kind": "hospital",
+          "name": "St. James Medical Complex",
+          "km": 2.8
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 3.2
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 22.8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Cascade",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6788607,
+        "lon": -61.4957314
+      },
+      "neighbours": [
+        {
+          "name": "St. Ann's",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Belmont",
+          "km": 1.7,
+          "minutes": 3
+        },
+        {
+          "name": "Newtown",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "St. Clair",
+          "km": 3,
+          "minutes": 5
+        },
+        {
+          "name": "Maraval",
+          "km": 3.1,
+          "minutes": 5
+        },
+        {
+          "name": "Ellerslie Park",
+          "km": 3.2,
+          "minutes": 5
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 2.3
+        },
+        {
+          "kind": "school",
+          "name": "St. Mary's College",
+          "km": 2.8
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 3.8
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 4.6
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 19.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Glencoe",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6811061,
+        "lon": -61.5714852
+      },
+      "neighbours": [
+        {
+          "name": "Aquaria",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Heights",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Goodwood Park",
+          "km": 0.6,
+          "minutes": 1
+        },
+        {
+          "name": "Victoria Keyes",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Westmoorings",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "La Riviera",
+          "km": 1.6,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "International School of Port of Spain",
+          "km": 1.5
+        },
+        {
+          "kind": "highway",
+          "name": "Western Main Road",
+          "km": 1.6
+        },
+        {
+          "kind": "mall",
+          "name": "Westmall",
+          "km": 1.9
+        },
+        {
+          "kind": "hospital",
+          "name": "West Shore Medical",
+          "km": 2.5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 27.4
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Valsayn",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6344277,
+        "lon": -61.41594
+      },
+      "neighbours": [
+        {
+          "name": "Curepe",
+          "km": 1.9,
+          "minutes": 3
+        },
+        {
+          "name": "St. Augustine",
+          "km": 2.1,
+          "minutes": 4
+        },
+        {
+          "name": "Tunapuna",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "Aranguez",
+          "km": 3,
+          "minutes": 5
+        },
+        {
+          "name": "El Socorro",
+          "km": 3.9,
+          "minutes": 7
+        },
+        {
+          "name": "San Juan",
+          "km": 4.1,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 1.5
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 6.7
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 9.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Belmont",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6685371,
+        "lon": -61.507102
+      },
+      "neighbours": [
+        {
+          "name": "St. Ann's",
+          "km": 0.9,
+          "minutes": 2
+        },
+        {
+          "name": "Newtown",
+          "km": 1.3,
+          "minutes": 2
+        },
+        {
+          "name": "St. Clair",
+          "km": 1.5,
+          "minutes": 3
+        },
+        {
+          "name": "Port of Spain",
+          "km": 1.7,
+          "minutes": 3
+        },
+        {
+          "name": "Cascade",
+          "km": 1.7,
+          "minutes": 3
+        },
+        {
+          "name": "Woodbrook",
+          "km": 2,
+          "minutes": 3
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 0.7
+        },
+        {
+          "kind": "school",
+          "name": "St. Mary's College",
+          "km": 1.2
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 2.7
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 3.2
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 20.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Morvant",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6577414,
+        "lon": -61.4759089
+      },
+      "neighbours": [
+        {
+          "name": "Barataria",
+          "km": 1.7,
+          "minutes": 3
+        },
+        {
+          "name": "San Juan",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "Cascade",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Belmont",
+          "km": 3.6,
+          "minutes": 6
+        },
+        {
+          "name": "El Socorro",
+          "km": 3.8,
+          "minutes": 7
+        },
+        {
+          "name": "St. Ann's",
+          "km": 3.9,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 3.5
+        },
+        {
+          "kind": "school",
+          "name": "St. Mary's College",
+          "km": 3.8
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 6.3
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 6.7
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 16.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Siparia",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.1471607,
+        "lon": -61.5787032
+      },
+      "neighbours": [
+        {
+          "name": "Fyzabad",
+          "km": 5.1,
+          "minutes": 9
+        }
+      ],
+      "pois": [],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Cunupia",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.5520185,
+        "lon": -61.372282
+      },
+      "neighbours": [
+        {
+          "name": "Endeavour",
+          "km": 3.3,
+          "minutes": 6
+        },
+        {
+          "name": "Kelly Village",
+          "km": 4,
+          "minutes": 7
+        },
+        {
+          "name": "Lange Park",
+          "km": 4.5,
+          "minutes": 8
+        },
+        {
+          "name": "Chaguanas",
+          "km": 5.7,
+          "minutes": 10
+        },
+        {
+          "name": "Piarco",
+          "km": 7.2,
+          "minutes": 12
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Price Plaza",
+          "km": 4.7
+        },
+        {
+          "kind": "highway",
+          "name": "Uriah Butler Highway",
+          "km": 5.3
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 6.3
+        },
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 11.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Curepe",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6502517,
+        "lon": -61.4093463
+      },
+      "neighbours": [
+        {
+          "name": "St. Augustine",
+          "km": 1,
+          "minutes": 2
+        },
+        {
+          "name": "Valsayn",
+          "km": 1.9,
+          "minutes": 3
+        },
+        {
+          "name": "Tunapuna",
+          "km": 2.2,
+          "minutes": 4
+        },
+        {
+          "name": "Aranguez",
+          "km": 3.8,
+          "minutes": 7
+        },
+        {
+          "name": "San Juan",
+          "km": 4.5,
+          "minutes": 8
+        },
+        {
+          "name": "El Socorro",
+          "km": 4.9,
+          "minutes": 8
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 1.6
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 6.5
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 10
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Piarco",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6047057,
+        "lon": -61.3340544
+      },
+      "neighbours": [
+        {
+          "name": "D'Abadie",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Kelly Village",
+          "km": 3.8,
+          "minutes": 7
+        },
+        {
+          "name": "Trincity",
+          "km": 4.1,
+          "minutes": 7
+        },
+        {
+          "name": "Arima",
+          "km": 6.6,
+          "minutes": 11
+        },
+        {
+          "name": "Cunupia",
+          "km": 7.2,
+          "minutes": 12
+        },
+        {
+          "name": "Tunapuna",
+          "km": 7.6,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 1
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 3.3
+        },
+        {
+          "kind": "highway",
+          "name": "Churchill Roosevelt Highway",
+          "km": 5.9
+        },
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 10.8
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Mayaro",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.3027609,
+        "lon": -61.0081263
+      },
+      "neighbours": [],
+      "pois": [],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Buccoo",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.1829382,
+        "lon": -60.8030282
+      },
+      "neighbours": [
+        {
+          "name": "Mt Irvine",
+          "km": 1.1,
+          "minutes": 2
+        },
+        {
+          "name": "Canaan",
+          "km": 2.8,
+          "minutes": 5
+        },
+        {
+          "name": "Black Rock",
+          "km": 3.4,
+          "minutes": 6
+        },
+        {
+          "name": "Lowlands",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Bon Accord",
+          "km": 3.9,
+          "minutes": 7
+        },
+        {
+          "name": "Signal Hill",
+          "km": 4.3,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 4.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Canaan",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 11.1586553,
+        "lon": -60.810305
+      },
+      "neighbours": [
+        {
+          "name": "Bon Accord",
+          "km": 1.6,
+          "minutes": 3
+        },
+        {
+          "name": "Crown Point",
+          "km": 2.7,
+          "minutes": 5
+        },
+        {
+          "name": "Buccoo",
+          "km": 2.8,
+          "minutes": 5
+        },
+        {
+          "name": "Lowlands",
+          "km": 3.1,
+          "minutes": 5
+        },
+        {
+          "name": "Mt Irvine",
+          "km": 3.6,
+          "minutes": 6
+        },
+        {
+          "name": "Signal Hill",
+          "km": 5.6,
+          "minutes": 10
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "A.N.R. Robinson International Airport",
+          "km": 2.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Arima",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6372057,
+        "lon": -61.2829762
+      },
+      "neighbours": [
+        {
+          "name": "D'Abadie",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Piarco",
+          "km": 6.6,
+          "minutes": 11
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Churchill Roosevelt Highway",
+          "km": 3.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 7.4
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 7.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Couva",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.4223291,
+        "lon": -61.458708
+      },
+      "neighbours": [
+        {
+          "name": "Point Lisas",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Freeport",
+          "km": 6.7,
+          "minutes": 11
+        },
+        {
+          "name": "Claxton Bay",
+          "km": 7.7,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "highway",
+          "name": "Solomon Hochoy Highway",
+          "km": 7.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 23.5
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Penal",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.1684634,
+        "lon": -61.4526506
+      },
+      "neighbours": [],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 10.4
+        },
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 12.4
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Moka",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.7134731,
+        "lon": -61.5007445
+      },
+      "neighbours": [
+        {
+          "name": "Haleland Park",
+          "km": 0.8,
+          "minutes": 1
+        },
+        {
+          "name": "Santa Cruz",
+          "km": 2.9,
+          "minutes": 5
+        },
+        {
+          "name": "Maraval",
+          "km": 3.2,
+          "minutes": 5
+        },
+        {
+          "name": "Fairways",
+          "km": 3.4,
+          "minutes": 6
+        },
+        {
+          "name": "Cascade",
+          "km": 3.9,
+          "minutes": 7
+        },
+        {
+          "name": "St. Ann's",
+          "km": 4.1,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "school",
+          "name": "Petit Valley Girls RC School",
+          "km": 5.1
+        },
+        {
+          "kind": "mall",
+          "name": "Long Circular Mall",
+          "km": 5.3
+        },
+        {
+          "kind": "hospital",
+          "name": "Port of Spain General Hospital",
+          "km": 5.8
+        },
+        {
+          "kind": "highway",
+          "name": "Audrey Jeffers Highway",
+          "km": 6.4
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 22.2
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Palmiste",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.261821,
+        "lon": -61.461463
+      },
+      "neighbours": [
+        {
+          "name": "Gulf View",
+          "km": 1.5,
+          "minutes": 3
+        },
+        {
+          "name": "San Fernando",
+          "km": 2.1,
+          "minutes": 4
+        },
+        {
+          "name": "La Romaine",
+          "km": 3.7,
+          "minutes": 6
+        },
+        {
+          "name": "Bayshore",
+          "km": 4.8,
+          "minutes": 8
+        },
+        {
+          "name": "Marabella",
+          "km": 5.2,
+          "minutes": 9
+        }
+      ],
+      "pois": [
+        {
+          "kind": "mall",
+          "name": "Gulf City Mall",
+          "km": 0.9
+        },
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 2.1
+        },
+        {
+          "kind": "supermarket",
+          "name": "PriceSmart",
+          "km": 3
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 39.6
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Aranguez",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.6408594,
+        "lon": -61.4429874
+      },
+      "neighbours": [
+        {
+          "name": "El Socorro",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "San Juan",
+          "km": 1.2,
+          "minutes": 2
+        },
+        {
+          "name": "Barataria",
+          "km": 2.3,
+          "minutes": 4
+        },
+        {
+          "name": "Valsayn",
+          "km": 3,
+          "minutes": 5
+        },
+        {
+          "name": "Curepe",
+          "km": 3.8,
+          "minutes": 7
+        },
+        {
+          "name": "Morvant",
+          "km": 4.1,
+          "minutes": 7
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 2.2
+        },
+        {
+          "kind": "school",
+          "name": "St. Mary's College",
+          "km": 7.6
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 9.8
+        },
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 12.7
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Kelly Village",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.5866225,
+        "lon": -61.3632924
+      },
+      "neighbours": [
+        {
+          "name": "Piarco",
+          "km": 3.8,
+          "minutes": 7
+        },
+        {
+          "name": "Cunupia",
+          "km": 4,
+          "minutes": 7
+        },
+        {
+          "name": "Trincity",
+          "km": 5.4,
+          "minutes": 9
+        },
+        {
+          "name": "Endeavour",
+          "km": 6.7,
+          "minutes": 11
+        },
+        {
+          "name": "Tunapuna",
+          "km": 7,
+          "minutes": 12
+        },
+        {
+          "name": "D'Abadie",
+          "km": 7.4,
+          "minutes": 13
+        }
+      ],
+      "pois": [
+        {
+          "kind": "airport",
+          "name": "Piarco International Airport",
+          "km": 3.1
+        },
+        {
+          "kind": "mall",
+          "name": "Trincity Mall",
+          "km": 4.5
+        },
+        {
+          "kind": "hospital",
+          "name": "Eric Williams Medical Sciences Complex",
+          "km": 9.3
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "La Brea",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.2371083,
+        "lon": -61.6158925
+      },
+      "neighbours": [],
+      "pois": [],
+      "source": "OpenStreetMap Nominatim"
+    },
+    {
+      "name": "Fyzabad",
+      "kind": "area",
+      "parent": null,
+      "coords": {
+        "lat": 10.1802665,
+        "lon": -61.5467618
+      },
+      "neighbours": [
+        {
+          "name": "Siparia",
+          "km": 5.1,
+          "minutes": 9
+        }
+      ],
+      "pois": [
+        {
+          "kind": "hospital",
+          "name": "San Fernando General Hospital",
+          "km": 13.9
+        }
+      ],
+      "source": "OpenStreetMap Nominatim"
+    }
+  ]
+}
