@@ -327,8 +327,36 @@ function, a browser bundle or Node alike:
   (e.g. a cron'd edge function every minute) and persist the snapshot. `tick()` also runs `onTick` (the
   Periskope host wires the retention purge and one market-outbox flush here).
 
-The Next `/realty-demo` page stays the public fixture demo only. There is no Next staff UI for the desk. The one
-Next route under `/api/realty/*` is the staff alias API above (`app/api/realty/areas/alias`), which the desk
+The Next `/realty-demo` page stays the public fixture demo only. The lead flow's desk is still planned on Lovable;
+the Next staff pages are a thin landing and one read-only tool (below).
+
+**Staff desk (`/realty/desk`, staff only).** The landing page, with a shared staff nav (Desk, Market search, and
+"Back to Bops" to `/`). It's behind the login gate like every page, the public demo redirects it, and it's not indexed.
+
+**Market search (`/realty/market`, staff only, read-only, linked from the desk).** Other agencies' listings for an
+area, from the same market as the co-broke matches. Filters are GET query params, so the market token never reaches
+the browser:
+
+- Area: free text, resolved the same way as matching (local aliases, then `resolve_area`, then exact text). The page
+  shows what it resolved to. With "Include nearby areas" on, the canonical area and its neighbours are searched and
+  de-duplicated by url (or title and source); off, only the canonical area. An unknown area is searched as typed and says so.
+- Beds and price: `beds_min` and a TTD `price_max` go to `search_market_listings`. `beds_max`, `price_min`, and price
+  bounds for USD listings are checked on the page. "Any" currency is read as TTD for the cap; each listing shows its own currency.
+- Listing type is sale or rent only (the one type the market supports).
+- Results: title, agency, area, beds, baths, price, last seen (when the hit has `last_seen`, else "—"), and a link to
+  the source listing in a new tab (only http or https). Our own listings (`oneonone`) are not shown.
+- States: nothing searched yet; "not configured" (search is off until `ONEON1_MARKET_SEARCH_URL` and
+  `ONEON1_MARKET_SEARCH_TOKEN` are set on the server, with no values shown); no matches; "timed out" or "unavailable".
+  A search where some areas fail still shows the rest, with a warning.
+- Never writes: no alias, no `learn_area_neighbour`, no CRM write, no send. Only `search_market_listings` and
+  `resolve_area` are called. The helper is `marketDeskSearch` (`realty/flow/market-desk.ts`), with the server's
+  settings from `staffMarketSearch` (`realty/node/market-desk.ts`); the lead flow's five-hit cap is unchanged.
+
+The same search is the staff-only JSON API `GET /api/realty/market/search?area=…&nearby=1&bedsMin=…&priceMax=…&currency=TTD`
+(`staffAccess`: 403 on the demo, 401 without a session, 503 if the gate is misconfigured). It answers 200 with `status`
+`ok` or `not-configured`, and 502 with `status: "error"` when the market fails.
+
+The other Next route under `/api/realty/*` is the staff alias API above (`app/api/realty/areas/alias`), which the desk
 doesn't use yet.
 
 ### Periskope intake (read-only, sends off)
