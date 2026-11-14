@@ -8,6 +8,7 @@ import { SAMPLE_CHAT, SAMPLE_MESSAGES, sampleEnvelope } from "../fixtures/whatsa
 import { crmSeam, fixedCrmSeam, NOT_CONNECTED } from "../flow/crm-seam.ts";
 import { digestOf, liveBuyerArgs, liveDesk, liveRequestOf, matchOnArrival, requestLabel } from "../flow/live-match.ts";
 import { interpret } from "../flow/periskope.ts";
+import { parseMatch, slugTitle } from "../flow/recommendations.ts";
 import { GATE_COOKIE, gateConfig, makeSession } from "../../lib/gate.ts";
 import { handleWebhook, optOutSender, ownerAccess, purgeExpiredPeriskope, setConsent } from "../node/periskope-intake.ts";
 import { staffDigest } from "../node/requests.ts";
@@ -226,4 +227,15 @@ test("the replay endpoint's gate: owners only when sign-in is on, 401 signed out
   assert.equal((await as("kerry@1on1.example"))?.status, 403);
   assert.equal((await as(null))?.status, 401);
   assert.equal((await ownerAccess(new Request("https://bops.example/x", { method: "POST" }), { ONEON1_PUBLIC_DEMO: "1" }))?.status, 403);
+});
+
+test("a real Match has no title: the listing page's slug is used, then listing_ref for an id-only url", () => {
+  assert.equal(slugTitle("https://mybunchofkeys.com/property/modern-3-bedroom-townhouse-for-sale-in-diego-martin-gated-development/"), "Modern 3 bedroom townhouse for sale in diego martin gated development");
+  assert.equal(slugTitle("https://www.remax-caribbeanislands.com/002022090047"), null);
+  assert.equal(slugTitle("https://example.com/a-b"), null);
+  assert.equal(slugTitle(null), null);
+  const m = parseMatch({ listing_ref: "remax:002022090047", reason: "in Chaguanas", recommended_contact: { url: "https://www.remax-caribbeanislands.com/002022090047" }, route_to: "unassigned" });
+  assert.equal(m?.item.title, "remax:002022090047");
+  const n = parseMatch({ listing_ref: "mybunchofkeys:1", reason: "in Westmoorings", recommended_contact: { url: "https://mybunchofkeys.com/property/west-park-villas-townhouse-for-rent/" }, route_to: "unassigned" });
+  assert.equal(n?.item.title, "West park villas townhouse for rent");
 });

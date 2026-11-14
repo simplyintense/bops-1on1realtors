@@ -216,17 +216,37 @@ function isRouted(o: Record<string, unknown>): boolean {
   return !!(holder && holder.toLowerCase() !== "unassigned");
 }
 
-/** One match hit. Title falls back to listing_ref; url falls back to recommended_contact.url. */
+/**
+ * The listing page's own slug as a title ("…/property/modern-3-bedroom-townhouse-for-sale-in-diego-martin/" → "Modern 3
+ * bedroom townhouse for sale in diego martin"), when it has at least three words. A real Match carries no title, only
+ * listing_ref ("mybunchofkeys:1099006"), which means nothing to staff. Null for an id-only path.
+ */
+export function slugTitle(url: string | null): string | null {
+  if (!url) return null;
+  let seg = "";
+  try {
+    seg = new URL(url).pathname.split("/").filter(Boolean).pop() ?? "";
+  } catch {
+    return null;
+  }
+  const words = decodeURIComponent(seg).replace(/\.[a-z]{2,5}$/i, "").split(/[-_]+/).filter(Boolean);
+  if (words.length < 3 || !words.some((w) => /[a-z]{3,}/i.test(w))) return null;
+  const text = words.join(" ").toLowerCase();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** One match hit. Title falls back to the url's slug, then listing_ref; url falls back to recommended_contact.url. */
 export function parseMatch(h: unknown): { item: MatchItem; routed: boolean } | null {
   const o = (h ?? {}) as Record<string, unknown>;
   const contact = contactOf(o);
-  const title = str(o.title) ?? str(o.listing_ref);
+  const url = httpUrl(o.url) ?? (contact ? httpUrl(contact.url) : null);
+  const title = str(o.title) ?? slugTitle(url) ?? str(o.listing_ref);
   if (!title) return null;
   const money = priceOf(o.price, o.currency);
   return {
     item: {
       title,
-      url: httpUrl(o.url) ?? (contact ? httpUrl(contact.url) : null),
+      url,
       area: str(o.area),
       price: moneyLabel(money.price, money.currency),
       beds: numish(o.beds),
