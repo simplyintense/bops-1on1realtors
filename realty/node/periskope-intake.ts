@@ -7,7 +7,9 @@ import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "..
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
-import { marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
+import type { ToolCaller } from "../flow/areas.ts";
+import { liveRequestOf, matchOnArrival } from "../flow/live-match.ts";
+import { MarketClient, marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
 import { DryRunOutbox } from "../flow/outbox.ts";
 import {
   consentIsComplete,
@@ -27,7 +29,7 @@ import { crmSourceFromEnv } from "../flow/live-crm.ts";
 import type { CrmSource } from "../flow/source.ts";
 import { GATE_COOKIE, gateConfig, publicDemo, readSession } from "../../lib/gate.ts";
 import { appendJsonl } from "./jsonl.ts";
-import { PeriskopeStore, type LeadRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
+import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
 
 /**
  * The Periskope WhatsApp intake, Node side: the signature check, the webhook's ingest, opt-outs, group
@@ -38,7 +40,7 @@ import { PeriskopeStore, type LeadRow, type MarketOutboxRow, type SeenRow } from
  * 403 not_allowlisted / opted_out is logged and not retried.
  *
  * Files under root (default .data/realty/periskope, 0700 dir, 0600 files):
- *   seen.jsonl, opt-out.jsonl, consent.jsonl, market-outbox.jsonl, leads.jsonl,
+ *   seen.jsonl, opt-out.jsonl, consent.jsonl, market-outbox.jsonl, leads.jsonl, live-matches.jsonl,
  *   flow-state.json (the lead flow's snapshot), outbox.jsonl (dry-run client/agent messages).
  * The area aliases and pair records are a sibling store: areas/ next to root (realty/node/area-store.ts).
  *
@@ -62,12 +64,14 @@ export type IntakeOptions = {
   fetch?: typeof fetch;
   /** The area aliases and pair records. Default: "areas" next to root (.data/realty/areas). */
   areasRoot?: string;
+  /** The market client for live matching (match_buyer). Unset: from ONEON1_MARKET_SEARCH_* (null when they aren't set). */
+  market?: ToolCaller | null;
 };
 
 export type Reply = { status: number; body: Record<string, unknown> };
 const reply = (status: number, body: Record<string, unknown>): Reply => ({ status, body });
 
-type Ctx = { env: Env; now: Date; root: string; store: PeriskopeStore; areas: AreaStore; crm: CrmSource | null; fetch: typeof fetch };
+type Ctx = { env: Env; now: Date; root: string; store: PeriskopeStore; areas: AreaStore; crm: CrmSource | null; fetch: typeof fetch; market: ToolCaller | null };
 
 function context(o: IntakeOptions): Ctx {
   const env = o.env ?? runtimeEnv();
@@ -80,7 +84,13 @@ function context(o: IntakeOptions): Ctx {
     areas: new AreaStore(o.areasRoot ?? join(dirname(root), "areas")),
     crm: o.crm !== undefined ? o.crm : liveCrm(env),
     fetch: o.fetch ?? fetch,
+    market: o.market !== undefined ? o.market : marketClient(env, o.fetch ?? fetch),
   };
+}
+
+function marketClient(env: Env, fetcher: typeof fetch): ToolCaller | null {
+  const cfg = marketConfigFromEnv(env);
+  return cfg ? new MarketClient(cfg, fetcher) : null;
 }
 
 function liveCrm(env: Env): CrmSource | null {
@@ -155,12 +165,18 @@ async function act(d: Decision, c: Ctx): Promise<Reply> {
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "cobroke_listing", at });
       return reply(200, { result: d.item ? "listing recorded for market-ingest" : "listing noted (not enough fields for market-ingest)" });
     case "buyer_request": {
-      if (!c.crm) return reply(200, { result: "ignored: no CRM set up to route a buyer request" });
-      const lead = await receive(d.inquiry, c, c.crm);
-      c.store.addLead({ leadId: lead.id, messageId: d.messageId, senderPhone: d.phone, receivedAt: at });
+      // With a CRM the request also enters the lead flow (routing, timeouts); without one it is still stored and matched.
+      const lead = c.crm ? await receive(d.inquiry, c, c.crm) : null;
+      if (lead) c.store.addLead({ leadId: lead.id, messageId: d.messageId, senderPhone: d.phone, receivedAt: at });
+      const request = liveRequestOf(d.facts);
+      c.store.addLive({ messageId: d.messageId, chatId: d.chatId, senderPhone: d.phone, receivedAt: at, request, status: "pending", matchedAt: null, matches: [] });
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at });
       if (d.item) await queueMarket(c, d.item);
-      return reply(200, { result: `buyer request taken as ${lead.id}` });
+      // Seen is marked first, so a slow or failed match never makes Periskope deliver the message twice.
+      const m = await matchOnArrival(request, d.messageId, at, c.market);
+      c.store.updateLive(d.messageId, { status: m.status, matches: m.matches, matchedAt: c.now.toISOString() });
+      const taken = lead ? `buyer request taken as ${lead.id}` : "buyer request stored (no CRM: not routed)";
+      return reply(200, { result: taken, matching: m.status, matches: m.matches.length });
     }
   }
 }
@@ -279,7 +295,7 @@ function sourceItem(row: MarketOutboxRow): MarketSourceItem | null {
 }
 
 /**
- * Deletes what is past its window: buyer-request leads (PERISKOPE_REQUEST_RETENTION_DAYS, default 60) and
+ * Deletes what is past its window: buyer-request leads and live requests (PERISKOPE_REQUEST_RETENTION_DAYS, default 60) and
  * co-broke listings (PERISKOPE_LISTING_RETENTION_DAYS, default 90), each with its seen rows and market
  * outbox source items. Seen rows of other messages go on the request window. kind=group / optout rows
  * are left (they are not listings or requests). LeadFlow.tick() calls this through onTick (tickFlow).
@@ -325,8 +341,10 @@ export function purgeExpiredPeriskope(store: PeriskopeStore, now: Date, env: Env
     ).map((r) => r.id),
   ]);
   const leads = store.removeWhere<LeadRow>("leads", (r) => leadIds.has(r.leadId)).length;
+  const liveDue = new Set(recordsDueForPurge(store.live(), now, requestDays).map((r) => r.messageId));
+  store.removeWhere<LiveRow>("live", (r) => liveDue.has(r.messageId));
   const marketN = store.removeWhere<MarketOutboxRow>("market", (r) => marketIds.has(r.localId)).length;
-  const seenN = store.removeWhere<SeenRow>("seen", (r) => seenDue.has(r.id) || messageIds.has(r.id)).length;
+  const seenN = store.removeWhere<SeenRow>("seen", (r) => seenDue.has(r.id) || messageIds.has(r.id) || liveDue.has(r.id)).length;
   return { leads, market: marketN, seen: seenN, leadIds: [...leadIds] };
 }
 
@@ -371,7 +389,7 @@ export type OptOutResult = { senderPhone: string; added: boolean; leads: number;
 
 /**
  * Adds the number to the opt-out list and deletes what's stored from it: its leads (and their lines in the
- * flow state), its listing/request outbox records and its seen rows. Then queues kind=optout for
+ * flow state), its live requests and matches, its listing/request outbox records and its seen rows. Then queues kind=optout for
  * market-ingest (senderHash of the number). Later messages from this sender are dropped before the body is read.
  */
 export function optOutSender(senderPhone: string, o: IntakeOptions = {}): Promise<OptOutResult> {
@@ -384,6 +402,7 @@ export function optOutSender(senderPhone: string, o: IntakeOptions = {}): Promis
       return item?.agencyPhone === senderPhone;
     }).length;
     const seen = c.store.removeWhere<SeenRow>("seen", (r) => r.senderPhone === senderPhone).length;
+    c.store.removeWhere<LiveRow>("live", (r) => r.senderPhone === senderPhone);
     dropFromFlowState(c.root, leadIds);
     await queueMarket(c, { kind: "optout", senderHash: senderHashOf(senderPhone) });
     return { senderPhone, added, leads: leadIds.length, market, seen };

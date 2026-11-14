@@ -214,7 +214,7 @@ function isRouted(o: Record<string, unknown>): boolean {
 }
 
 /** One match hit. Title falls back to listing_ref; url falls back to recommended_contact.url. */
-function parseMatch(h: unknown): { item: MatchItem; routed: boolean } | null {
+export function parseMatch(h: unknown): { item: MatchItem; routed: boolean } | null {
   const o = (h ?? {}) as Record<string, unknown>;
   const contact = contactOf(o);
   const title = str(o.title) ?? str(o.listing_ref);

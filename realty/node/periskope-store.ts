@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { LiveMatchStatus, LiveRequest } from "../flow/live-match.ts";
 import type { GroupConsent, Kind, MarketIngestItem } from "../flow/periskope.ts";
+import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
 
 /**
@@ -15,6 +17,22 @@ export type SeenRow = { id: string; senderPhone: string | null; kind: Kind; at: 
 export type OptOutRow = { senderPhone: string; at: string };
 /** A lead this route created: links an opt-out or purge to the lead in the flow's snapshot. */
 export type LeadRow = { leadId: string; messageId: string; senderPhone: string; receivedAt: string };
+
+/**
+ * A WhatsApp buyer request and its live matches (live-match.ts). Structured facts only, never the message text.
+ * senderPhone is the posting agent's own number: it ties the request to an agent on the desk, and opt-out and
+ * retention remove the row with the sender's other records. status "pending" means matching hasn't finished.
+ */
+export type LiveRow = {
+  messageId: string;
+  chatId: string;
+  senderPhone: string;
+  receivedAt: string;
+  request: LiveRequest;
+  status: LiveMatchStatus | "pending";
+  matchedAt: string | null;
+  matches: MatchItem[];
+};
 
 /** A queued market-ingest POST (listing, request, group or optout). status pending is retried later, never inline. */
 export type MarketOutboxRow = {
@@ -34,6 +52,7 @@ const FILES = {
   consent: "consent.jsonl",
   market: "market-outbox.jsonl",
   leads: "leads.jsonl",
+  live: "live-matches.jsonl",
 } as const;
 
 export type Collection = keyof typeof FILES;
@@ -159,5 +178,23 @@ export class PeriskopeStore {
     this.replace("market", all);
     return next;
   }
-}
 
+  /* ---- WhatsApp buyer requests and their live matches ---- */
+
+  live(): LiveRow[] {
+    return this.rows<LiveRow>("live");
+  }
+
+  addLive(row: LiveRow): void {
+    this.add("live", row);
+  }
+
+  updateLive(messageId: string, patch: Partial<Omit<LiveRow, "messageId">>): LiveRow | null {
+    const all = this.live();
+    const i = all.findIndex((r) => r.messageId === messageId);
+    if (i < 0) return null;
+    all[i] = { ...all[i], ...patch, messageId };
+    this.replace("live", all);
+    return all[i];
+  }
+}

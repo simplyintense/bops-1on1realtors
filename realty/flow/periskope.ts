@@ -98,7 +98,7 @@ export type MarketIngestItem = MarketSourceItem | MarketOptOutItem | MarketGroup
 export type Decision =
   | { action: "ignore"; reason: string }
   | { action: "other"; messageId: string; phone: string }
-  | { action: "buyer_request"; messageId: string; phone: string; inquiry: Inquiry; item: MarketSourceItem | null }
+  | { action: "buyer_request"; messageId: string; chatId: string; phone: string; facts: Facts; inquiry: Inquiry; item: MarketSourceItem | null }
   | { action: "cobroke_listing"; messageId: string; phone: string; item: MarketSourceItem | null };
 
 type Obj = Record<string, unknown>;
@@ -208,9 +208,10 @@ export function recordsDueForPurge<T>(rows: readonly T[], now: Date, days: numbe
 
 /* ---------------- Classification ---------------- */
 
-// Demand: someone wants something. "looking", "seeking", "searching", "in the market" are the strong ones.
-const DEMAND = /\b(looking|seeking|searching|in the market|wants? (?:a|an)\b|needs? (?:a|an)\b)/i;
-const STRONG_DEMAND = /\b(looking|seeking|searching|in the market)\b/i;
+// Demand: someone wants something. "looking", "seeking", "searching", "in the market", "anyone have", "wanted" and
+// "ISO" (in search of) are the strong ones: they win over a supply word ("anyone have a house for sale in...").
+const DEMAND = /\b(looking|seeking|searching|in the market|anyone (?:have|has|got)|wanted|ISO|wants? (?:a|an)\b|needs? (?:a|an)\b)/i;
+const STRONG_DEMAND = /\b(looking|seeking|searching|in the market|anyone (?:have|has|got)|wanted|ISO)\b/i;
 // Supply: a property is on offer.
 const SUPPLY = /\b(co-?broke|50\/50|just listed|for sale|available)\b/i;
 
@@ -391,7 +392,7 @@ export function decide(input: {
   const itemArgs = { messageId: m.messageId, phone, chatId: m.chatId, seenAt: input.at.toISOString(), interpretation: i };
   if (i.kind === "other") return { action: "other", messageId: m.messageId, phone };
   if (i.kind === "buyer_request") {
-    return { action: "buyer_request", messageId: m.messageId, phone, inquiry: toInquiry(m.messageId, phone, i), item: toMarketSourceItem({ kind: "request", ...itemArgs }) };
+    return { action: "buyer_request", messageId: m.messageId, chatId: m.chatId, phone, facts: i.facts, inquiry: toInquiry(m.messageId, phone, i), item: toMarketSourceItem({ kind: "request", ...itemArgs }) };
   }
   return { action: "cobroke_listing", messageId: m.messageId, phone, item: toMarketSourceItem({ kind: "listing", ...itemArgs }) };
 }
