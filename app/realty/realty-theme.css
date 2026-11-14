@@ -1,0 +1,288 @@
+/*
+ * The 1on1 Realtors theme for the staff pages under /realty/* (app/realty/layout.tsx). Scoped to .realty-theme, so the
+ * Bops chat app at / keeps its own styles. The tokens are the live site's (HSL components, as on 1on1realtors.com).
+ */
+
+.realty-theme {
+  --brand-purple: 270 65% 30%;
+  --brand-purple-light: 270 60% 40%;
+  --brand-purple-dark: 270 70% 20%;
+  --brand-gold: 16 82% 58%;
+  --brand-gold-light: 16 82% 68%;
+  --background: 0 0% 98%;
+  --foreground: 270 15% 15%;
+  --card: 0 0% 100%;
+  --primary: 270 65% 30%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 270 20% 95%;
+  --muted: 270 10% 96%;
+  --muted-foreground: 270 10% 45%;
+  --accent: 16 82% 58%;
+  --accent-foreground: 270 70% 20%;
+  --border: 270 15% 90%;
+  --ring: 270 65% 30%;
+  --radius: 1rem;
+  /* Not on the live site: used only for error notices. */
+  --danger: 0 65% 42%;
+
+  min-height: 100%;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-realty-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+.realty-theme h1,
+.realty-theme h2,
+.realty-theme h3 {
+  font-family: var(--font-realty-serif), Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+.realty-theme ::selection {
+  background: hsl(var(--accent) / 0.25);
+}
+
+/* Header and nav */
+.rt-header {
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.rt-header-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0.875rem 1.25rem;
+}
+
+.rt-nav {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+}
+
+.rt-nav a {
+  padding: 0.25rem 0;
+  border-bottom: 2px solid transparent;
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+}
+
+.rt-nav a:hover {
+  color: hsl(var(--brand-purple));
+}
+
+.rt-nav a[aria-current="page"] {
+  border-bottom-color: hsl(var(--accent));
+  color: hsl(var(--primary));
+  font-weight: 600;
+}
+
+.rt-nav .rt-back {
+  margin-left: auto;
+}
+
+/* Text */
+.rt-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--brand-purple-light));
+}
+
+.rt-muted {
+  color: hsl(var(--muted-foreground));
+}
+
+.rt-link {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Surfaces */
+.rt-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+}
+
+.rt-tile {
+  display: block;
+  padding: 1.5rem;
+  text-decoration: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.rt-tile:hover,
+.rt-tile:focus-visible {
+  border-color: hsl(var(--primary) / 0.45);
+  box-shadow: 0 10px 30px -18px hsl(var(--brand-purple-dark) / 0.45);
+}
+
+.rt-tile-title {
+  font-family: var(--font-realty-serif), Georgia, serif;
+  font-size: 1.25rem;
+  color: hsl(var(--foreground));
+}
+
+.rt-tile-cta {
+  color: hsl(var(--primary));
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* Controls */
+.rt-btn {
+  border: 0;
+  border-radius: calc(var(--radius) * 0.5);
+  padding: 0.5rem 1rem;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rt-btn:hover {
+  background: hsl(var(--brand-purple-dark));
+}
+
+.rt-field {
+  width: 100%;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) * 0.5);
+  padding: 0.5rem 0.75rem;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+}
+
+.rt-field:focus {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
+}
+
+/* Notices */
+.rt-notice {
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) * 0.5);
+  padding: 0.75rem 1rem;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+}
+
+.rt-notice-warn {
+  border-color: hsl(var(--accent) / 0.45);
+  background: hsl(var(--accent) / 0.12);
+  color: hsl(var(--accent-foreground));
+}
+
+.rt-notice-error {
+  border-color: hsl(var(--danger) / 0.4);
+  background: hsl(var(--danger) / 0.08);
+  color: hsl(var(--danger));
+}
+
+/* Tables */
+.rt-table-wrap {
+  overflow-x: auto;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+}
+
+.rt-thead {
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.rt-thead .rt-th-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.rt-thead .rt-th-link:hover {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+}
+
+.rt-row + .rt-row {
+  border-top: 1px solid hsl(var(--border));
+}
+
+.rt-row:hover,
+.rt-row:focus {
+  background: hsl(var(--muted));
+}
+
+.rt-placeholder {
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.rt-popover {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+  box-shadow: 0 20px 40px -12px hsl(var(--brand-purple-dark) / 0.25);
+}
+
+/* Market stats strip */
+.rt-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem 2.5rem;
+  margin-top: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.04);
+}
+
+.rt-stat-value {
+  font-family: var(--font-realty-serif), Georgia, serif;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: hsl(var(--primary));
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-stat-label {
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.rt-stat-count-static { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rt-stat-count-animated { display: none; }
+  .rt-stat-count-static { display: inline; }
+}
+
+.rt-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

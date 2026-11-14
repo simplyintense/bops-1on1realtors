@@ -327,6 +327,7 @@ test("staff only: the search API is refused on the public demo and needs a sessi
 test("public demo: the market pages and the search API are not passed through", () => {
   assert.equal(demoRoute("/realty/market"), "demo");
   assert.equal(demoRoute("/realty/desk"), "demo");
+  assert.equal(demoRoute("/realty/requests"), "demo");
   assert.equal(demoRoute("/api/realty/market/search"), "deny");
-  for (const p of ["/realty/market", "/realty/desk"]) assert.equal(GATE_OPEN_PATHS.has(p), false, p);
+  for (const p of ["/realty/market", "/realty/desk", "/realty/requests"]) assert.equal(GATE_OPEN_PATHS.has(p), false, p);
 });
