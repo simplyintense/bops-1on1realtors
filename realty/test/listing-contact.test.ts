@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  contactLinks,
   mailtoHref,
   normalizePhone,
   phoneLabel,
@@ -142,7 +143,7 @@ test("hitsFromToolResult falls back to sender_agency, sender_business_phone and 
   assert.equal(hit.agentEmail, "info@pin.example");
 });
 
-test("hitsFromToolResult picks the first non-empty phone and drops a bad email", () => {
+test("hitsFromToolResult keeps a WhatsApp number apart from the phone: no phone means no Call", () => {
   const [hit] = hitsFromToolResult(
     toolResult([
       {
@@ -157,8 +158,49 @@ test("hitsFromToolResult picks the first non-empty phone and drops a bad email",
       },
     ]),
   );
-  assert.equal(hit.agentPhone, "+1868 766 0211");
+  assert.equal(hit.agentPhone, null);
+  assert.equal(hit.agentWhatsapp, "+1868 766 0211");
   assert.equal(hit.agentEmail, null);
+  assert.equal(telHref(hit.agentPhone), null);
+});
+
+test("hitsFromToolResult: the first non-empty phone wins, and whatsapp falls back to the root whatsapp", () => {
+  const [hit] = hitsFromToolResult(
+    toolResult([{ title: "Lot", source: "trinidadrealtor", agent_phone: "", phone: "766-0211", whatsapp: "+1868 000 0000" }]),
+  );
+  assert.equal(hit.agentPhone, "766-0211");
+  assert.equal(hit.agentWhatsapp, "+1868 000 0000");
+});
+
+test("hitsFromToolResult maps the full search-hit shape: agent, agency, agent_phone, agent_whatsapp, agent_email", () => {
+  const [hit] = hitsFromToolResult(
+    toolResult([
+      {
+        title: "Townhouse",
+        source: "mybunchofkeys",
+        agent: "Ravi Test",
+        agency: "MyBunchOfKeys Realty",
+        agent_phone: "+18687660211",
+        agent_whatsapp: "+18687660211",
+        agent_email: "ravi@example.com",
+      },
+    ]),
+  );
+  assert.equal(hit.agent, "Ravi Test");
+  assert.equal(hit.agency, "MyBunchOfKeys Realty");
+  assert.equal(hit.agentPhone, "+18687660211");
+  assert.equal(hit.agentWhatsapp, "+18687660211");
+  assert.equal(hit.agentEmail, "ravi@example.com");
+});
+
+test("a search hit with only agent_whatsapp (MyBunchOfKeys-style, no email) links WhatsApp and nothing else", () => {
+  const [hit] = hitsFromToolResult(
+    toolResult([{ title: "Flat", source: "mybunchofkeys", agent_whatsapp: "+18687660211" }]),
+  );
+  const links = contactLinks({ phone: hit.agentPhone, whatsapp: hit.agentWhatsapp, email: hit.agentEmail }, "x");
+  assert.equal(links.tel, null);
+  assert.ok(links.whatsapp?.startsWith("https://wa.me/18687660211?text="));
+  assert.equal(links.mail, null);
 });
 
 test("hitsFromToolResult gives null for missing contact fields without breaking", () => {
@@ -169,4 +211,43 @@ test("hitsFromToolResult gives null for missing contact fields without breaking"
   assert.equal(hit.agentPhone ?? null, null);
   assert.equal(hit.agentEmail ?? null, null);
   assert.equal(telHref(hit.agentPhone), null);
+});
+
+test("contactLinks: MyBunchOfKeys has phone and WhatsApp but no email: Call and WhatsApp, no Email", () => {
+  const links = contactLinks({ phone: "+1868 766 0211", whatsapp: "+1868 766 0211", email: null }, "Hi");
+  assert.equal(links.phoneText, "+1 868 766 0211");
+  assert.equal(links.tel, "tel:+18687660211");
+  assert.equal(links.whatsapp, "https://wa.me/18687660211?text=Hi");
+  assert.equal(links.email, null);
+  assert.equal(links.mail, null);
+});
+
+test("contactLinks: RE/MAX has phone and email but no WhatsApp: WhatsApp falls back to the phone", () => {
+  const links = contactLinks({ phone: "766-0211", whatsapp: null, email: "agent@remax.example" }, null);
+  assert.equal(links.tel, "tel:+18687660211");
+  assert.equal(links.whatsapp, "https://wa.me/18687660211");
+  assert.equal(links.email, "agent@remax.example");
+  assert.equal(links.mail, "mailto:agent@remax.example");
+});
+
+test("contactLinks: an invalid WhatsApp number falls back to the phone; an invalid phone gives no Call", () => {
+  const links = contactLinks({ phone: "766-0211", whatsapp: "call me" }, null);
+  assert.equal(links.whatsapp, "https://wa.me/18687660211");
+  const noPhone = contactLinks({ phone: "n/a", whatsapp: "+1868 766 0211" }, null);
+  assert.equal(noPhone.tel, null);
+  assert.equal(noPhone.phoneText, null);
+  assert.equal(noPhone.whatsapp, "https://wa.me/18687660211");
+});
+
+test("contactLinks: a listing with only an email gives Email and no Call or WhatsApp", () => {
+  const links = contactLinks({ phone: null, whatsapp: null, email: "info@agency.example" }, "Hi");
+  assert.equal(links.tel, null);
+  assert.equal(links.whatsapp, null);
+  assert.equal(links.phoneText, null);
+  assert.equal(links.mail, "mailto:info@agency.example");
+});
+
+test("contactLinks: a listing with no contact at all gives nothing to tap", () => {
+  const links = contactLinks({}, "Hi");
+  assert.deepEqual(links, { phoneText: null, tel: null, whatsapp: null, email: null, mail: null });
 });

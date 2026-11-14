@@ -60,6 +60,23 @@ export function mailtoHref(email: string | null | undefined): string | null {
   return e ? `mailto:${e}` : null;
 }
 
+/**
+ * The contact links for one listing. WhatsApp uses the WhatsApp number when it's valid, else the phone. Each field is null
+ * when it isn't valid, so a caller shows only the buttons that have a target.
+ */
+export function contactLinks(
+  c: { phone?: string | null; whatsapp?: string | null; email?: string | null },
+  text?: string | null,
+): { phoneText: string | null; tel: string | null; whatsapp: string | null; email: string | null; mail: string | null } {
+  return {
+    phoneText: phoneLabel(c.phone),
+    tel: telHref(c.phone),
+    whatsapp: whatsappHref(c.whatsapp, text) ?? whatsappHref(c.phone, text),
+    email: plausibleEmail(c.email),
+    mail: mailtoHref(c.email),
+  };
+}
+
 const MAX_TEXT = 300;
 
 /** The prefilled WhatsApp message for a listing, kept under about 300 characters. */

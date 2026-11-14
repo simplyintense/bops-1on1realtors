@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import type { CoBrokeHit } from "@/realty/flow/market-search.ts";
 import { moneyLabel } from "@/realty/flow/market-search.ts";
-import { mailtoHref, phoneLabel, telHref, whatsappHref, whatsappText } from "@/realty/flow/listing-contact.ts";
+import { ContactBlock } from "../contact-block";
 
 /**
  * The results table and the hover/tap card. Listings themselves are loaded on the server; this file only
@@ -144,7 +144,7 @@ function ListingCard({ h, onClose, onShow, onHide }: { h: CoBrokeHit; onClose: (
           {h.area ? ` · ${h.area}` : ""}
         </p>
         <p className="rt-muted mt-1">Last change: {h.lastSeen ?? "—"}</p>
-        <ContactBlock h={h} />
+        <ContactBlock c={h} listing={h} />
         <div className="mt-3 flex items-center justify-between gap-3">
           {h.url ? (
             <a href={h.url} target="_blank" rel="noopener noreferrer" className="rt-link" onClick={(e) => e.stopPropagation()}>
@@ -158,49 +158,6 @@ function ListingCard({ h, onClose, onShow, onHide }: { h: CoBrokeHit; onClose: (
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-/** Who to contact: agent, agency, phone and email, with Call and WhatsApp buttons. Staff tap them; nothing is sent by Bops. */
-function ContactBlock({ h }: { h: CoBrokeHit }) {
-  const label = phoneLabel(h.agentPhone);
-  const tel = telHref(h.agentPhone);
-  const wa = whatsappHref(h.agentPhone, whatsappText(h));
-  const mail = mailtoHref(h.agentEmail);
-  const button = "rounded border px-3 py-1.5 text-sm font-medium";
-  return (
-    <div className="mt-3 space-y-1 border-t pt-3" onClick={(e) => e.stopPropagation()}>
-      {h.agent ? (
-        <p>
-          Listed by <span className="font-medium">{h.agent}</span>
-        </p>
-      ) : null}
-      {h.agency ? <p className="rt-muted">{h.agency}</p> : null}
-      {label ? <p>{label}</p> : null}
-      {mail ? (
-        <p>
-          <a href={mail} className="rt-link break-all" onClick={(e) => e.stopPropagation()}>
-            {h.agentEmail}
-          </a>
-        </p>
-      ) : null}
-      {tel || wa ? (
-        <div className="flex flex-wrap gap-2 pt-1">
-          {tel ? (
-            <a href={tel} className={button} onClick={(e) => e.stopPropagation()}>
-              Call
-            </a>
-          ) : null}
-          {wa ? (
-            <a href={wa} target="_blank" rel="noopener noreferrer" className={button} onClick={(e) => e.stopPropagation()}>
-              WhatsApp
-            </a>
-          ) : null}
-        </div>
-      ) : (
-        <p className="rt-muted pt-1">No phone listed — open the listing for contact</p>
-      )}
     </div>
   );
 }

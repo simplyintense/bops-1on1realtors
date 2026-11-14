@@ -4,6 +4,7 @@ import { listingKey, type FollowUp } from "@/realty/flow/match-status.ts";
 import { CRM_MISSING_TEXT, type BuyerMatch, type MatchItem, type Recommendations } from "@/realty/flow/recommendations.ts";
 import type { DeskView } from "@/realty/node/requests.ts";
 import { Notice } from "../notice";
+import { ContactBlock, hasContact } from "../contact-block";
 import { FollowUpButtons } from "./follow-up-buttons";
 
 /**
@@ -181,6 +182,7 @@ function MatchList({ items, follow }: { items: (MatchItem | BuyerMatch)[]; follo
     <ul className="grid gap-3">
       {items.map((m, i) => {
         const key = listingKey(m);
+        const contact = { ...m, agency: m.agency ?? m.source };
         return (
           <li key={`${m.url ?? m.title}-${i}`} className="rt-card p-4">
             <p className="font-medium">
@@ -193,9 +195,10 @@ function MatchList({ items, follow }: { items: (MatchItem | BuyerMatch)[]; follo
               )}
             </p>
             <p className="rt-muted mt-1 text-sm">
-              {[m.area, m.price, m.beds !== null ? `${m.beds} bed` : null, m.source].filter(Boolean).join(" · ") || "Details not given"}
+              {[m.area, m.price, m.beds !== null ? `${m.beds} bed` : null, m.listingType, m.propertyClass].filter(Boolean).join(" · ") || "Details not given"}
             </p>
             {m.reason ? <p className="mt-2 text-sm">{m.reason}</p> : null}
+            {hasContact(contact) ? <ContactBlock c={contact} listing={{ title: m.title, url: m.url }} /> : null}
             {"forRequest" in m ? <ForRequest r={m.forRequest} /> : null}
             {follow ? (
               <FollowUpButtons

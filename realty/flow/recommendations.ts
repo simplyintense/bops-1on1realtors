@@ -1,6 +1,7 @@
 import { emailAllowed } from "../../lib/gate.ts";
 import type { ToolCaller } from "./areas.ts";
-import { httpUrl, moneyLabel, priceOf } from "./market-search.ts";
+import { firstStr, httpUrl, moneyLabel, priceOf } from "./market-search.ts";
+import { plausibleEmail } from "./listing-contact.ts";
 import { budgetLabel, jsonHits, numish, readOnlyCall, sortRequests, timedOut, type BuyerRequest, type RequestsResult } from "./requests.ts";
 
 /**
@@ -43,6 +44,15 @@ export type MatchItem = {
   source: string | null;
   /** Why the market matched it, with phone numbers and emails taken out. Never a score or a grade. */
   reason: string | null;
+  /** The listing type (listing_type, e.g. sale or rent) and the market's property class, when the match has them. */
+  listingType?: string | null;
+  propertyClass?: string | null;
+  /** The listing's agent, agency and contact, as the market gives them. Each is shown only when present (ContactBlock). */
+  agent?: string | null;
+  agency?: string | null;
+  agentPhone?: string | null;
+  agentWhatsapp?: string | null;
+  agentEmail?: string | null;
   /** Set only on one of our own CRM listings: the CRM agent id holding it, or null when no agent is assigned. */
   holder?: number | null;
 };
@@ -250,24 +260,44 @@ export function slugTitle(url: string | null): string | null {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** One match hit. Title falls back to the url's slug, then listing_ref; url falls back to recommended_contact.url. */
+/**
+ * One match hit. A real match carries a `listing` object (title, area, price or price_text, beds, listing_type, url, agent,
+ * agency and the contact fields); older hits don't, so every field falls back to the hit's root fields and recommended_contact
+ * (url, agency, whatsapp, email). Title falls back to the url's slug, then listing_ref; url falls back to recommended_contact.url.
+ */
 export function parseMatch(h: unknown): { item: MatchItem; routed: boolean } | null {
   const o = (h ?? {}) as Record<string, unknown>;
   const contact = contactOf(o);
-  const url = httpUrl(o.url) ?? (contact ? httpUrl(contact.url) : null);
-  const title = str(o.title) ?? slugTitle(url) ?? str(o.listing_ref);
+  const l = listingOf(o);
+  const url = httpUrl(l.url) ?? httpUrl(o.url) ?? (contact ? httpUrl(contact.url) : null);
+  const title = str(l.title) ?? str(o.title) ?? slugTitle(url) ?? str(o.listing_ref);
   if (!title) return null;
-  const money = priceOf(o.price, o.currency);
+  const money = priceOf(l.price ?? o.price, l.currency ?? o.currency);
+  const agency = str(l.agency) ?? str(o.agency) ?? (contact ? str(contact.agency) : null);
+  const email = firstStr(l.agent_email, o.agent_email, contact?.email);
   return {
     item: {
       title,
       url,
-      area: str(o.area),
-      price: moneyLabel(money.price, money.currency),
-      beds: numish(o.beds),
+      area: str(l.area) ?? str(o.area),
+      price: str(l.price_text) ?? moneyLabel(money.price, money.currency),
+      beds: numish(l.beds ?? o.beds),
       source: str(o.source) ?? (contact ? str(contact.agency) : null),
       reason: reasonText(o.reason ?? o.match_reason),
+      listingType: str(l.listing_type) ?? str(o.listing_type),
+      propertyClass: str(l.property_class) ?? str(o.property_class),
+      agent: str(l.agent) ?? str(o.agent),
+      agency,
+      agentPhone: firstStr(l.agent_phone, o.agent_phone),
+      agentWhatsapp: firstStr(l.agent_whatsapp, o.agent_whatsapp, contact?.whatsapp),
+      agentEmail: plausibleEmail(email),
     },
     routed: isRouted(o),
   };
+}
+
+/** The match's `listing` object, or an empty one for an older hit without it. */
+function listingOf(o: Record<string, unknown>): Record<string, unknown> {
+  const l = o.listing;
+  return l && typeof l === "object" && !Array.isArray(l) ? (l as Record<string, unknown>) : {};
 }

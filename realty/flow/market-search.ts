@@ -41,8 +41,10 @@ export type CoBrokeHit = {
   agent?: string | null;
   /** The listing agency's name (`agency`, or `sender_agency`). */
   agency?: string | null;
-  /** The agent's phone as the market gives it (raw; see normalizePhone in listing-contact.ts). */
+  /** The agent's phone as the market gives it (raw; see normalizePhone in listing-contact.ts). Never a WhatsApp number. */
   agentPhone?: string | null;
+  /** The agent's WhatsApp number as the market gives it (raw). Kept apart from agentPhone: a WhatsApp number alone gives no Call. */
+  agentWhatsapp?: string | null;
   /** The agent's email, kept only when it looks like an email. */
   agentEmail?: string | null;
 };
@@ -139,13 +141,14 @@ function toHit(h: unknown): CoBrokeHit | null {
     photo: httpUrl(o.photo),
     agent: str(o.agent),
     agency: str(o.agency) ?? str(o.sender_agency),
-    agentPhone: firstStr(o.agent_phone, o.phone, o.agent_whatsapp, o.whatsapp, o.sender_business_phone),
+    agentPhone: firstStr(o.agent_phone, o.phone, o.sender_business_phone),
+    agentWhatsapp: firstStr(o.agent_whatsapp, o.whatsapp),
     agentEmail: plausibleEmail(str(o.agent_email) ?? str(o.email)),
   };
 }
 
 /** The first non-empty string of the given values, or null. */
-function firstStr(...values: unknown[]): string | null {
+export function firstStr(...values: unknown[]): string | null {
   for (const v of values) {
     const s = str(v);
     if (s) return s;
