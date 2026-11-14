@@ -414,8 +414,19 @@ Requests not tied to one of our agents, and other agencies' open requests from t
 market-ingest off; nothing is kept or sent.
 
 The CRM seam (`crm-seam.ts`) is where the CRM plugs in: `listings()` for our own listings and `agents()` for
-agent email and WhatsApp number. It is `NOT_CONNECTED` until the read-only CRM adapter is wired in, so the desk
-says "CRM not connected" and every WhatsApp request shows as unassigned to owners.
+agent email and WhatsApp number. With `ONEON1_CRM_*` set it is the live read-only CRM (`realty/node/crm-shared.ts`:
+one source per server process, the bot signs in by password and the session is reused and refreshed, properties
+cached 30s, GETs only, `ONEON1_CRM_WRITES` is never read). Without them, or when the CRM can't be reached, it fails
+closed: the desk says "CRM not connected" and every WhatsApp request shows as unassigned to owners.
+
+Our own listings are matched on each request alongside the market (`matchOurListings`): rent vs sale, same or a
+neighbouring area, price within 20% either way of the budget in the same currency, beds within one, the same kind
+of place, no scoring. Each match keeps its holder (`property_agents`). Who sees what:
+- an agent (sign-in email = `agents.email`): their own requests (sender = `agents.phone`), WhatsApp requests that
+  fit listings they hold, and market requests routed to them (`holder_agent_id` → `route_to`);
+- owners: all of it, plus unassigned requests and matches on our listings with no agent;
+- any other sign-in: nothing from the CRM or the market. A CRM failure never stops intake: the request is still
+  stored and matched on the market, with none of ours.
 
 Node helpers live in `realty/node/periskope-store.ts` and `realty/node/periskope-intake.ts` (signature,
 store, outbox, staff functions). The staff routes are `/api/intake/periskope/consent` and
