@@ -61,7 +61,7 @@ function Filters({ c }: { c: DeskCriteria }) {
       </label>
       <label className="flex items-center gap-2 text-sm sm:col-span-2">
         <input type="checkbox" name="nearby" value="1" defaultChecked={c.nearby} />
-        Include nearby areas (the area&apos;s neighbours, de-duplicated)
+        Include nearby areas
       </label>
       <label className="text-sm font-medium">
         Listing type
@@ -158,11 +158,10 @@ function AreaNote({ area, nearby }: { area: DeskArea | null; nearby: boolean }) 
   if (!area.mapped) {
     return <p className="mb-4 text-sm text-neutral-600">&ldquo;{area.typed}&rdquo; isn&apos;t a known area, so the search used the text as typed.</p>;
   }
-  const extra = area.searched.slice(1);
   let nearbyText: string;
   if (!area.neighbours.length) nearbyText = "No nearby areas are known for it.";
-  else if (nearby) nearbyText = extra.length ? `Searched nearby: ${extra.join(", ")}.` : "Nearby areas were already covered.";
-  else nearbyText = `Nearby areas not searched (turn on “Include nearby areas”): ${area.neighbours.join(", ")}.`;
+  else if (nearby) nearbyText = `Including nearby areas: ${area.neighbours.join(", ")}.`;
+  else nearbyText = `Nearby areas not included (turn on “Include nearby areas”): ${area.neighbours.join(", ")}.`;
   return (
     <p className="mb-4 text-sm text-neutral-600">
       &ldquo;{area.typed}&rdquo; is <span className="font-medium text-neutral-900">{area.canonical}</span>. {nearbyText}

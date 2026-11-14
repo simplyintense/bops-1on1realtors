@@ -32,7 +32,7 @@ export type CoBrokeHit = {
   url: string | null;
   /** first_seen as YYYY-MM-DD when the hit carries a date; the lead flow doesn't use it. */
   firstSeen: string | null;
-  /** last_seen (or last_checked) as YYYY-MM-DD when the hit carries a date; the lead flow doesn't use it. */
+  /** last_seen as YYYY-MM-DD when the hit carries a date; the lead flow doesn't use it. */
   lastSeen: string | null;
   /** Main image URL from the source site (`photo`); http(s) only. The lead flow doesn't use it. */
   photo: string | null;
@@ -126,7 +126,7 @@ function toHit(h: unknown): CoBrokeHit | null {
     source,
     url: httpUrl(o.url),
     firstSeen: day(o.first_seen),
-    lastSeen: day(o.last_seen) ?? day(o.last_checked),
+    lastSeen: day(o.last_seen),
     photo: httpUrl(o.photo),
   };
 }

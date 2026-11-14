@@ -11,8 +11,9 @@ import { demoRoute, GATE_OPEN_PATHS } from "../../lib/gate.ts";
 
 /**
  * The staff market search (realty/flow/market-desk.ts) against a fake market-mcp: resolve_area answers from a small
- * place list, search_market_listings returns the hits a test gives for each area. No real network; the fetch global is
- * never used. The tests also check that only search and resolve are ever called, and that no alias is written.
+ * place list, search_market_listings returns the hits a test gives. No real network; the fetch global is never used.
+ * The tests also check that only search and resolve are ever called, that area_scope is always sent, and that no alias
+ * is written.
  */
 
 const ROOT = mkdtempSync(join(tmpdir(), "market-desk-"));
@@ -112,27 +113,38 @@ function ok(r: DeskResult) {
 
 const titles = (r: DeskResult) => ok(r).listings.map((h) => h.title).sort();
 
-test("nearby on: the area and its neighbours are searched once each, and listings are de-duplicated", async () => {
-  const byArea: Record<string, Hit[]> = {
-    Westmoorings: [hit("A"), hit("B")],
-    Glencoe: [hit("B"), hit("C")],
-    Maraval: [hit("D", { url: null }), hit("D", { url: null })],
-  };
-  const { result, fake, store } = await run(crit({ area: "Westmoorings", nearby: true }), { hits: (a) => byArea[a ?? ""] ?? [] });
-  assert.deepEqual(fake.searches().map((a) => a.area).sort(), ["Glencoe", "Maraval", "Westmoorings"]);
+test("nearby on: one search of the canonical area with area_scope nearby, and listings are de-duplicated", async () => {
+  const hits = [hit("A"), hit("B"), hit("B"), hit("C", { area: "Glencoe" }), hit("D", { url: null, area: "Maraval" }), hit("D", { url: null, area: "Maraval" })];
+  const { result, fake, store } = await run(crit({ area: "Westmoorings", nearby: true }), { hits: () => hits });
+  assert.equal(fake.searches().length, 1);
+  assert.deepEqual(fake.searches()[0].area, "Westmoorings");
+  assert.equal(fake.searches()[0].area_scope, "nearby");
   assert.deepEqual(titles(result), ["A", "B", "C", "D"]);
   assert.equal(ok(result).returned, 4);
   assert.equal(ok(result).area?.canonical, "Westmoorings");
-  assert.deepEqual(ok(result).area?.searched, ["Westmoorings", "Glencoe", "Maraval"]);
+  assert.deepEqual(ok(result).area?.searched, ["Westmoorings"]);
+  assert.deepEqual(ok(result).area?.neighbours, ["Glencoe", "Maraval"]);
   assert.deepEqual(fake.tools(), ["resolve_area", "search_market_listings"], "only search and resolve are called");
   assert.equal(store.aliasRows().length, 0, "no alias is written");
 });
 
-test("nearby off: only the canonical area is searched, and the neighbours are named but not searched", async () => {
+test("nearby off: one search of the canonical area with area_scope exact, and the neighbours are named but not searched", async () => {
   const { result, fake } = await run(crit({ area: "Westmoorings" }), { hits: () => [hit("A")] });
+  assert.equal(fake.searches().length, 1);
   assert.deepEqual(fake.searches().map((a) => a.area), ["Westmoorings"]);
+  assert.equal(fake.searches()[0].area_scope, "exact");
   assert.deepEqual(ok(result).area?.neighbours, ["Glencoe", "Maraval"]);
   assert.deepEqual(ok(result).area?.searched, ["Westmoorings"]);
+});
+
+test("area_scope is always sent: exact when nearby is off, nearby when it is on, including with no area", async () => {
+  const none = await run(crit({}), { hits: () => [hit("A")] });
+  assert.equal(none.fake.searches().length, 1);
+  assert.equal(none.fake.searches()[0].area_scope, "exact");
+  assert.equal("area" in none.fake.searches()[0], false);
+  const on = await run(crit({ nearby: true }), { hits: () => [hit("A")] });
+  assert.equal(on.fake.searches()[0].area_scope, "nearby");
+  assert.equal("area" in on.fake.searches()[0], false);
 });
 
 test("a nickname resolves through the alias store, and the search uses the canonical name", async () => {
@@ -220,16 +232,16 @@ test("photo: an http(s) photo URL is kept; a missing, blank or unsafe one is nul
   assert.equal(byTitle.Missing, null);
 });
 
-test("first_seen and last_seen (or last_checked) show as dates when present", async () => {
+test("first_seen and last_seen show as dates when present; last_checked is ignored", async () => {
   const hits = [
     hit("Dated", { first_seen: "2026-10-01T12:00:00Z", last_seen: "2026-11-10T09:30:00Z" }),
-    hit("Checked", { last_checked: "2026-11-11T08:00:00Z" }),
+    hit("Checked only", { last_checked: "2026-11-11T08:00:00Z" }),
     hit("Undated"),
   ];
   const { result } = await run(crit({ area: "Woodbrook" }), { hits: () => hits });
   const byTitle = Object.fromEntries(ok(result).listings.map((h) => [h.title, { first: h.firstSeen, last: h.lastSeen }]));
   assert.deepEqual(byTitle.Dated, { first: "2026-10-01", last: "2026-11-10" });
-  assert.deepEqual(byTitle.Checked, { first: null, last: "2026-11-11" });
+  assert.deepEqual(byTitle["Checked only"], { first: null, last: null });
   assert.deepEqual(byTitle.Undated, { first: null, last: null });
 });
 
@@ -260,15 +272,6 @@ test("every search failing is an error: unavailable on an HTTP failure, timeout 
   assert.deepEqual(down.result, { status: "error", reason: "unavailable" });
   const slow = await run(crit({ area: "Woodbrook" }), { throws: new DOMException("slow", "TimeoutError") });
   assert.deepEqual(slow.result, { status: "error", reason: "timeout" });
-});
-
-test("one area failing still shows the rest, with the failure counted", async () => {
-  const { result } = await run(crit({ area: "Westmoorings", nearby: true }), {
-    failArea: "Glencoe",
-    hits: (a) => (a === "Westmoorings" ? [hit("A")] : a === "Maraval" ? [hit("M")] : []),
-  });
-  assert.deepEqual(titles(result), ["A", "M"]);
-  assert.equal(ok(result).failed, 1);
 });
 
 test("no matching listings is ok and empty", async () => {

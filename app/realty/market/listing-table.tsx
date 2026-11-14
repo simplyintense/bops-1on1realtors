@@ -52,7 +52,7 @@ export function ListingTable({ listings }: { listings: CoBrokeHit[] }) {
             <th className="px-3 py-2 font-semibold">Title</th>
             <th className="px-3 py-2 font-semibold">Source</th>
             <th className="px-3 py-2 font-semibold">First seen</th>
-            <th className="px-3 py-2 font-semibold">Last checked</th>
+            <th className="px-3 py-2 font-semibold">Last seen</th>
             <th className="px-3 py-2 font-semibold">Beds</th>
             <th className="px-3 py-2 font-semibold">Location</th>
             <th className="px-3 py-2 font-semibold">Price</th>

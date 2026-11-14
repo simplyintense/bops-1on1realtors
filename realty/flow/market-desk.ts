@@ -3,14 +3,16 @@ import { hitsFromToolResult, MarketClient, type CoBrokeHit, type MarketConfig } 
 
 /**
  * The staff market search (app/realty/market and /api/realty/market/search): other agencies' listings for an area,
- * with filters. Read-only. It calls search_market_listings once per area searched, and resolve_area only through the
- * resolver it's given. It never writes an alias, never calls a learn_ tool, and sends and writes nothing. The lead
- * flow's five-hit cap (MarketSearch) doesn't apply here.
+ * with filters. Read-only. It calls search_market_listings once for the resolved area, with area_scope "exact" or
+ * "nearby", and resolve_area only through the resolver it's given. It never writes an alias, never calls a learn_
+ * tool, and sends and writes nothing. The lead flow's five-hit cap (MarketSearch) doesn't apply here.
  *
- * The market applies every filter here (listing_type, area, beds_min and beds_max, price_min and price_max,
+ * The market applies every filter here (listing_type, area, area_scope, beds_min and beds_max, price_min and price_max,
  * property_type) in SQL before its limit, so this module must not apply them again: a listing the market returns is
- * shown as it is. There is no currency parameter; the market compares raw amounts, so `currency` is not sent. The page
- * reads its filters from query params, so no token reaches the browser.
+ * shown as it is. area_scope is always sent: leaving it off defaults to "region" on the market. Nearby areas are
+ * included by the market when area_scope is "nearby"; this module does not search neighbours itself. There is no
+ * currency parameter; the market compares raw amounts, so `currency` is not sent. The page reads its filters from
+ * query params, so no token reaches the browser.
  */
 
 export type Currency = "TTD" | "USD" | "any";
@@ -30,7 +32,7 @@ export type DeskCriteria = {
   currency: Currency;
 };
 
-/** What the resolver made of the typed area. `searched` is the area names sent to the market. */
+/** What the resolver made of the typed area. `searched` is the area name sent to the market (one name; nearby is area_scope). */
 export type DeskArea = { typed: string; mapped: boolean; canonical: string | null; neighbours: string[]; searched: string[] };
 
 export type DeskResult =
@@ -42,8 +44,6 @@ export type DeskDeps = { config: MarketConfig | null; resolver: AreaResolver; fe
 
 const TOOL = "search_market_listings";
 const LIMIT = 50;
-/** The canonical area and up to eight neighbours. */
-const MAX_AREAS = 9;
 const MAX_AREA_CHARS = 80;
 
 /** The filters from a query string (the page's form, or the API). Anything unreadable is "not set". */
@@ -73,9 +73,9 @@ export function criteriaFromParams(p: URLSearchParams): DeskCriteria {
   };
 }
 
-/** The arguments for one search_market_listings call. Every filter goes to the market, which applies it before the limit. */
+/** The arguments for one search_market_listings call. Every filter goes to the market, which applies it before the limit. area_scope is always sent. */
 export function searchArgs(c: DeskCriteria, area: string | null): Record<string, string | number> {
-  const args: Record<string, string | number> = { limit: LIMIT };
+  const args: Record<string, string | number> = { limit: LIMIT, area_scope: c.nearby ? "nearby" : "exact" };
   if (c.listingType) args.listing_type = c.listingType;
   if (area) args.area = area;
   if (c.bedsMin !== null) args.beds_min = c.bedsMin;
@@ -86,7 +86,7 @@ export function searchArgs(c: DeskCriteria, area: string | null): Record<string,
   return args;
 }
 
-/** The area names to search: the canonical area, then (with nearby on) its neighbours, each once. */
+/** The one area name to send: the canonical name when the resolver knows it, otherwise the text as typed. Nearby is area_scope, not extra names. */
 async function planAreas(c: DeskCriteria, resolver: AreaResolver): Promise<{ area: DeskArea | null; names: (string | null)[] }> {
   if (!c.area) return { area: null, names: [null] };
   const found: AreaLookup | null = await resolver.lookup(c.area).catch(() => null);
@@ -94,26 +94,15 @@ async function planAreas(c: DeskCriteria, resolver: AreaResolver): Promise<{ are
     return { area: { typed: c.area, mapped: false, canonical: null, neighbours: [], searched: [c.area] }, names: [c.area] };
   }
   const neighbours = found.neighbours.map((n) => n.area);
-  const seen = new Set([areaKey(found.canonical)]);
   const searched = [found.canonical];
-  if (c.nearby) {
-    for (const n of neighbours) {
-      if (!seen.has(areaKey(n))) {
-        seen.add(areaKey(n));
-        searched.push(n);
-      }
-    }
-  }
-  const names = searched.slice(0, MAX_AREAS);
-  return { area: { typed: c.area, mapped: true, canonical: found.canonical, neighbours, searched: names }, names };
+  return { area: { typed: c.area, mapped: true, canonical: found.canonical, neighbours, searched }, names: searched };
 }
 
 const timedOut = (err: unknown) => (err as Error)?.name === "TimeoutError" || (err as Error)?.name === "AbortError";
 
 /**
  * The staff search. Never throws: no config is "not-configured"; every area failing is an error (a timeout or
- * unavailable); some failing still shows the rest, with `failed` counted. Listings from several areas are de-duplicated
- * by url, or by title and source when there's no url.
+ * unavailable). Duplicate hits in one reply are de-duplicated by url, or by title and source when there's no url.
  */
 export async function marketDeskSearch(c: DeskCriteria, deps: DeskDeps): Promise<DeskResult> {
   if (!deps.config) return { status: "not-configured" };
