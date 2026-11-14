@@ -3,6 +3,7 @@ import { Inter, Playfair_Display } from "next/font/google";
 import type { ReactNode } from "react";
 import "./realty-theme.css";
 import { StaffNav } from "./staff-nav";
+import { viewer } from "./viewer";
 
 /**
  * The staff pages' layout (/realty/*): the 1on1 Realtors theme (realty-theme.css, scoped to .realty-theme), Inter for the UI and
@@ -13,7 +14,8 @@ import { StaffNav } from "./staff-nav";
 const inter = Inter({ subsets: ["latin"], variable: "--font-realty-sans", display: "swap" });
 const playfair = Playfair_Display({ subsets: ["latin"], variable: "--font-realty-serif", display: "swap" });
 
-export default function RealtyLayout({ children }: { children: ReactNode }) {
+export default async function RealtyLayout({ children }: { children: ReactNode }) {
+  const { owner } = await viewer();
   return (
     <div className={`realty-theme flex min-h-full flex-col ${inter.variable} ${playfair.variable}`}>
       <header className="rt-header">
@@ -23,7 +25,7 @@ export default function RealtyLayout({ children }: { children: ReactNode }) {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/realty/1on1-realtors-logo.png" alt="1on1 Realtors" className="h-10 w-auto" />
           </Link>
-          <StaffNav />
+          <StaffNav owner={owner} />
         </div>
       </header>
       <div className="flex flex-1 flex-col">{children}</div>

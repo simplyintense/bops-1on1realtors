@@ -1,4 +1,4 @@
-import { findAreas, findBudget, findInterest, findPhones, normalizePhone } from "../extract.ts";
+import { developmentOf, findAreas, findBudget, findInterest, findPhones, normalizePhone } from "../extract.ts";
 import type { Currency, Inquiry, ListingType } from "./engine.ts";
 import { runtimeEnv, type Env } from "./env.ts";
 import { propertyKindFromCrm } from "./taxonomy.ts";
@@ -16,9 +16,12 @@ import { propertyKindFromCrm } from "./taxonomy.ts";
  *
  * Kept: the structured facts (budget, area, type, beds, rental or sale), the posting agent's business
  * name when the text names a firm, and the agent's own number (sender_phone). Never the body, and never
- * a name or phone found in the body. A group is accepted only once staff have recorded its notice and
- * an admin's OK, and the record is still active (consentAllows). An opted-out sender is dropped before
- * the body is read.
+ * a name or phone found in the body. A group is accepted only once an admin's OK is recorded and either
+ * staff have recorded a posted notice or the owner has waived the notice (noticeWaivedAt), and the
+ * record is still active (consentAllows). An opted-out sender is dropped before
+ * the body is read. Deny by default: a message passes the allowlist only from a group named in
+ * PERISKOPE_ALLOWED_GROUPS or whose chat id is in PERISKOPE_ALLOWED_CHAT_IDS (allowlistCheck); anything
+ * else is dropped before consent, classification or storage.
  *
  * Market-ingest (Builder, HOSTING.md on tt-market-search): POST one item at a time. Listing and request
  * items do not carry a consent field; the group is allowlisted separately with kind=group. The adapter
@@ -37,11 +40,15 @@ export type Kind = "buyer_request" | "cobroke_listing" | "other";
 export type Facts = {
   area: string | null;
   beds: number | null;
+  baths: number | null;
   /** The first kind of place named (townhouse, house, land...). */
   type: string | null;
   budget: { min: number | null; max: number; currency: Currency; monthly: boolean } | null;
   intent: "buy" | "rent" | null;
 };
+
+/** How a stored post is categorised for the desk and a backfill report. A listing may also be cobroke. */
+export type PostCategory = "buyer_request" | "rental_request" | "listing_for_sale" | "listing_for_rent" | "cobroke" | "other";
 
 export type Interpretation = { kind: Kind; facts: Facts; firm: string | null };
 
@@ -49,6 +56,9 @@ export type GroupConsent = {
   chatId: string;
   groupName: string | null;
   noticePostedAt: string | null;
+  /** Owner decision that no group notice is required. Not a posted notice, and never implied by noticePostedAt. */
+  noticeWaivedAt?: string | null;
+  noticeWaivedBy?: string | null;
   adminOkBy: string | null;
   adminOkAt: string | null;
   /** False means staff revoked it. Missing is treated as true (an older record). */
@@ -95,11 +105,46 @@ export type MarketAliasItem = { kind: "alias"; alias: string; canonical: string 
 
 export type MarketIngestItem = MarketSourceItem | MarketOptOutItem | MarketGroupItem | MarketAliasItem;
 
+export type DropReason = "empty-allowlist" | "dm" | "other-group" | "no-name";
+
 export type Decision =
   | { action: "ignore"; reason: string }
-  | { action: "other"; messageId: string; phone: string }
-  | { action: "buyer_request"; messageId: string; phone: string; inquiry: Inquiry; item: MarketSourceItem | null }
-  | { action: "cobroke_listing"; messageId: string; phone: string; item: MarketSourceItem | null };
+  | { action: "drop"; reason: DropReason }
+  | { action: "other"; messageId: string; phone: string; post: PostRecord }
+  | { action: "buyer_request"; messageId: string; chatId: string; phone: string; facts: Facts; inquiry: Inquiry; item: MarketSourceItem | null; post: PostRecord }
+  | { action: "cobroke_listing"; messageId: string; phone: string; item: MarketSourceItem | null; post: PostRecord };
+
+/** A stored post: structured facts only, never the message body. */
+export type PostRecord = {
+  messageId: string;
+  chatId: string;
+  sentAt: string;
+  category: PostCategory;
+  cobroke: boolean;
+  senderPhone: string;
+  senderName: string | null;
+  firm: string | null;
+  area: string | null;
+  price: number | null;
+  currency: string | null;
+  beds: number | null;
+  baths: number | null;
+  type: string | null;
+  listingType: "sale" | "rent" | null;
+  intent: "buy" | "rent" | null;
+  propertyClass: string | null;
+  notes: string | null;
+  /** The original message text. Owners may read it in Bops; never log it, and never show it on an agent's desk. */
+  originalText: string | null;
+  /** The WhatsApp group name, when known. Used to tag a backfill row; not a secret. */
+  groupName?: string | null;
+  /** supply = a property on offer; demand = someone looking. Unset for chatter. */
+  set?: "supply" | "demand" | null;
+  /** Canonical development name when the area is a named development. */
+  development?: string | null;
+  mediaUrls?: string[];
+  mediaFiles?: string[];
+};
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -119,10 +164,20 @@ export type ParsedMessage = {
   chatId: string;
   /** sender_phone as Periskope sends it, e.g. "18685550201@c.us". */
   sender: string;
+  /** The posting agent's display name, when the payload has one. Never taken from the body. */
+  senderName: string | null;
+  /** The group's name from the payload (chat_name, or chat.chat_name); null if the payload has none. */
+  chatName: string | null;
   body: string;
   fromMe: boolean;
+  /** A non-empty body, including a media caption. */
+  hasText: boolean;
   /** A plain text chat message: message_type "chat", a non-empty body, and no media at all. */
   textOnly: boolean;
+  /** http(s) media URLs on the message, if any. */
+  mediaUrls: string[];
+  /** The message's own timestamp, when the payload has a valid one. */
+  sentAt: string | null;
 };
 
 /** The fields of message.created's data that this intake reads, or null if a required one is missing or mistyped. */
@@ -132,13 +187,43 @@ export function parseMessage(data: unknown): ParsedMessage | null {
   const chatId = str(data.chat_id);
   const sender = str(data.sender_phone);
   if (!messageId || !chatId || !sender) return null;
+  const chat: Obj = isObj(data.chat) ? data.chat : {};
+  const chatName = str(data.chat_name) ?? str(chat.chat_name);
   // Without a clear from_me we can't tell whether it's ours, so the message is ignored.
   if (typeof data.from_me !== "boolean") return null;
   const body = typeof data.body === "string" ? data.body : "";
   const hasMedia = data.has_media;
+  const mediaUrls = mediaUrlsOf(data);
+  const hasText = body.trim() !== "";
   const textOnly =
-    data.message_type === "chat" && body.trim() !== "" && (hasMedia === undefined || hasMedia === null || hasMedia === false) && (data.media === undefined || data.media === null);
-  return { messageId, chatId, sender, body, fromMe: data.from_me, textOnly };
+    data.message_type === "chat" && hasText && (hasMedia === undefined || hasMedia === null || hasMedia === false) && (data.media === undefined || data.media === null) && mediaUrls.length === 0;
+  const senderName = str(data.contact_name) ?? str(data.sender_name) ?? str(data.author_name) ?? (isObj(data.sender) ? str(data.sender.name) : null);
+  return { messageId, chatId, sender, senderName, chatName, body, fromMe: data.from_me, hasText, textOnly, mediaUrls, sentAt: timestampOf(data.timestamp ?? data.created_at) };
+}
+
+/** http(s) URLs on a Periskope media object, list, or path/url field. */
+export function mediaUrlsOf(data: Obj): string[] {
+  const urls: string[] = [];
+  const add = (v: unknown) => {
+    if (typeof v === "string" && /^https?:\/\//i.test(v.trim())) urls.push(v.trim());
+    else if (isObj(v)) {
+      add(v.path);
+      add(v.url);
+    } else if (Array.isArray(v)) v.forEach(add);
+  };
+  add(data.media);
+  add(data.media_urls);
+  return [...new Set(urls)];
+}
+
+function timestampOf(raw: unknown): string | null {
+  if (typeof raw === "string" && Number.isFinite(Date.parse(raw))) return new Date(raw).toISOString();
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const ms = raw < 1e12 ? raw * 1000 : raw;
+    const d = new Date(ms);
+    return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+  }
+  return null;
 }
 
 export const isGroupChat = (chatId: string) => chatId.endsWith(GROUP_SUFFIX);
@@ -164,20 +249,47 @@ export function allowedChatsFromEnv(env: Env = runtimeEnv()): string[] {
     .filter(Boolean);
 }
 
+/** PERISKOPE_ALLOWED_GROUPS (exact group names) and PERISKOPE_ALLOWED_CHAT_IDS (exact chat ids), each separated by "|". */
+export function allowlistFromEnv(env: Env = runtimeEnv()): { names: string[]; chatIds: string[] } {
+  const list = (raw: string | undefined) =>
+    (raw ?? "")
+      .split("|")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  return { names: list(env.PERISKOPE_ALLOWED_GROUPS), chatIds: list(env.PERISKOPE_ALLOWED_CHAT_IDS) };
+}
+
 /**
- * A group's messages are accepted only with a consent record that has BOTH noticePostedAt and adminOkAt,
- * and has not been revoked (active !== false). With PERISKOPE_ALLOWED_CHATS set, the chat must also be
- * on that list. No record: refused, never accepted.
+ * Deny by default. Null if the message may go on; else why it is dropped. A direct message is always
+ * dropped. A group passes if its chat id is listed, or if its name is listed exactly. With names only and
+ * no name in the payload, it can't be confirmed, so it is dropped.
+ */
+export function allowlistCheck(chatId: string, chatName: string | null, env: Env = runtimeEnv()): DropReason | null {
+  const { names, chatIds } = allowlistFromEnv(env);
+  if (!names.length && !chatIds.length) return "empty-allowlist";
+  if (!isGroupChat(chatId)) return "dm";
+  if (chatIds.includes(chatId)) return null;
+  if (!names.length) return "other-group";
+  if (!chatName) return "no-name";
+  return names.includes(chatName) ? null : "other-group";
+}
+
+/**
+ * A group's messages are accepted only with a consent record that has adminOkAt and either a posted
+ * notice (noticePostedAt) or an owner waiver (noticeWaivedAt), and has not been revoked
+ * (active !== false). With PERISKOPE_ALLOWED_CHATS set, the chat must also be on that list. No record:
+ * refused, never accepted.
  */
 export function consentAllows(consent: GroupConsent | null | undefined, chatId: string, env: Env = runtimeEnv()): boolean {
   if (!consent || consent.chatId !== chatId || !isGroupChat(chatId)) return false;
   if (consent.active === false) return false;
-  if (!consent.noticePostedAt || !consent.adminOkAt) return false;
+  if (!consent.adminOkAt) return false;
+  if (!consent.noticePostedAt && !consent.noticeWaivedAt) return false;
   const extra = allowedChatsFromEnv(env);
   return extra.length === 0 || extra.includes(chatId);
 }
 
-export const consentIsComplete = (c: GroupConsent) => Boolean(c.noticePostedAt && c.adminOkAt);
+export const consentIsComplete = (c: GroupConsent) => Boolean(c.adminOkAt && (c.noticePostedAt || c.noticeWaivedAt));
 
 /** Opted-out numbers compare normalized: "+1 868 555 0201", "18685550201@c.us" and "868-555-0201" are one sender. */
 export function isOptedOut(optedOut: readonly string[], sender: string): boolean {
@@ -208,11 +320,33 @@ export function recordsDueForPurge<T>(rows: readonly T[], now: Date, days: numbe
 
 /* ---------------- Classification ---------------- */
 
-// Demand: someone wants something. "looking", "seeking", "searching", "in the market" are the strong ones.
-const DEMAND = /\b(looking|seeking|searching|in the market|wants? (?:a|an)\b|needs? (?:a|an)\b)/i;
-const STRONG_DEMAND = /\b(looking|seeking|searching|in the market)\b/i;
+// Demand: someone wants something. "looking", "looking for", "seeking", "searching", "searching for",
+// "in search for/of", "in the market", "anyone have", "wanted", "ISO", "need", "needs" and "client needs"
+// are the strong ones: they win over a supply word ("anyone have a house for sale in...").
+const DEMAND = /\b(looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|in the market|anyone (?:have|has|got)|wanted|ISO|client\s+needs?|needs?|wants? (?:a|an))\b/i;
+const ANY_UNITS = /\bany\b[\s\S]{0,80}?\bunits?\s+for\s+(?:rent|sale)\b/i;
+const STRONG_DEMAND = /\b(looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|in the market|anyone (?:have|has|got)|wanted|ISO|client\s+needs?|needs?)\b/i;
 // Supply: a property is on offer.
 const SUPPLY = /\b(co-?broke|50\/50|just listed|for sale|available)\b/i;
+
+/** Seller/listing merchandising: these posts are supply even if marketing copy also says "seeking". */
+const LISTING_PHRASES = /new\s+to\s+the\s+market|exclusive\s+listing|for\s+sale\s*[-–—]|for\s+rent\s+or\s+sale|for\s+sale\s+or\s+rent|asking\s*(?:price)?\s*[:$]|asking\s+\$/i;
+const HEADLINE_LISTING = /(?:^|\n)\s*(?:\p{Extended_Pictographic}|[✨🔥🏙️📍🏡🏠🔑*\s]){0,12}(?:for\s+sale|for\s+rent|apartment\s+for|house\s+for|townhouse\s+for|penthouse\s+for|unit\s+for\s+(?:sale|rent))\b/iu;
+const DEMAND_OPENING = /^(?:still\s+)?(?:looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|anyone (?:have|has|got)|client\s+needs?|needs?\s+(?:a|an)|wanted)\b/i;
+
+function hasPriceCue(body: string): boolean {
+  return !!findBudget(body) || /(?:\$|TT\$|US\$)\s*[\d,]+|\b(?:asking|price)\s*:\s*\$?\s*[\d,]+/i.test(body);
+}
+
+/** True when the text is a property ad (listing signals or a priced headline), not a buyer/rental request. */
+export function listingSignals(body: string): boolean {
+  if (LISTING_PHRASES.test(body)) return true;
+  if (!hasPriceCue(body)) return false;
+  const lines = body.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const open = lines.slice(0, 2).join(" ");
+  if (DEMAND_OPENING.test(open)) return false;
+  return lines.slice(0, 6).some((l) => HEADLINE_LISTING.test(l));
+}
 
 /** The structured facts in a message. Each one is what the text says, nothing more. */
 export function factsOf(body: string): Facts {
@@ -221,10 +355,40 @@ export function factsOf(body: string): Facts {
   return {
     area: findAreas(body)[0] ?? null,
     beds: interest.bedrooms,
+    baths: bathsOf(body),
     type: interest.types[0] ?? null,
     budget: budget ? { min: budget.min, max: budget.max, currency: budget.currency, monthly: budget.period === "month" } : null,
     intent: interest.intent,
   };
+}
+
+const BATHS = /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:bath|bathroom)s?\b/i;
+const BATH_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+
+/** The first bathroom count named in the text, or null. */
+export function bathsOf(body: string): number | null {
+  const m = BATHS.exec(body);
+  if (!m) return null;
+  const n = BATH_WORDS[m[1].toLowerCase()] ?? Number(m[1]);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+const COBROKE = /\b(co-?broke|50\/50)\b/i;
+
+/** The report category for an interpretation. cobroke is true only when the text itself said co-broke or 50/50. */
+export function categoryOf(i: Interpretation, body: string): { category: PostCategory; cobroke: boolean } {
+  const cobroke = COBROKE.test(body);
+  if (i.kind === "buyer_request") {
+    const rent = i.facts.intent === "rent" || listingTypeOf(i.facts) === "rent";
+    return { category: rent ? "rental_request" : "buyer_request", cobroke: false };
+  }
+  if (i.kind === "cobroke_listing") {
+    const lt = listingTypeOf(i.facts);
+    if (lt === "rent") return { category: "listing_for_rent", cobroke };
+    if (lt === "sale") return { category: "listing_for_sale", cobroke };
+    return { category: "cobroke", cobroke: true };
+  }
+  return { category: "other", cobroke: false };
 }
 
 // A firm name: capitalised words then Realty, Realtors, Properties, Real Estate or Homes.
@@ -245,14 +409,17 @@ const hasListingFacts = (f: Facts) => !!(f.area || f.beds || f.type || f.budget)
 /**
  * buyer_request: demand words plus a fact (area, beds, type, budget or rental/sale intent).
  * cobroke_listing: supply words plus a fact (area, beds, type or budget).
- * Both demand and supply words: demand wins when "looking", "seeking", "searching" or "in the market" is there; otherwise supply.
+ * Both demand and supply words: demand wins when a strong demand phrase is there; otherwise supply.
+ * Listing signals (NEW TO THE MARKET, EXCLUSIVE LISTING, FOR SALE –, FOR RENT OR SALE, asking $,
+ * or a priced headline-style property ad) are supply, even if the copy also says "seeking".
  * Anything else is other.
  */
 export function interpret(body: string): Interpretation {
   const facts = factsOf(body);
-  const demand = DEMAND.test(body);
-  const supply = SUPPLY.test(body);
-  const side = demand && (!supply || STRONG_DEMAND.test(body)) ? "demand" : supply ? "supply" : null;
+  const listed = listingSignals(body);
+  const demand = DEMAND.test(body) || ANY_UNITS.test(body);
+  const supply = listed || SUPPLY.test(body);
+  const side = listed ? "supply" : demand && (!supply || STRONG_DEMAND.test(body) || ANY_UNITS.test(body)) ? "demand" : supply ? "supply" : null;
   let kind: Kind = "other";
   if (side === "demand" && (hasListingFacts(facts) || facts.intent)) kind = "buyer_request";
   if (side === "supply" && hasListingFacts(facts)) kind = "cobroke_listing";
@@ -337,6 +504,7 @@ export function toMarketSourceItem(args: {
     title: [f.beds ? `${f.beds} bed` : null, f.type ?? (listingType === "rent" ? "rental" : "listing"), `in ${f.area}`].filter(Boolean).join(" "),
   };
   if (f.beds != null) item.beds = f.beds;
+  if (f.baths != null) item.baths = f.baths;
   if (f.type) item.propertyType = f.type;
   if (args.kind === "listing" && f.budget) item.price = f.budget.max;
   if (args.kind === "request" && f.budget) {
@@ -360,8 +528,8 @@ export function toMarketGroupItem(consent: GroupConsent): MarketGroupItem {
 
 /**
  * What to do with one webhook payload. Checks run in this order, and the body is read only after the
- * sender's opt-out check: envelope → event type → message fields → from_me → group chat → sender number
- * → opt-out → consent (and the optional allowlist) → text only → already seen → classify.
+ * sender's opt-out check: envelope → event type → message fields → from_me → allowlist → sender number
+ * → opt-out → consent (and the optional PERISKOPE_ALLOWED_CHATS) → has text (including a media caption) → already seen → classify.
  */
 export function decide(input: {
   payload: unknown;
@@ -378,25 +546,90 @@ export function decide(input: {
   const m = parseMessage(e.data);
   if (!m) return { action: "ignore", reason: "message fields missing or wrong" };
   if (m.fromMe) return { action: "ignore", reason: "sent by us" };
-  if (!isGroupChat(m.chatId)) return { action: "ignore", reason: "not a group chat" };
+  const dropped = allowlistCheck(m.chatId, m.chatName, env);
+  if (dropped) return { action: "drop", reason: dropped };
   const phone = phoneOf(m.sender);
   if (!phone) return { action: "ignore", reason: "no usable sender number" };
   if (isOptedOut(input.optedOut, phone)) return { action: "ignore", reason: "sender opted out" };
   const consent = input.consentOf(m.chatId);
   if (!consent || !consentAllows(consent, m.chatId, env)) return { action: "ignore", reason: "group not accepted (no notice and admin OK)" };
-  if (!m.textOnly) return { action: "ignore", reason: "not a text message" };
+  if (!m.hasText) return { action: "ignore", reason: "not a text message" };
   if (input.seen(m.messageId)) return { action: "ignore", reason: "already seen" };
 
   const i = interpret(m.body);
-  const itemArgs = { messageId: m.messageId, phone, chatId: m.chatId, seenAt: input.at.toISOString(), interpretation: i };
-  if (i.kind === "other") return { action: "other", messageId: m.messageId, phone };
+  const sentAt = m.sentAt ?? input.at.toISOString();
+  const itemArgs = { messageId: m.messageId, phone, chatId: m.chatId, seenAt: sentAt, interpretation: i };
+  const post = postRecordOf({ message: m, phone, interpretation: i, sentAt });
+  if (i.kind === "other") return { action: "other", messageId: m.messageId, phone, post };
   if (i.kind === "buyer_request") {
-    return { action: "buyer_request", messageId: m.messageId, phone, inquiry: toInquiry(m.messageId, phone, i), item: toMarketSourceItem({ kind: "request", ...itemArgs }) };
+    return { action: "buyer_request", messageId: m.messageId, chatId: m.chatId, phone, facts: i.facts, inquiry: toInquiry(m.messageId, phone, i), item: toMarketSourceItem({ kind: "request", ...itemArgs }), post };
   }
-  return { action: "cobroke_listing", messageId: m.messageId, phone, item: toMarketSourceItem({ kind: "listing", ...itemArgs }) };
+  return { action: "cobroke_listing", messageId: m.messageId, phone, item: toMarketSourceItem({ kind: "listing", ...itemArgs }), post };
+}
+
+/** Structured post fields from a parsed message, plus the original text for owners. Listing media URLs are kept; others are dropped. Never log originalText. */
+export function postRecordOf(args: { message: ParsedMessage; phone: string; interpretation: Interpretation; sentAt: string }): PostRecord {
+  const { message: m, phone, interpretation: i, sentAt } = args;
+  const { category, cobroke } = categoryOf(i, m.body);
+  const f = i.facts;
+  const listingType = listingTypeOf(f);
+  const listing = category === "listing_for_sale" || category === "listing_for_rent" || category === "cobroke";
+  const rec: PostRecord = {
+    messageId: m.messageId,
+    chatId: m.chatId,
+    sentAt,
+    category,
+    cobroke,
+    senderPhone: phone,
+    senderName: m.senderName,
+    firm: i.firm,
+    area: f.area,
+    price: f.budget?.max ?? null,
+    currency: f.budget?.currency ?? null,
+    beds: f.beds,
+    baths: f.baths,
+    type: f.type,
+    listingType,
+    intent: f.intent,
+    propertyClass: propertyKindFromCrm(listingType === "rent" ? "rent" : listingType === "sale" ? "sale" : null, f.type),
+    notes: i.kind === "buyer_request" ? buyerBrief(f) : i.kind === "cobroke_listing" ? listingBrief(f) : null,
+    originalText: m.body.trim() || null,
+    groupName: m.chatName,
+    set: category === "buyer_request" || category === "rental_request" ? "demand" : category === "listing_for_sale" || category === "listing_for_rent" || category === "cobroke" ? "supply" : null,
+    development: developmentOf(f.area)?.name ?? null,
+  };
+  if (listing && m.mediaUrls.length) rec.mediaUrls = m.mediaUrls;
+  return rec;
+}
+
+/** Re-run interpret on a stored post's original text, keeping identity, sender and media. */
+export function reparsePost(p: PostRecord): PostRecord {
+  const body = p.originalText?.trim();
+  if (!body) return p;
+  const interpretation = interpret(body);
+  const next = postRecordOf({
+    message: {
+      messageId: p.messageId,
+      chatId: p.chatId,
+      sender: p.senderPhone,
+      senderName: p.senderName,
+      chatName: p.groupName ?? null,
+      body,
+      fromMe: false,
+      hasText: true,
+      textOnly: !((p.mediaUrls?.length ?? 0) + (p.mediaFiles?.length ?? 0)),
+      mediaUrls: p.mediaUrls ?? [],
+      sentAt: p.sentAt,
+    },
+    phone: p.senderPhone,
+    interpretation,
+    sentAt: p.sentAt,
+  });
+  return { ...next, mediaFiles: p.mediaFiles, mediaUrls: p.mediaUrls ?? next.mediaUrls, groupName: p.groupName ?? next.groupName };
 }
 
 /* ---------------- Staff inputs ---------------- */
+
 
 /** A staff opt-out request: { senderPhone }. The number is normalized, so any common spelling works. */
 export function parseOptOut(body: unknown): { ok: true; phone: string } | { ok: false; error: string } {
@@ -406,7 +639,7 @@ export function parseOptOut(body: unknown): { ok: true; phone: string } | { ok: 
   return phone ? { ok: true, phone } : { ok: false, error: "senderPhone isn't a phone number" };
 }
 
-export type ConsentPatch = { chatId: string } & Partial<Pick<GroupConsent, "groupName" | "noticePostedAt" | "adminOkBy" | "adminOkAt" | "active">>;
+export type ConsentPatch = { chatId: string } & Partial<Pick<GroupConsent, "groupName" | "noticePostedAt" | "noticeWaivedAt" | "noticeWaivedBy" | "adminOkBy" | "adminOkAt" | "active">>;
 
 /**
  * A partial consent update. Omitted fields stay as they are; null clears one (except active, which is
@@ -418,17 +651,17 @@ export function parseConsentPatch(body: unknown): { ok: true; patch: ConsentPatc
   const chatId = str(body.chatId);
   if (!chatId || !isGroupChat(chatId)) return { ok: false, error: "chatId must be a WhatsApp group id (ends in @g.us)" };
   const patch: ConsentPatch = { chatId };
-  for (const k of ["groupName", "adminOkBy"] as const) {
+  for (const k of ["groupName", "adminOkBy", "noticeWaivedBy"] as const) {
     const v = body[k];
     if (v === undefined) continue;
     if (v === null) patch[k] = null;
     else if (typeof v === "string" && v.trim().length <= 200) {
       const value = v.trim() || null;
-      if (k === "adminOkBy" && value && containsPhoneNumber(value)) return { ok: false, error: "adminOkBy must be a business name or role, not a phone number" };
+      if ((k === "adminOkBy" || k === "noticeWaivedBy") && value && containsPhoneNumber(value)) return { ok: false, error: `${k} must be a name or role, not a phone number` };
       patch[k] = value;
     } else return { ok: false, error: `${k} must be text or null` };
   }
-  for (const k of ["noticePostedAt", "adminOkAt"] as const) {
+  for (const k of ["noticePostedAt", "noticeWaivedAt", "adminOkAt"] as const) {
     const v = body[k];
     if (v === undefined) continue;
     if (v === null) patch[k] = null;

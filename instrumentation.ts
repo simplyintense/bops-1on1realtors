@@ -9,6 +9,12 @@ import type { Instrumentation } from "next";
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  // 1on1 observation: read-only GET poll of the six pinned WhatsApp groups every 10 minutes.
+  // No-op without an allowlist and a Periskope API key (env or a 0600 key file). Never sends.
+  if (process.env.PERISKOPE_ALLOWED_CHAT_IDS) {
+    const { startPeriskopePoller } = await import("./realty/node/periskope-poll.ts");
+    startPeriskopePoller();
+  }
   // The build this server runs, as it was when it started (app/api/health): if the app's files are
   // replaced while it runs, the Mac app sees it's an old server and starts a new one.
   const { readFileSync } = await import("node:fs");

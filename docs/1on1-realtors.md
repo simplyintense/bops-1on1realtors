@@ -386,6 +386,7 @@ never inline. Item payloads do not include a consent field; the group is allowli
 Config:
 
 - `PERISKOPE_SIGNING_KEY`: required for the webhook to accept posts.
+- `PERISKOPE_ALLOWED_GROUPS`: exact group names, `|`-separated. `PERISKOPE_ALLOWED_CHAT_IDS`: exact `@g.us` chat ids, `|`-separated. A group is read only if its name or id is listed; both empty drops every message (deny by default). Direct messages are always dropped. Names come from the webhook's `chat_name`; a group with no name is dropped when only names are listed. Dropped messages are counted in the log, never their content.
 - `PERISKOPE_ALLOWED_CHATS`: optional extra comma-separated chat ids. Empty or unset means consent
   records alone decide (an empty list is not "accept none").
 - `PERISKOPE_REQUEST_RETENTION_DAYS`: default `60` (buyer requests and their seen metadata).
@@ -394,6 +395,39 @@ Config:
 - `ONEON1_MARKET_ALIAS_WRITE`: `1` or `true` to let staff aliases post (`kind: "alias"`). Off by default; see Geography matching.
 
 `purgeExpiredPeriskope` is callable on its own and from `LeadFlow.tick()` via `onTick`.
+
+### Live matching (realty/flow/live-match.ts, crm-seam.ts)
+
+Every buyer request the intake takes is stored as a live request (`live-matches.jsonl`: structured facts and
+the posting agent's number, never the text) and matched once on arrival with the market's read-only
+`match_buyer` tool. The co-broke rules are the market's (same island, same or neighbouring area, price within
+20%, beds within one, sale vs rent, type); Bops keeps the top five with the market's reason line and drops
+scores (1on1 scoring isn't decided yet). This works with no CRM: the lead flow still runs only when a CRM is
+set up. Seen is marked before matching, so a slow or failed match never stores a request twice; the status
+(`matched`, `no-intent`, `not-configured`, `timeout`, `unavailable`) is kept on the row. Opt-out and the request
+retention window remove live rows too.
+
+The desk shows each agent "Matches for your WhatsApp requests" (by the agent's number from the CRM seam).
+Requests not tied to one of our agents, and other agencies' open requests from the market, are for owners
+(`BOPS_OWNER_EMAILS`) only. `/realty/digest` is the owners' daily digest (last 24 hours) with a
+"Replay sample WhatsApp messages" button (`POST /api/realty/replay`, owners only): the samples in
+`realty/fixtures/whatsapp-samples.ts` go through the signed webhook path into a temp store with
+market-ingest off; nothing is kept or sent.
+
+The CRM seam (`crm-seam.ts`) is where the CRM plugs in: `listings()` for our own listings and `agents()` for
+agent email and WhatsApp number. With `ONEON1_CRM_*` set it is the live read-only CRM (`realty/node/crm-shared.ts`:
+one source per server process, the bot signs in by password and the session is reused and refreshed, properties
+cached 30s, GETs only, `ONEON1_CRM_WRITES` is never read). Without them, or when the CRM can't be reached, it fails
+closed: the desk says "CRM not connected" and every WhatsApp request shows as unassigned to owners.
+
+Our own listings are matched on each request alongside the market (`matchOurListings`): rent vs sale, same or a
+neighbouring area, price within 20% either way of the budget in the same currency, beds within one, the same kind
+of place, no scoring. Each match keeps its holder (`property_agents`). Who sees what:
+- an agent (sign-in email = `agents.email`): their own requests (sender = `agents.phone`), WhatsApp requests that
+  fit listings they hold, and market requests routed to them (`holder_agent_id` → `route_to`);
+- owners: all of it, plus unassigned requests and matches on our listings with no agent;
+- any other sign-in: nothing from the CRM or the market. A CRM failure never stops intake: the request is still
+  stored and matched on the market, with none of ours.
 
 Node helpers live in `realty/node/periskope-store.ts` and `realty/node/periskope-intake.ts` (signature,
 store, outbox, staff functions). The staff routes are `/api/intake/periskope/consent` and

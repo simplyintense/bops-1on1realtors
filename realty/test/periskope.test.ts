@@ -15,6 +15,8 @@ import {
   aliasItem,
   marketWriteConfigFromEnv,
   parseConsentPatch,
+  categoryOf,
+  listingSignals,
   postMarketItem,
   recordsDueForPurge,
   retentionFromEnv,
@@ -29,6 +31,8 @@ import { PeriskopeStore } from "../node/periskope-store.ts";
 
 const KEY = "test-signing-key";
 const CHAT = "120363000000000000@g.us";
+/** The test group's name. The default world allowlists it by name (PERISKOPE_ALLOWED_GROUPS). */
+const GROUP = "Co-broke Tobago";
 const SENDER = "18685550201@c.us";
 const LISTING_TEXT = "3 bed townhouse Maraval TT$1.2M co-broke 50/50";
 const REQUEST_TEXT = "Client looking for 2 bed rental Westmoorings under 8k";
@@ -44,6 +48,7 @@ const envelope = (over: Record<string, unknown> = {}, dataOver: Record<string, u
   data: {
     message_id: "false_" + CHAT + "_aaaaaaaa",
     chat_id: CHAT,
+    chat_name: GROUP,
     sender_phone: SENDER,
     body: REQUEST_TEXT,
     from_me: false,
@@ -79,7 +84,7 @@ function world(env: Record<string, string | undefined> = {}, fetchReplies: { sta
     if (next.error) throw next.error;
     return new Response(JSON.stringify(next.body ?? {}), { status: next.status ?? 200, headers: { "content-type": "application/json" } });
   };
-  const baseEnv = { PERISKOPE_SIGNING_KEY: KEY, ...env };
+  const baseEnv = { PERISKOPE_SIGNING_KEY: KEY, PERISKOPE_ALLOWED_GROUPS: GROUP, ...env };
   const opts = {
     root,
     env: baseEnv,
@@ -148,8 +153,8 @@ test("a wrong event type, a message from us, media, and a 1:1 chat are ignored w
   await withConsent(w);
   assert.equal((await w.post(envelope({ event_type: "message.updated" }))).status, 200);
   assert.match(String((await w.post(envelope({}, { from_me: true }))).body.result), /sent by us/);
-  assert.match(String((await w.post(envelope({}, { message_type: "image", has_media: true, body: "photo" }))).body.result), /not a text message/);
-  assert.match(String((await w.post(envelope({}, { chat_id: "18685550201@c.us" }))).body.result), /not a group chat/);
+  assert.match(String((await w.post(envelope({}, { message_type: "image", has_media: true, body: "" }))).body.result), /not a text message/);
+  assert.match(String((await w.post(envelope({}, { chat_id: "18685550201@c.us" }))).body.result), /dropped: not allowlisted/);
 });
 
 test("a group is ignored until both noticePostedAt and adminOkAt are set, and after staff set them it is accepted", async () => {
@@ -169,6 +174,73 @@ test("PERISKOPE_ALLOWED_CHATS is an extra restriction when set, and an empty val
   const open = world({ PERISKOPE_ALLOWED_CHATS: "" });
   await withConsent(open);
   assert.match(String((await open.post(envelope({}, { body: LISTING_TEXT, message_id: "m-open" }))).body.result), /listing recorded/);
+});
+
+/* ---------------- Group allowlist (deny by default) ---------------- */
+
+/** Listing and request rows only: setConsent also queues kind=group, which isn't a message. */
+const sourceRows = (w: ReturnType<typeof world>) => w.store().market().filter((row) => row.item.kind === "listing" || row.item.kind === "request");
+
+test("an allowlisted group is stored: its exact name, trimmed, in a |-separated list", async () => {
+  const w = world({ PERISKOPE_ALLOWED_GROUPS: " Other group | Co-broke Tobago " });
+  await withConsent(w);
+  const r = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-allowed" }));
+  assert.match(String(r.body.result), /listing recorded/);
+  assert.ok(w.store().isSeen("m-allowed"));
+  assert.equal(w.store().market().filter((row) => row.item.kind === "listing").length, 1);
+});
+
+test("a message from another group is dropped before it is classified or stored, with 200", async () => {
+  const w = world();
+  await withConsent(w);
+  const r = await w.post(envelope({}, { body: REQUEST_TEXT, message_id: "m-other-group", chat_name: "Area Registered Agents" }));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.result, "dropped: not allowlisted");
+  assert.ok(!w.store().isSeen("m-other-group"), "not marked seen");
+  assert.equal(w.store().leads().length, 0);
+  assert.equal(w.store().live().length, 0);
+  assert.equal(sourceRows(w).length, 0);
+  assert.equal(w.calls.length, 0);
+  const decision = decide({ payload: envelope({}, { body: REQUEST_TEXT, chat_name: "Area Registered Agents" }), at: NOW, env: { PERISKOPE_ALLOWED_GROUPS: GROUP }, optedOut: [], consentOf: () => okConsent(), seen: () => false });
+  assert.deepEqual(decision, { action: "drop", reason: "other-group" });
+});
+
+test("a group with no name in the payload is dropped when only names are allowlisted", async () => {
+  const w = world();
+  await withConsent(w);
+  const r = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-no-name", chat_name: undefined }));
+  assert.equal(r.body.result, "dropped: not allowlisted");
+  assert.equal(sourceRows(w).length, 0);
+});
+
+test("PERISKOPE_ALLOWED_CHAT_IDS pins a group by chat id, and the name in chat.chat_name counts when chat_name is absent", async () => {
+  const byId = world({ PERISKOPE_ALLOWED_GROUPS: "", PERISKOPE_ALLOWED_CHAT_IDS: CHAT });
+  await withConsent(byId);
+  assert.match(String((await byId.post(envelope({}, { body: LISTING_TEXT, message_id: "m-by-id", chat_name: "Renamed" }))).body.result), /listing recorded/);
+  const byNested = world();
+  await withConsent(byNested);
+  const nested = await byNested.post(envelope({}, { body: LISTING_TEXT, message_id: "m-nested", chat_name: undefined, chat: { chat_name: GROUP } }));
+  assert.match(String(nested.body.result), /listing recorded/);
+});
+
+test("a direct message is dropped the same way, even when its name matches", async () => {
+  const w = world();
+  await withConsent(w);
+  const r = await w.post(envelope({}, { chat_id: "18685550201@c.us", body: LISTING_TEXT, message_id: "m-dm" }));
+  assert.equal(r.body.result, "dropped: not allowlisted");
+  assert.ok(!w.store().isSeen("m-dm"));
+  assert.equal(sourceRows(w).length, 0);
+});
+
+test("an empty allowlist drops everything, including a consented group with a matching name", async () => {
+  const w = world({ PERISKOPE_ALLOWED_GROUPS: "", PERISKOPE_ALLOWED_CHAT_IDS: "" });
+  await withConsent(w);
+  const r = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-empty" }));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.result, "dropped: not allowlisted");
+  assert.ok(!w.store().isSeen("m-empty"));
+  assert.equal(sourceRows(w).length, 0);
+  assert.equal(decide({ payload: envelope({}, { body: LISTING_TEXT }), at: NOW, env: {}, optedOut: [], consentOf: () => okConsent(), seen: () => false }).action, "drop");
 });
 
 test("a second delivery of the same message_id is 200 and does not create another record", async () => {
@@ -474,3 +546,153 @@ test("senderHashOf is a stable sha256 hex of the number", () => {
   assert.equal(senderHashOf("+18685550201"), senderHashOf("+18685550201"));
 });
 
+
+/* ---------------- Owner waiver, captions, original text ---------------- */
+
+test("an owner waiver plus admin OK accepts the group, without inventing noticePostedAt", async () => {
+  const w = world();
+  await setConsent({ chatId: CHAT, groupName: GROUP, noticeWaivedAt: "2026-11-14T13:39:00Z", noticeWaivedBy: "owner", adminOkBy: "Miles Abraham", adminOkAt: "2026-11-14T13:39:00Z" }, w.opts);
+  const consent = w.store().consent(CHAT);
+  assert.equal(consent?.noticePostedAt ?? null, null);
+  assert.ok(consent?.noticeWaivedAt);
+  const r = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-waiver" }));
+  assert.match(String(r.body.result), /listing recorded/);
+  const waivedOnly = world();
+  await setConsent({ chatId: CHAT, noticeWaivedAt: "2026-11-14T13:39:00Z", noticeWaivedBy: "owner" }, waivedOnly.opts);
+  assert.match(String((await waivedOnly.post(envelope({}, { body: LISTING_TEXT, message_id: "m-waiver-only" }))).body.result), /group not accepted/);
+});
+
+test("noticeWaivedBy is rejected when it is a phone number", () => {
+  const bad = parseConsentPatch({ chatId: CHAT, noticeWaivedBy: "868-555-0201" });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.match(bad.error, /phone/);
+});
+
+test("a captioned listing image is stored with photos and original text; a non-listing image is not given photos", async () => {
+  const w = world();
+  await withConsent(w);
+  const listed = await w.post(envelope({}, {
+    body: LISTING_TEXT,
+    message_id: "m-photo-listing",
+    message_type: "image",
+    has_media: true,
+    media: { path: "https://example.com/listing.jpg", mimetype: "image/jpeg" },
+    contact_name: "Agent Ann",
+    timestamp: "2026-11-10T14:00:00.000Z",
+  }));
+  assert.match(String(listed.body.result), /listing recorded/);
+  const post = w.store().post("m-photo-listing");
+  assert.equal(post?.category, "listing_for_sale");
+  assert.equal(post?.cobroke, true);
+  assert.equal(post?.originalText, LISTING_TEXT);
+  assert.equal(post?.senderName, "Agent Ann");
+  assert.deepEqual(post?.mediaUrls, ["https://example.com/listing.jpg"]);
+  assert.ok(post?.mediaFiles && post.mediaFiles.length === 1);
+  assert.equal(post?.sentAt, "2026-11-10T14:00:00.000Z");
+
+  const other = await w.post(envelope({}, {
+    body: OTHER_TEXT,
+    message_id: "m-photo-other",
+    message_type: "image",
+    has_media: true,
+    media: { path: "https://example.com/chat.jpg" },
+  }));
+  assert.match(String(other.body.result), /not a buyer request/);
+  const otherPost = w.store().post("m-photo-other");
+  assert.equal(otherPost?.category, "other");
+  assert.equal(otherPost?.originalText, OTHER_TEXT);
+  assert.equal(otherPost?.mediaUrls, undefined);
+});
+
+test("a second delivery of an already-seen post refills missing original text and does not duplicate", async () => {
+  const w = world();
+  await withConsent(w);
+  await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-refill" }));
+  const first = w.store().post("m-refill");
+  assert.ok(first);
+  w.store().updatePost("m-refill", { originalText: null });
+  assert.equal(w.store().post("m-refill")?.originalText, null);
+  const listingsBefore = w.store().market().filter((r) => r.item.kind === "listing").length;
+  const again = await w.post(envelope({}, { body: LISTING_TEXT, message_id: "m-refill" }));
+  assert.match(String(again.body.result), /already seen/);
+  assert.equal(w.store().post("m-refill")?.originalText, LISTING_TEXT);
+  assert.equal(w.store().posts().filter((p) => p.messageId === "m-refill").length, 1);
+  assert.equal(w.store().market().filter((r) => r.item.kind === "listing").length, listingsBefore);
+});
+
+test("categoryOf splits rental requests from buyer requests, and sale listings from rent listings", () => {
+  assert.equal(categoryOf(interpret(REQUEST_TEXT), REQUEST_TEXT).category, "rental_request");
+  assert.equal(categoryOf(interpret("Client looking for 2 bed house Maraval under 1.2M"), "Client looking for 2 bed house Maraval under 1.2M").category, "buyer_request");
+  const sale = categoryOf(interpret(LISTING_TEXT), LISTING_TEXT);
+  assert.equal(sale.category, "listing_for_sale");
+  assert.equal(sale.cobroke, true);
+  const rentListing = "2 bed apartment Westmoorings for rent TT$8,000 available";
+  const rent = categoryOf(interpret(rentListing), rentListing);
+  assert.equal(rent.category, "listing_for_rent");
+});
+
+test("listing signals such as NEW TO THE MARKET and FOR RENT OR SALE are supply, not demand", () => {
+  const joanne = "\ud83d\udd25 NEW TO THE MARKET \ud83d\udd25\n\u2728 EXCLUSIVE LISTING \u2728\n\n\ud83c\udfd9\ufe0f FOR SALE \u2013 West Hills, Petit Valley \ud83c\udfd9\ufe0f\n\ud83d\udccd5th Floor Penthouse | Building 5\n\n\ud83d\udcb0 Asking Price: $2 Million\n\nThis very well maintained penthouse unit offers comfortable living in one of the West\u2019s most sought-after gated communities.\n\n\u2728 Property Features:\n\ud83d\udecf\ufe0f 3 Bedrooms\n\ud83d\udec1 2 Bathrooms\n\ud83d\udecb\ufe0f Semi Furnished\n\ud83d\udd10 24hr Security\n\ud83c\udf3f Secure & Well Maintained Development\n\ud83c\udf04 Beautiful hillside surroundings\n\nPerfect for homeowners or investors seeking secure, convenient living with easy access to all amenities.";
+  const barataria = "\ud83c\udfe1 APARTMENT FOR RENT OR SALE\n\ud83d\udccd Lower 6th Avenue, Phase 2, Barataria\n\nDiscover this spacious and conveniently located 3-bedroom apartment in a secure gated compound, ideal for families or professionals seeking comfort, accessibility, and value.\n\n3-BEDROOM APARTMENT\n\n\ud83d\udcb0 Semi-furnished: TT$6,000 monthly \u2014 negotiable\n\ud83d\udcb0 Unfurnished: TT$5,000 monthly\n\ud83c\udff7\ufe0f For Sale: TT$1.2 million\n\n\u2728 PROPERTY FEATURES:\n\n- Three spacious bedrooms, each with cupboards\n- Air-conditioned\n- Burglar-proofed windows\n- Generous living and dining areas\n- Secure gated compound\n- Security cameras\n- Parking available\n\n\ud83d\udecb\ufe0f SEMI-FURNISHED OPTION INCLUDES:\n\n- Beds in all bedrooms\n- Living room set\n- Dining table with chairs\n- Stove\n- Refrigerator\n- Microwave\n- Hutch\n\n\ud83d\udccd PRIME, CONVENIENT LOCATION:\n\n- Just 2 minutes from the bus route\n- Close to schools\n- Shopping facilities nearby\n- Play park on and around the compound\n- Outdoor exercise park nearby\n\n\ud83d\udca7 UTILITIES:\n\n- Water included\n- Tenant pays electricity and cable/internet\n\nRENTAL CONDITIONS:\n\n- Preferably no pets\n- Young children welcome\n- Smoking permitted\n\n\ud83d\udcde Contact me today for further details or to arrange a viewing. This well-located apartment is an excellent rental opportunity or investment in Barataria.";
+  assert.equal(listingSignals(joanne), true);
+  const j = interpret(joanne);
+  assert.equal(j.kind, "cobroke_listing");
+  assert.equal(j.facts.area, "West Hills");
+  assert.equal(j.facts.beds, 3);
+  assert.equal(categoryOf(j, joanne).category, "listing_for_sale");
+  assert.equal(listingSignals(barataria), true);
+  const b = interpret(barataria);
+  assert.equal(b.kind, "cobroke_listing");
+  assert.equal(b.facts.area, "Barataria");
+  assert.equal(b.facts.beds, 3);
+  assert.equal(categoryOf(b, barataria).category, "listing_for_rent");
+  const stillLooking = "Still looking for: 3 bedroom apartment, townhouse or house in the west, early maraval, cascade - must be pet friendly tt$4.3m";
+  assert.equal(listingSignals(stillLooking), false);
+  assert.equal(interpret(stillLooking).kind, "buyer_request");
+  assert.equal(categoryOf(interpret(stillLooking), stillLooking).category, "buyer_request");
+});
+
+test("demand phrases, bare millions as TT$, and central locations parse as a buyer request", () => {
+  const raffy = "Good day agents. In search for a one bedroom apartment in central locations. 1m budget. Raffy";
+  const i = interpret(raffy);
+  assert.equal(i.kind, "buyer_request");
+  assert.equal(i.facts.area, "Central locations");
+  assert.equal(i.facts.beds, 1);
+  assert.equal(i.facts.type, "apartment");
+  assert.equal(i.facts.budget?.max, 1_000_000);
+  assert.equal(i.facts.budget?.currency, "TTD");
+  assert.equal(categoryOf(i, raffy).category, "buyer_request");
+  assert.equal(listingTypeOf(i.facts), "sale");
+
+  for (const phrase of ["searching for", "need", "client needs", "looking for"]) {
+    const text = `Client ${phrase} a 2 bed house in Maraval, 1.2m budget`;
+    assert.equal(interpret(text).kind, "buyer_request", phrase);
+    assert.equal(interpret(text).facts.budget?.max, 1_200_000, phrase);
+  }
+});
+
+test("search for, any units for rent, slash budgets, and named developments parse as rental requests", () => {
+  const lorraine = "Hi All Any La Fontaine units for rent up to $20,000.";
+  const li = interpret(lorraine);
+  assert.equal(li.kind, "buyer_request");
+  assert.equal(li.facts.area, "La Fontaine");
+  assert.equal(li.facts.type, "apartment");
+  assert.equal(li.facts.intent, "rent");
+  assert.equal(li.facts.budget?.max, 20_000);
+  assert.equal(li.facts.budget?.currency, "TTD");
+  assert.equal(listingTypeOf(li.facts), "rent");
+  assert.equal(categoryOf(li, lorraine).category, "rental_request");
+
+  const leanna = "Good day, search for a 3 bedroom unit in Westhills buildings 10, 7, 8 or 9. Budget $7000/7500 for rent.";
+  const ei = interpret(leanna);
+  assert.equal(ei.kind, "buyer_request");
+  assert.equal(ei.facts.area, "West Hills");
+  assert.equal(ei.facts.type, "apartment");
+  assert.equal(ei.facts.beds, 3);
+  assert.equal(ei.facts.intent, "rent");
+  assert.equal(ei.facts.budget?.min, 7000);
+  assert.equal(ei.facts.budget?.max, 7500);
+  assert.equal(ei.facts.budget?.currency, "TTD");
+  assert.equal(listingTypeOf(ei.facts), "rent");
+  assert.equal(categoryOf(ei, leanna).category, "rental_request");
+});

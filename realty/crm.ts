@@ -30,6 +30,8 @@ export const writesOn = (env: Record<string, string | undefined> = runtimeEnv())
 export class Crm {
   private e: Env;
   private session: { token: string; until: number } | null = null;
+  /** A sign-in in flight, shared by reads that start together, so parallel reads sign in once. */
+  private signingIn: Promise<string> | null = null;
   private fetcher: typeof fetch;
 
   constructor(e: Env, fetcher: typeof fetch = fetch) {
@@ -37,8 +39,18 @@ export class Crm {
     this.fetcher = fetcher;
   }
 
+  /** The bot's session token: reused until a minute before it expires, then a fresh sign-in. */
   private async token(): Promise<string> {
     if (this.session && this.session.until > Date.now() + 60_000) return this.session.token;
+    if (!this.signingIn) {
+      this.signingIn = this.signIn().finally(() => {
+        this.signingIn = null;
+      });
+    }
+    return this.signingIn;
+  }
+
+  private async signIn(): Promise<string> {
     const r = await this.fetcher(`${this.e.url}/auth/v1/token?grant_type=password`, {
       method: "POST",
       headers: { apikey: this.e.anon, "content-type": "application/json" },

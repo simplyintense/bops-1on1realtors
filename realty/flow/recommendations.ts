@@ -1,6 +1,7 @@
 import { emailAllowed } from "../../lib/gate.ts";
 import type { ToolCaller } from "./areas.ts";
-import { httpUrl, moneyLabel, priceOf } from "./market-search.ts";
+import { firstStr, httpUrl, moneyLabel, priceOf } from "./market-search.ts";
+import { plausibleEmail } from "./listing-contact.ts";
 import { budgetLabel, jsonHits, numish, readOnlyCall, sortRequests, timedOut, type BuyerRequest, type RequestsResult } from "./requests.ts";
 
 /**
@@ -14,9 +15,11 @@ import { budgetLabel, jsonHits, numish, readOnlyCall, sortRequests, timedOut, ty
  * { status: "missing", missing: "crm-listings" } and calls neither match_requests nor score_matches. A CRM listings provider
  * plugs in by passing its listings as `listings`.
  *
- * Owners: a match whose route_to is missing or "unassigned" (and who has no holder_agent) is unassigned. Unassigned matches are in the view only for an owner
- * (BOPS_OWNER_EMAILS, passed in as `owners` and checked with emailAllowed). For anyone else they are left out entirely, and
- * nobody else's email is ever in the view.
+ * Owners only: these are other agencies' requests, not the signed-in agent's own, so the whole buyer side is for owners
+ * (BOPS_OWNER_EMAILS, passed in as `owners` and checked with emailAllowed). For anyone else it is { status: "owners-only" },
+ * match_buyer isn't called, and nothing from it is in the view. An agent's own WhatsApp requests are the live side
+ * (live-match.ts liveDesk). A match whose route_to is missing or "unassigned" (and who has no holder_agent) is unassigned.
+ * Nobody else's email is ever in the view.
  *
  * Portable: no node:*, no next, no bare process.
  */
@@ -41,6 +44,17 @@ export type MatchItem = {
   source: string | null;
   /** Why the market matched it, with phone numbers and emails taken out. Never a score or a grade. */
   reason: string | null;
+  /** The listing type (listing_type, e.g. sale or rent) and the market's property class, when the match has them. */
+  listingType?: string | null;
+  propertyClass?: string | null;
+  /** The listing's agent, agency and contact, as the market gives them. Each is shown only when present (ContactBlock). */
+  agent?: string | null;
+  agency?: string | null;
+  agentPhone?: string | null;
+  agentWhatsapp?: string | null;
+  agentEmail?: string | null;
+  /** Set only on one of our own CRM listings: the CRM agent id holding it, or null when no agent is assigned. */
+  holder?: number | null;
 };
 
 export type BuyerMatch = MatchItem & {
@@ -55,6 +69,7 @@ export type Recommendations = {
     | { status: "error" }
     | { status: "ok"; items: MatchItem[] };
   buyers:
+    | { status: "owners-only" }
     | { status: "not-configured" }
     | { status: "error"; reason: "timeout" | "unavailable" }
     | { status: "no-requests" }
@@ -70,8 +85,10 @@ export type RecommendationsInput = {
   email: string | null;
   /** BOPS_OWNER_EMAILS, parsed with parseAllowlist (lib/gate.ts). */
   owners: string[];
-  /** CRM listings, when a provider has them. Empty or absent means "missing". */
+  /** CRM listings, when a provider has them (crm-seam.ts toMatchListing). Empty or absent means "missing". */
   listings?: DeskListing[] | null;
+  /** The signed-in person's CRM agent id, if they are one: they see the market requests matched to listings they hold. */
+  agentId?: number | null;
   /** The buyer requests (searchRequests). */
   requests: RequestsResult;
   /** The market client, or null when market search isn't configured. */
@@ -80,9 +97,9 @@ export type RecommendationsInput = {
 
 export async function recommendationsFor(input: RecommendationsInput): Promise<Recommendations> {
   const owner = !!input.email && emailAllowed(input.email, input.owners);
-  const buyers = await buyerSide(input);
+  const buyers: BuyerSide = owner ? await buyerSide(input) : { buyers: { status: "owners-only" }, unassigned: [] };
   return {
-    listings: await listingSide(input),
+    listings: await listingSide(input, owner),
     buyers: buyers.buyers,
     owner,
     unassigned: owner ? buyers.unassigned : null,
@@ -102,6 +119,7 @@ function usableRequests(rows: BuyerRequest[]): BuyerRequest[] {
 
 async function buyerSide(input: RecommendationsInput): Promise<BuyerSide> {
   const r = input.requests;
+  if (r.status === "owners-only") return { buyers: { status: "owners-only" }, unassigned: [] };
   if (r.status === "not-configured") return { buyers: { status: "not-configured" }, unassigned: [] };
   if (r.status === "error") return { buyers: { status: "error", reason: r.reason }, unassigned: [] };
   const newest = usableRequests(r.rows);
@@ -167,10 +185,18 @@ function forRequest(q: BuyerRequest): BuyerMatch["forRequest"] {
 
 /* ---------------- CRM listings: match_requests, only with a real listings array ---------------- */
 
-async function listingSide(input: RecommendationsInput): Promise<Recommendations["listings"]> {
+/**
+ * Other agencies' open requests that fit our listings. The market routes each match to the listing's holder
+ * (holder_agent_id → route_to). An owner sees every match; an agent sees only the matches on listings they hold; a
+ * match on a listing with no agent ("unassigned") is for owners only. Anyone who is neither gets none, and the market
+ * isn't asked.
+ */
+async function listingSide(input: RecommendationsInput, owner: boolean): Promise<Recommendations["listings"]> {
   const listings = (input.listings ?? []).filter((l) => l && typeof l.id === "string" && l.id.trim() !== "");
   if (!listings.length) return { status: "missing", missing: "crm-listings" };
   if (!input.caller) return { status: "not-configured" };
+  const agent = input.agentId ? String(input.agentId) : null;
+  if (!owner && !agent) return { status: "ok", items: [] };
   try {
     const hits = jsonHits(await readOnlyCall(input.caller, "match_requests", { listings, limit: BUYER_LIMIT }));
     if (!hits) return { status: "error" };
@@ -178,7 +204,9 @@ async function listingSide(input: RecommendationsInput): Promise<Recommendations
       status: "ok",
       items: hits.flatMap((h) => {
         const m = parseMatch(h);
-        return m ? [m.item] : [];
+        if (!m) return [];
+        const route = str((h as Record<string, unknown>)?.route_to);
+        return owner || (agent !== null && route === agent) ? [m.item] : [];
       }),
     };
   } catch {
@@ -213,23 +241,63 @@ function isRouted(o: Record<string, unknown>): boolean {
   return !!(holder && holder.toLowerCase() !== "unassigned");
 }
 
-/** One match hit. Title falls back to listing_ref; url falls back to recommended_contact.url. */
-function parseMatch(h: unknown): { item: MatchItem; routed: boolean } | null {
+/**
+ * The listing page's own slug as a title ("…/property/modern-3-bedroom-townhouse-for-sale-in-diego-martin/" → "Modern 3
+ * bedroom townhouse for sale in diego martin"), when it has at least three words. A real Match carries no title, only
+ * listing_ref ("mybunchofkeys:1099006"), which means nothing to staff. Null for an id-only path.
+ */
+export function slugTitle(url: string | null): string | null {
+  if (!url) return null;
+  let seg = "";
+  try {
+    seg = new URL(url).pathname.split("/").filter(Boolean).pop() ?? "";
+  } catch {
+    return null;
+  }
+  const words = decodeURIComponent(seg).replace(/\.[a-z]{2,5}$/i, "").split(/[-_]+/).filter(Boolean);
+  if (words.length < 3 || !words.some((w) => /[a-z]{3,}/i.test(w))) return null;
+  const text = words.join(" ").toLowerCase();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * One match hit. A real match carries a `listing` object (title, area, price or price_text, beds, listing_type, url, agent,
+ * agency and the contact fields); older hits don't, so every field falls back to the hit's root fields and recommended_contact
+ * (url, agency, whatsapp, email). Title falls back to the url's slug, then listing_ref; url falls back to recommended_contact.url.
+ */
+export function parseMatch(h: unknown): { item: MatchItem; routed: boolean } | null {
   const o = (h ?? {}) as Record<string, unknown>;
   const contact = contactOf(o);
-  const title = str(o.title) ?? str(o.listing_ref);
+  const l = listingOf(o);
+  const url = httpUrl(l.url) ?? httpUrl(o.url) ?? (contact ? httpUrl(contact.url) : null);
+  const title = str(l.title) ?? str(o.title) ?? slugTitle(url) ?? str(o.listing_ref);
   if (!title) return null;
-  const money = priceOf(o.price, o.currency);
+  const money = priceOf(l.price ?? o.price, l.currency ?? o.currency);
+  const agency = str(l.agency) ?? str(o.agency) ?? (contact ? str(contact.agency) : null);
+  const email = firstStr(l.agent_email, o.agent_email, contact?.email);
   return {
     item: {
       title,
-      url: httpUrl(o.url) ?? (contact ? httpUrl(contact.url) : null),
-      area: str(o.area),
-      price: moneyLabel(money.price, money.currency),
-      beds: numish(o.beds),
+      url,
+      area: str(l.area) ?? str(o.area),
+      price: str(l.price_text) ?? moneyLabel(money.price, money.currency),
+      beds: numish(l.beds ?? o.beds),
       source: str(o.source) ?? (contact ? str(contact.agency) : null),
       reason: reasonText(o.reason ?? o.match_reason),
+      listingType: str(l.listing_type) ?? str(o.listing_type),
+      propertyClass: str(l.property_class) ?? str(o.property_class),
+      agent: str(l.agent) ?? str(o.agent),
+      agency,
+      agentPhone: firstStr(l.agent_phone, o.agent_phone),
+      agentWhatsapp: firstStr(l.agent_whatsapp, o.agent_whatsapp, contact?.whatsapp),
+      agentEmail: plausibleEmail(email),
     },
     routed: isRouted(o),
   };
+}
+
+/** The match's `listing` object, or an empty one for an older hit without it. */
+function listingOf(o: Record<string, unknown>): Record<string, unknown> {
+  const l = o.listing;
+  return l && typeof l === "object" && !Array.isArray(l) ? (l as Record<string, unknown>) : {};
 }

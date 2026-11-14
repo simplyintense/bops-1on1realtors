@@ -1,0 +1,79 @@
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { staffDigest } from "@/realty/node/requests.ts";
+import { Cards, portOfSpainTime } from "../desk/recommendations-panel";
+import { Notice } from "../notice";
+import { viewer } from "../viewer";
+import { ReplayButton } from "./replay-button";
+
+/**
+ * The owners' daily digest: the last 24 hours of buyer requests from the agents' WhatsApp group (Periskope intake), with
+ * every match and its follow-up (who set it, and when), and the sample replay. Owners only (BOPS_OWNER_EMAILS): anyone else
+ * is sent to the desk, and no data is read for them. Read only apart from the follow-up buttons, which write Bops's own
+ * record and nothing else. The replay is a dry run (realty/node/replay.ts).
+ */
+
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Daily digest · 1on1 Realtors", robots: { index: false, follow: false } };
+
+export default async function RealtyDigest() {
+  const { email } = await viewer();
+  const view = await staffDigest({ email });
+  if (!view.owner) redirect("/realty/desk");
+  const d = view.digest;
+  return (
+    <main className="mx-auto w-full max-w-5xl px-5 py-10">
+      <p className="rt-eyebrow">Owners only</p>
+      <h1 className="mt-2 text-3xl font-semibold">Daily digest</h1>
+      <p className="rt-muted mt-3">
+        Buyer requests from the agents&apos; WhatsApp group since {portOfSpainTime(d.since)}, matched against other agencies&apos; listings as they arrived. Nothing here
+        sends a message.
+      </p>
+
+      <ul className="mt-6 grid gap-4 md:grid-cols-4">
+        <Stat label="Requests" value={d.requests} />
+        <Stat label="With matches" value={d.withMatches} />
+        <Stat label="Nothing fits yet" value={d.noMatches} />
+        <Stat label="Not matched" value={d.notMatched} />
+      </ul>
+
+      {view.crmText ? (
+        <div className="mt-6">
+          <Notice tone="warn">{view.crmText}</Notice>
+        </div>
+      ) : null}
+
+      <section className="mt-10" aria-labelledby="digest-requests">
+        <h2 id="digest-requests" className="text-2xl font-semibold">
+          Last 24 hours
+        </h2>
+        <div className="mt-4">
+          {d.cards.length ? (
+            <Cards cards={d.cards} detail />
+          ) : (
+            <Notice>No WhatsApp buyer requests in the last 24 hours. Until the agents&apos; group is connected, the replay below shows it working.</Notice>
+          )}
+        </div>
+      </section>
+
+      <section className="mt-12" aria-labelledby="digest-replay">
+        <h2 id="digest-replay" className="text-2xl font-semibold">
+          Replay sample messages
+        </h2>
+        <p className="rt-muted mt-2 mb-4 text-sm">
+          A dry run: five made-up group messages go through the real intake (signature check, parsing, matching against the market and our CRM listings) into a throwaway store. Nothing is kept or sent, and the CRM is only read.
+        </p>
+        <ReplayButton />
+      </section>
+    </main>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <li className="rt-card p-4">
+      <span className="rt-muted block text-sm">{label}</span>
+      <span className="mt-1 block text-3xl font-semibold">{value}</span>
+    </li>
+  );
+}

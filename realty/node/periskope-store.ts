@@ -1,7 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { GroupConsent, Kind, MarketIngestItem } from "../flow/periskope.ts";
+import type { LiveMatchStatus, LiveRequest } from "../flow/live-match.ts";
+import { developmentNameOf, foldPrice, priceKey, setOf, unknownPlaceHints, type PriceRangeRow, type StrongAlert, type UnknownPlace } from "../flow/observe.ts";
+import type { GroupConsent, Kind, MarketIngestItem, PostRecord } from "../flow/periskope.ts";
+import { applyStatus, type MatchStatus, type StatusRow } from "../flow/match-status.ts";
+import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
 
 /**
@@ -11,10 +15,36 @@ import { appendJsonl } from "./jsonl.ts";
  * and a rename, so a crash leaves the old file or the new one, never half of each.
  */
 
+/**
+ * The desk's id for a WhatsApp request: the first 24 hex characters of the SHA-256 of its message id. The message id can
+ * carry a sender's number, so the pages and the status buttons only ever see this.
+ */
+export const requestIdOf = (messageId: string): string => createHash("sha256").update(messageId).digest("hex").slice(0, 24);
+
 export type SeenRow = { id: string; senderPhone: string | null; kind: Kind; at: string };
 export type OptOutRow = { senderPhone: string; at: string };
 /** A lead this route created: links an opt-out or purge to the lead in the flow's snapshot. */
 export type LeadRow = { leadId: string; messageId: string; senderPhone: string; receivedAt: string };
+
+/**
+ * A WhatsApp buyer request and its live matches (live-match.ts). Structured facts only, never the message text.
+ * senderPhone is the posting agent's own number: it ties the request to an agent on the desk, and opt-out and
+ * retention remove the row with the sender's other records. status "pending" means matching hasn't finished.
+ */
+export type LiveRow = {
+  messageId: string;
+  /** Derived on read by live(), never stored: requestIdOf(messageId). */
+  requestId: string;
+  chatId: string;
+  senderPhone: string;
+  receivedAt: string;
+  request: LiveRequest;
+  status: LiveMatchStatus | "pending";
+  matchedAt: string | null;
+  matches: MatchItem[];
+  /** Our own CRM listings that fit, each with its holder agent. Missing on rows from before the CRM was connected. */
+  ours?: MatchItem[];
+};
 
 /** A queued market-ingest POST (listing, request, group or optout). status pending is retried later, never inline. */
 export type MarketOutboxRow = {
@@ -34,6 +64,14 @@ const FILES = {
   consent: "consent.jsonl",
   market: "market-outbox.jsonl",
   leads: "leads.jsonl",
+  live: "live-matches.jsonl",
+  matchStatus: "match-status.jsonl",
+  posts: "posts.jsonl",
+  supply: "supply.jsonl",
+  demand: "demand.jsonl",
+  priceRanges: "price-ranges.jsonl",
+  unknownPlaces: "unknown-places.jsonl",
+  alerts: "alerts.jsonl",
 } as const;
 
 export type Collection = keyof typeof FILES;
@@ -100,6 +138,135 @@ export class PeriskopeStore {
     this.add("seen", row);
   }
 
+  /* ---- structured posts (no message body) ---- */
+
+  posts(): PostRecord[] {
+    return this.rows<PostRecord>("posts");
+  }
+
+  post(messageId: string): PostRecord | null {
+    return this.posts().find((r) => r.messageId === messageId) ?? null;
+  }
+
+  /** False if this messageId is already stored. */
+  addPost(row: PostRecord): boolean {
+    if (this.post(row.messageId)) return false;
+    this.add("posts", row);
+    return true;
+  }
+
+  /**
+   * Insert a post, or fill only fields that were missing (originalText, photos, senderName). Does not
+   * duplicate, and does not overwrite text that is already stored.
+   */
+  upsertPost(row: PostRecord): "added" | "refilled" | "unchanged" {
+    const existing = this.post(row.messageId);
+    if (!existing) {
+      this.add("posts", row);
+      this.observe(row, true);
+      return "added";
+    }
+    const patch: Partial<PostRecord> = {};
+    if (!existing.originalText && row.originalText) patch.originalText = row.originalText;
+    if (!existing.senderName && row.senderName) patch.senderName = row.senderName;
+    if (!existing.groupName && row.groupName) patch.groupName = row.groupName;
+    if ((!existing.mediaFiles || !existing.mediaFiles.length) && row.mediaFiles?.length) patch.mediaFiles = row.mediaFiles;
+    if ((!existing.mediaUrls || !existing.mediaUrls.length) && row.mediaUrls?.length) patch.mediaUrls = row.mediaUrls;
+    if (!Object.keys(patch).length) {
+      this.observe(existing, false);
+      return "unchanged";
+    }
+    const next = this.updatePost(row.messageId, patch);
+    if (next) this.observe(next, false);
+    return "refilled";
+  }
+
+  supply(): PostRecord[] { return this.rows<PostRecord>("supply"); }
+  demand(): PostRecord[] { return this.rows<PostRecord>("demand"); }
+  priceRanges(): PriceRangeRow[] { return this.rows<PriceRangeRow>("priceRanges"); }
+  unknownPlaces(): UnknownPlace[] { return this.rows<UnknownPlace>("unknownPlaces"); }
+  alerts(): StrongAlert[] { return this.rows<StrongAlert>("alerts"); }
+
+  /** Project a parsed post into the supply or demand set, and update price and unknown-place knowledge. */
+  observe(row: PostRecord, recordKnowledge = true, at = row.sentAt): void {
+    const side = row.set ?? setOf(row.category);
+    if (side === "supply") this.upsertSet("supply", { ...row, set: "supply", development: row.development ?? developmentNameOf(row.area) });
+    if (side === "demand") this.upsertSet("demand", { ...row, set: "demand", development: row.development ?? developmentNameOf(row.area) });
+    if (recordKnowledge && side && row.area && row.price != null && row.listingType && row.currency) {
+      const base = { area: row.area, development: row.development ?? developmentNameOf(row.area), beds: row.beds, listingType: row.listingType, currency: row.currency, side };
+      const all = this.priceRanges();
+      const k = priceKey(base);
+      const i = all.findIndex((r) => priceKey(r) === k);
+      const next = foldPrice(i >= 0 ? all[i] : null, row.price, at, base);
+      if (i >= 0) all[i] = next;
+      else all.push(next);
+      this.replace("priceRanges", all);
+    }
+    if (recordKnowledge && side && !row.area && row.originalText) {
+      const all = this.unknownPlaces();
+      for (const name of unknownPlaceHints(row.originalText)) {
+        const i = all.findIndex((r) => r.name.toLowerCase() === name.toLowerCase());
+        if (i >= 0) all[i] = { ...all[i], count: all[i].count + 1, lastSeenAt: at };
+        else all.push({ name, count: 1, firstSeenAt: at, lastSeenAt: at });
+      }
+      this.replace("unknownPlaces", all);
+    }
+  }
+
+  private upsertSet(c: "supply" | "demand", row: PostRecord): void {
+    const all = this.rows<PostRecord>(c);
+    const i = all.findIndex((r) => r.messageId === row.messageId);
+    if (i < 0) this.add(c, row);
+    else {
+      all[i] = { ...all[i], ...row, messageId: row.messageId };
+      this.replace(c, all);
+    }
+  }
+
+  /** Idempotent: the same request and listing url is stored once. Never sends. */
+  addAlert(row: StrongAlert): boolean {
+    const key = `${row.messageId}|${row.listingUrl ?? row.listingTitle}`;
+    if (this.alerts().some((a) => `${a.messageId}|${a.listingUrl ?? a.listingTitle}` === key)) return false;
+    this.add("alerts", row);
+    return true;
+  }
+
+  updatePost(messageId: string, patch: Partial<PostRecord>): PostRecord | null {
+    const all = this.posts();
+    const i = all.findIndex((r) => r.messageId === messageId);
+    if (i < 0) return null;
+    const next = { ...all[i], ...patch, messageId };
+    all[i] = next;
+    this.replace("posts", all);
+    return next;
+  }
+
+  /**
+   * Rewrite posts, supply, demand and price ranges after a re-parse. Demand and supply are rebuilt
+   * from scratch so a post that changed sides is not left in both. Never sends.
+   */
+  reprojectObservation(posts: PostRecord[]): void {
+    this.replace("posts", posts);
+    this.replace("supply", posts.filter((p) => (p.set ?? setOf(p.category)) === "supply"));
+    this.replace("demand", posts.filter((p) => (p.set ?? setOf(p.category)) === "demand"));
+    const ranges: PriceRangeRow[] = [];
+    for (const row of [...posts].sort((a, b) => a.sentAt.localeCompare(b.sentAt))) {
+      const side = row.set ?? setOf(row.category);
+      if (!side || !row.area || row.price == null || !row.listingType || !row.currency) continue;
+      const base = { area: row.area, development: row.development ?? developmentNameOf(row.area), beds: row.beds, listingType: row.listingType, currency: row.currency, side };
+      const i = ranges.findIndex((r) => priceKey(r) === priceKey(base));
+      const next = foldPrice(i >= 0 ? ranges[i] : null, row.price, row.sentAt, base);
+      if (i >= 0) ranges[i] = next;
+      else ranges.push(next);
+    }
+    this.replace("priceRanges", ranges);
+  }
+
+  /** Replace the alert list (used after a full rematch so stale alerts are dropped). Never sends. */
+  replaceAlerts(rows: StrongAlert[]): void {
+    this.replace("alerts", rows);
+  }
+
   /* ---- opt-outs (normalized sender numbers) ---- */
 
   optOuts(): string[] {
@@ -159,5 +326,46 @@ export class PeriskopeStore {
     this.replace("market", all);
     return next;
   }
-}
 
+  /* ---- WhatsApp buyer requests and their live matches ---- */
+
+  live(): LiveRow[] {
+    return this.storedLive().map((r) => ({ ...r, requestId: requestIdOf(r.messageId) }));
+  }
+
+  private storedLive(): Omit<LiveRow, "requestId">[] {
+    return this.rows<Omit<LiveRow, "requestId">>("live");
+  }
+
+  addLive(row: Omit<LiveRow, "requestId">): void {
+    this.add("live", row);
+  }
+
+  updateLive(messageId: string, patch: Partial<Omit<LiveRow, "messageId" | "requestId">>): LiveRow | null {
+    const all = this.storedLive();
+    const i = all.findIndex((r) => r.messageId === messageId);
+    if (i < 0) return null;
+    all[i] = { ...all[i], ...patch, messageId };
+    this.replace("live", all);
+    return { ...all[i], requestId: requestIdOf(messageId) };
+  }
+
+  /* ---- match follow-up: a status per request and listing (Bops's own record; nothing is sent) ---- */
+
+  matchStatuses(): StatusRow[] {
+    return this.rows<StatusRow>("matchStatus");
+  }
+
+  /** Sets (or with null, clears) one status. The same status again writes nothing. */
+  setMatchStatus(c: { requestId: string; listingKey: string; status: MatchStatus | null; by: string | null; at: string }): { changed: boolean } {
+    const next = applyStatus(this.matchStatuses(), c);
+    if (next.changed) this.replace("matchStatus", next.rows);
+    return { changed: next.changed };
+  }
+
+  /** Drops the statuses whose request is no longer live (purged, or the sender opted out). */
+  pruneMatchStatuses(): void {
+    const ids = new Set(this.live().map((r) => r.requestId));
+    this.removeWhere<StatusRow>("matchStatus", (r) => !ids.has(r.requestId));
+  }
+}

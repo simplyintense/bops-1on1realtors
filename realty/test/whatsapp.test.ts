@@ -56,12 +56,39 @@ test("budgets: ranges, millions, monthly rent, currency", () => {
   assert.equal(rent?.period, "month");
   assert.equal(findBudget("land in Tobago, US$450k")?.currency, "USD");
   assert.equal(findBudget("3-4 bedrooms please"), null);
+  for (const [text, max] of [["1m budget", 1_000_000], ["1M", 1_000_000], ["1 mil", 1_000_000], ["$1m", 1_000_000], ["1.2m budget", 1_200_000]] as const) {
+    const b = findBudget(text);
+    assert.equal(b?.max, max, text);
+    assert.equal(b?.currency, "TTD", text);
+  }
+  assert.equal(findBudget("US$1m")?.currency, "USD");
+  assert.equal(findBudget("1m in USD")?.currency, "USD");
+  assert.equal(findBudget("a 5 m x 10 m lot") , null, "a spaced m is not millions");
+  const slash = findBudget("Budget $7000/7500");
+  assert.equal(slash?.min, 7000);
+  assert.equal(slash?.max, 7500);
+  assert.equal(slash?.currency, "TTD");
 });
 
 test("areas, kind of property and names", () => {
   assert.deepEqual(findAreas("Westmoorings or Diego Martin, maybe West Moorings"), ["Westmoorings", "Diego Martin"]);
+  assert.deepEqual(findAreas("in central locations"), ["Central locations"]);
+  assert.deepEqual(findAreas("a one bedroom in central"), ["Central locations"]);
+  assert.deepEqual(findAreas("central Woodbrook"), ["Woodbrook"], "a named central area wins over the group");
+  assert.ok(findAreas("St James or Newtown").includes("St. James"));
+  assert.ok(findAreas("St James or Newtown").includes("Newtown"));
   assert.deepEqual(findInterest("a 3 bed townhouse to buy"), { intent: "buy", types: ["townhouse"], bedrooms: 3 });
   assert.deepEqual(findInterest("two bedroom apartment for rent").intent, "rent");
+  assert.deepEqual(findAreas("Any La Fontaine units for rent"), ["La Fontaine"]);
+  assert.equal(findAreas("Westhills 3 bed")[0], "West Hills");
+  assert.equal(findAreas("West Hills, Petit Valley")[0], "West Hills");
+  assert.ok(findAreas("West Hills, Petit Valley").includes("Petit Valley"));
+  assert.equal(findAreas("a unit at One Woodbrook Place")[0], "One Woodbrook Place");
+  assert.ok(findInterest("Any La Fontaine units for rent").types.includes("apartment"));
+  assert.ok(findInterest("search for a 3 bedroom unit in Westhills").types.includes("apartment"));
+  assert.ok(!findInterest("storage units in Westmoorings").types.includes("apartment"));
+  assert.ok(findInterest("house in West Hills").types.includes("house"));
+  assert.ok(!findInterest("house in West Hills").types.includes("apartment"));
   assert.deepEqual(findNames("New client Jordan Sample is looking"), ["Jordan Sample"]);
   assert.deepEqual(findNames("name: Chris Placeholder"), ["Chris Placeholder"]);
   assert.equal(looksLikeLead("Lunch anyone?"), false);

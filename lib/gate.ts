@@ -59,6 +59,16 @@ export function emailAllowed(email: string, allowed: string[]): boolean {
   return allowed.some((a) => (a.startsWith("@") ? a === domain : a === e));
 }
 
+/**
+ * Owners' screens and APIs (BOPS_OWNER_EMAILS): with the login gate off there's no session to check, so anyone may
+ * (as ownerAccess always did); with it on, the signed-in email must be an owner. A misconfigured gate says no.
+ */
+export function ownerAllowed(email: string | null | undefined, env: Env = process.env): boolean {
+  const cfg = gateConfig(env);
+  if (!cfg) return true;
+  return cfg !== "misconfigured" && !!email && emailAllowed(email, parseAllowlist(env.BOPS_OWNER_EMAILS ?? ""));
+}
+
 /** Paths that skip the gate: they prove themselves (signatures, tokens) or say nothing. */
 export const GATE_OPEN_PATHS = new Set([
   "/api/health",

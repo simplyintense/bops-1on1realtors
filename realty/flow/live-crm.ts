@@ -32,8 +32,11 @@ const BUNDLE_TABLES = ["properties", "property_agents", "images", "locations"];
 const PROPERTY_COLS = [
   "id", "title", "price", "currency", "listing_type", "furnished_status", "address", "city", "region",
   "property_type", "bedrooms", "bathrooms", "square_feet", "lot_size", "features", "url", "google_maps_url",
-  "neighborhood", "hoa_fees", "property_taxes", "status",
+  "neighborhood", "hoa_fees", "property_taxes", "status", "slug",
 ].join(",");
+
+/** The listing's page on 1on1realtors.com (the site's /property/:slug route), for rows with no url of their own. */
+export const SITE_LISTING_URL = "https://1on1realtors.com/property/";
 
 /**
  * The live read-only CRM when ONEON1_CRM_* are all set (and valid); otherwise `fallback()` (the CLI and
@@ -244,7 +247,7 @@ function toListing(r: Row, agentId: number, photoCount: number, loc: Row | undef
     baths: numOrNull(r.bathrooms) ?? 0,
     agentId,
     status: statusOf(r.status),
-    url: str(r.url) ?? "",
+    url: str(r.url) ?? (str(r.slug) ? `${SITE_LISTING_URL}${encodeURIComponent(str(r.slug) as string)}` : ""),
     propertyKind,
     address: str(r.address) ?? str(loc?.address),
     directions: str(r.google_maps_url) ?? str(loc?.google_maps_url),

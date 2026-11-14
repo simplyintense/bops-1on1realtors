@@ -19,7 +19,8 @@
     "realty:wa": "node --experimental-strip-types --no-warnings --env-file-if-exists=.env.local realty/cli/wa-export.ts",
     "realty:inbox": "node --experimental-strip-types --no-warnings --env-file-if-exists=.env.local realty/cli/inbox-sort.ts",
     "realty:test": "node --experimental-strip-types --no-warnings --test \"realty/test/*.test.ts\"",
-    "realty:typecheck": "tsc -p realty/tsconfig.json --noEmit"
+    "realty:typecheck": "tsc -p realty/tsconfig.json --noEmit",
+    "realty:backfill-periskope": "node --experimental-strip-types --no-warnings realty/cli/periskope-backfill.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
