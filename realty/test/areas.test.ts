@@ -88,6 +88,7 @@ const hit = (area: string | null, over: Partial<CoBrokeHit> = {}): CoBrokeHit =>
   listingType: "rent",
   source: "otheragency",
   url: "https://example.com/a/1",
+  lastSeen: null,
   ...over,
 });
 

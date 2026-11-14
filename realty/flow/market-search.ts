@@ -28,6 +28,8 @@ export type CoBrokeHit = {
   listingType: string | null;
   source: string;
   url: string | null;
+  /** last_seen as YYYY-MM-DD when the hit carries a date; the lead flow doesn't use it. */
+  lastSeen: string | null;
 };
 
 export type MarketConfig = { url: string; token: string; timeoutMs: number };
@@ -75,9 +77,13 @@ export function sseMessages(text: string): unknown[] {
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+const day = (v: unknown) => {
+  const t = typeof v === "string" ? Date.parse(v) : NaN;
+  return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null;
+};
 
-/** The tool's second text block (JSON with `hits`) as co-broke candidates, our own listings dropped. */
-export function hitsFromToolResult(result: unknown): CoBrokeHit[] {
+/** The tool's second text block (JSON with `hits`) as co-broke candidates, our own listings dropped. At most `max` (five for the lead flow). */
+export function hitsFromToolResult(result: unknown, max = MAX_HITS): CoBrokeHit[] {
   const content = (result as { content?: unknown })?.content;
   if (!Array.isArray(content)) return [];
   for (const block of content) {
@@ -91,7 +97,7 @@ export function hitsFromToolResult(result: unknown): CoBrokeHit[] {
     }
     const hits = (json as { hits?: unknown })?.hits;
     if (!Array.isArray(hits)) continue;
-    return hits.map(toHit).filter((h): h is CoBrokeHit => h !== null).slice(0, MAX_HITS);
+    return hits.map(toHit).filter((h): h is CoBrokeHit => h !== null).slice(0, max);
   }
   return [];
 }
@@ -112,6 +118,7 @@ function toHit(h: unknown): CoBrokeHit | null {
     listingType: str(o.listing_type),
     source,
     url: url && /^https?:\/\//i.test(url) ? url : null,
+    lastSeen: day(o.last_seen),
   };
 }
 
