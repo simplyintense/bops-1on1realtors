@@ -329,6 +329,25 @@ const STRONG_DEMAND = /\b(looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in sea
 // Supply: a property is on offer.
 const SUPPLY = /\b(co-?broke|50\/50|just listed|for sale|available)\b/i;
 
+/** Seller/listing merchandising: these posts are supply even if marketing copy also says "seeking". */
+const LISTING_PHRASES = /new\s+to\s+the\s+market|exclusive\s+listing|for\s+sale\s*[-–—]|for\s+rent\s+or\s+sale|for\s+sale\s+or\s+rent|asking\s*(?:price)?\s*[:$]|asking\s+\$/i;
+const HEADLINE_LISTING = /(?:^|\n)\s*(?:\p{Extended_Pictographic}|[✨🔥🏙️📍🏡🏠🔑*\s]){0,12}(?:for\s+sale|for\s+rent|apartment\s+for|house\s+for|townhouse\s+for|penthouse\s+for|unit\s+for\s+(?:sale|rent))\b/iu;
+const DEMAND_OPENING = /^(?:still\s+)?(?:looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|anyone (?:have|has|got)|client\s+needs?|needs?\s+(?:a|an)|wanted)\b/i;
+
+function hasPriceCue(body: string): boolean {
+  return !!findBudget(body) || /(?:\$|TT\$|US\$)\s*[\d,]+|\b(?:asking|price)\s*:\s*\$?\s*[\d,]+/i.test(body);
+}
+
+/** True when the text is a property ad (listing signals or a priced headline), not a buyer/rental request. */
+export function listingSignals(body: string): boolean {
+  if (LISTING_PHRASES.test(body)) return true;
+  if (!hasPriceCue(body)) return false;
+  const lines = body.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const open = lines.slice(0, 2).join(" ");
+  if (DEMAND_OPENING.test(open)) return false;
+  return lines.slice(0, 6).some((l) => HEADLINE_LISTING.test(l));
+}
+
 /** The structured facts in a message. Each one is what the text says, nothing more. */
 export function factsOf(body: string): Facts {
   const interest = findInterest(body);
@@ -391,13 +410,16 @@ const hasListingFacts = (f: Facts) => !!(f.area || f.beds || f.type || f.budget)
  * buyer_request: demand words plus a fact (area, beds, type, budget or rental/sale intent).
  * cobroke_listing: supply words plus a fact (area, beds, type or budget).
  * Both demand and supply words: demand wins when a strong demand phrase is there; otherwise supply.
+ * Listing signals (NEW TO THE MARKET, EXCLUSIVE LISTING, FOR SALE –, FOR RENT OR SALE, asking $,
+ * or a priced headline-style property ad) are supply, even if the copy also says "seeking".
  * Anything else is other.
  */
 export function interpret(body: string): Interpretation {
   const facts = factsOf(body);
+  const listed = listingSignals(body);
   const demand = DEMAND.test(body) || ANY_UNITS.test(body);
-  const supply = SUPPLY.test(body);
-  const side = demand && (!supply || STRONG_DEMAND.test(body) || ANY_UNITS.test(body)) ? "demand" : supply ? "supply" : null;
+  const supply = listed || SUPPLY.test(body);
+  const side = listed ? "supply" : demand && (!supply || STRONG_DEMAND.test(body) || ANY_UNITS.test(body)) ? "demand" : supply ? "supply" : null;
   let kind: Kind = "other";
   if (side === "demand" && (hasListingFacts(facts) || facts.intent)) kind = "buyer_request";
   if (side === "supply" && hasListingFacts(facts)) kind = "cobroke_listing";
@@ -580,7 +602,34 @@ export function postRecordOf(args: { message: ParsedMessage; phone: string; inte
   return rec;
 }
 
+/** Re-run interpret on a stored post's original text, keeping identity, sender and media. */
+export function reparsePost(p: PostRecord): PostRecord {
+  const body = p.originalText?.trim();
+  if (!body) return p;
+  const interpretation = interpret(body);
+  const next = postRecordOf({
+    message: {
+      messageId: p.messageId,
+      chatId: p.chatId,
+      sender: p.senderPhone,
+      senderName: p.senderName,
+      chatName: p.groupName ?? null,
+      body,
+      fromMe: false,
+      hasText: true,
+      textOnly: !((p.mediaUrls?.length ?? 0) + (p.mediaFiles?.length ?? 0)),
+      mediaUrls: p.mediaUrls ?? [],
+      sentAt: p.sentAt,
+    },
+    phone: p.senderPhone,
+    interpretation,
+    sentAt: p.sentAt,
+  });
+  return { ...next, mediaFiles: p.mediaFiles, mediaUrls: p.mediaUrls ?? next.mediaUrls, groupName: p.groupName ?? next.groupName };
+}
+
 /* ---------------- Staff inputs ---------------- */
+
 
 /** A staff opt-out request: { senderPhone }. The number is normalized, so any common spelling works. */
 export function parseOptOut(body: unknown): { ok: true; phone: string } | { ok: false; error: string } {

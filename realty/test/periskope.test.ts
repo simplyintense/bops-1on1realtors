@@ -16,6 +16,7 @@ import {
   marketWriteConfigFromEnv,
   parseConsentPatch,
   categoryOf,
+  listingSignals,
   postMarketItem,
   recordsDueForPurge,
   retentionFromEnv,
@@ -628,6 +629,27 @@ test("categoryOf splits rental requests from buyer requests, and sale listings f
   const rentListing = "2 bed apartment Westmoorings for rent TT$8,000 available";
   const rent = categoryOf(interpret(rentListing), rentListing);
   assert.equal(rent.category, "listing_for_rent");
+});
+
+test("listing signals such as NEW TO THE MARKET and FOR RENT OR SALE are supply, not demand", () => {
+  const joanne = "\ud83d\udd25 NEW TO THE MARKET \ud83d\udd25\n\u2728 EXCLUSIVE LISTING \u2728\n\n\ud83c\udfd9\ufe0f FOR SALE \u2013 West Hills, Petit Valley \ud83c\udfd9\ufe0f\n\ud83d\udccd5th Floor Penthouse | Building 5\n\n\ud83d\udcb0 Asking Price: $2 Million\n\nThis very well maintained penthouse unit offers comfortable living in one of the West\u2019s most sought-after gated communities.\n\n\u2728 Property Features:\n\ud83d\udecf\ufe0f 3 Bedrooms\n\ud83d\udec1 2 Bathrooms\n\ud83d\udecb\ufe0f Semi Furnished\n\ud83d\udd10 24hr Security\n\ud83c\udf3f Secure & Well Maintained Development\n\ud83c\udf04 Beautiful hillside surroundings\n\nPerfect for homeowners or investors seeking secure, convenient living with easy access to all amenities.";
+  const barataria = "\ud83c\udfe1 APARTMENT FOR RENT OR SALE\n\ud83d\udccd Lower 6th Avenue, Phase 2, Barataria\n\nDiscover this spacious and conveniently located 3-bedroom apartment in a secure gated compound, ideal for families or professionals seeking comfort, accessibility, and value.\n\n3-BEDROOM APARTMENT\n\n\ud83d\udcb0 Semi-furnished: TT$6,000 monthly \u2014 negotiable\n\ud83d\udcb0 Unfurnished: TT$5,000 monthly\n\ud83c\udff7\ufe0f For Sale: TT$1.2 million\n\n\u2728 PROPERTY FEATURES:\n\n- Three spacious bedrooms, each with cupboards\n- Air-conditioned\n- Burglar-proofed windows\n- Generous living and dining areas\n- Secure gated compound\n- Security cameras\n- Parking available\n\n\ud83d\udecb\ufe0f SEMI-FURNISHED OPTION INCLUDES:\n\n- Beds in all bedrooms\n- Living room set\n- Dining table with chairs\n- Stove\n- Refrigerator\n- Microwave\n- Hutch\n\n\ud83d\udccd PRIME, CONVENIENT LOCATION:\n\n- Just 2 minutes from the bus route\n- Close to schools\n- Shopping facilities nearby\n- Play park on and around the compound\n- Outdoor exercise park nearby\n\n\ud83d\udca7 UTILITIES:\n\n- Water included\n- Tenant pays electricity and cable/internet\n\nRENTAL CONDITIONS:\n\n- Preferably no pets\n- Young children welcome\n- Smoking permitted\n\n\ud83d\udcde Contact me today for further details or to arrange a viewing. This well-located apartment is an excellent rental opportunity or investment in Barataria.";
+  assert.equal(listingSignals(joanne), true);
+  const j = interpret(joanne);
+  assert.equal(j.kind, "cobroke_listing");
+  assert.equal(j.facts.area, "West Hills");
+  assert.equal(j.facts.beds, 3);
+  assert.equal(categoryOf(j, joanne).category, "listing_for_sale");
+  assert.equal(listingSignals(barataria), true);
+  const b = interpret(barataria);
+  assert.equal(b.kind, "cobroke_listing");
+  assert.equal(b.facts.area, "Barataria");
+  assert.equal(b.facts.beds, 3);
+  assert.equal(categoryOf(b, barataria).category, "listing_for_rent");
+  const stillLooking = "Still looking for: 3 bedroom apartment, townhouse or house in the west, early maraval, cascade - must be pet friendly tt$4.3m";
+  assert.equal(listingSignals(stillLooking), false);
+  assert.equal(interpret(stillLooking).kind, "buyer_request");
+  assert.equal(categoryOf(interpret(stillLooking), stillLooking).category, "buyer_request");
 });
 
 test("demand phrases, bare millions as TT$, and central locations parse as a buyer request", () => {

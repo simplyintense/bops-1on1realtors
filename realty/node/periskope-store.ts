@@ -241,6 +241,32 @@ export class PeriskopeStore {
     return next;
   }
 
+  /**
+   * Rewrite posts, supply, demand and price ranges after a re-parse. Demand and supply are rebuilt
+   * from scratch so a post that changed sides is not left in both. Never sends.
+   */
+  reprojectObservation(posts: PostRecord[]): void {
+    this.replace("posts", posts);
+    this.replace("supply", posts.filter((p) => (p.set ?? setOf(p.category)) === "supply"));
+    this.replace("demand", posts.filter((p) => (p.set ?? setOf(p.category)) === "demand"));
+    const ranges: PriceRangeRow[] = [];
+    for (const row of [...posts].sort((a, b) => a.sentAt.localeCompare(b.sentAt))) {
+      const side = row.set ?? setOf(row.category);
+      if (!side || !row.area || row.price == null || !row.listingType || !row.currency) continue;
+      const base = { area: row.area, development: row.development ?? developmentNameOf(row.area), beds: row.beds, listingType: row.listingType, currency: row.currency, side };
+      const i = ranges.findIndex((r) => priceKey(r) === priceKey(base));
+      const next = foldPrice(i >= 0 ? ranges[i] : null, row.price, row.sentAt, base);
+      if (i >= 0) ranges[i] = next;
+      else ranges.push(next);
+    }
+    this.replace("priceRanges", ranges);
+  }
+
+  /** Replace the alert list (used after a full rematch so stale alerts are dropped). Never sends. */
+  replaceAlerts(rows: StrongAlert[]): void {
+    this.replace("alerts", rows);
+  }
+
   /* ---- opt-outs (normalized sender numbers) ---- */
 
   optOuts(): string[] {
