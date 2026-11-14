@@ -1,5 +1,6 @@
 import type { ToolCaller } from "./areas.ts";
 import { runtimeEnv } from "./env.ts";
+import { plausibleEmail } from "./listing-contact.ts";
 /**
  * Co-broke candidates: other agencies' listings from the tt-market-search MCP server, through its
  * `search_market_listings` tool. Off unless ONEON1_MARKET_SEARCH_URL and ONEON1_MARKET_SEARCH_TOKEN are
@@ -36,6 +37,14 @@ export type CoBrokeHit = {
   lastSeen: string | null;
   /** Main image URL from the source site (`photo`); http(s) only. The lead flow doesn't use it. */
   photo: string | null;
+  /** The listing agent's name, when the hit carries one. Staff contact only; the lead flow doesn't use it. */
+  agent?: string | null;
+  /** The listing agency's name (`agency`, or `sender_agency`). */
+  agency?: string | null;
+  /** The agent's phone as the market gives it (raw; see normalizePhone in listing-contact.ts). */
+  agentPhone?: string | null;
+  /** The agent's email, kept only when it looks like an email. */
+  agentEmail?: string | null;
 };
 
 export type MarketConfig = { url: string; token: string; timeoutMs: number };
@@ -128,7 +137,20 @@ function toHit(h: unknown): CoBrokeHit | null {
     firstSeen: day(o.first_seen),
     lastSeen: day(o.last_seen),
     photo: httpUrl(o.photo),
+    agent: str(o.agent),
+    agency: str(o.agency) ?? str(o.sender_agency),
+    agentPhone: firstStr(o.agent_phone, o.phone, o.agent_whatsapp, o.whatsapp, o.sender_business_phone),
+    agentEmail: plausibleEmail(str(o.agent_email) ?? str(o.email)),
   };
+}
+
+/** The first non-empty string of the given values, or null. */
+function firstStr(...values: unknown[]): string | null {
+  for (const v of values) {
+    const s = str(v);
+    if (s) return s;
+  }
+  return null;
 }
 
 /** An http(s) URL, or null. Other schemes (javascript:, data:) are dropped. */
