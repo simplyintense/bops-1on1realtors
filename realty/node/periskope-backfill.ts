@@ -139,6 +139,7 @@ export async function backfillGroup(args: {
   chatId?: string;
   chatName?: string;
   days?: number;
+  startTime?: string;
   phoneId?: string;
   opts: IntakeOptions;
   fetcher?: typeof getJson;
@@ -149,7 +150,7 @@ export async function backfillGroup(args: {
   const listed = await listGroupMessages({
     apiKey: args.apiKey,
     chatId,
-    startTime: startTimeDaysAgo(days),
+    startTime: args.startTime ?? startTimeDaysAgo(days),
     phoneId: args.phoneId,
     fetcher: args.fetcher,
   });
