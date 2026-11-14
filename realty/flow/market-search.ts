@@ -26,6 +26,8 @@ export type CoBrokeHit = {
   beds: number | null;
   baths: number | null;
   listingType: string | null;
+  /** The market's normalised class (house, apartment, townhouse, land, commercial) when it has one; the lead flow doesn't use it. */
+  propertyClass: string | null;
   source: string;
   url: string | null;
   /** last_seen as YYYY-MM-DD when the hit carries a date; the lead flow doesn't use it. */
@@ -116,6 +118,7 @@ function toHit(h: unknown): CoBrokeHit | null {
     beds: num(o.beds),
     baths: num(o.baths),
     listingType: str(o.listing_type),
+    propertyClass: str(o.property_class),
     source,
     url: url && /^https?:\/\//i.test(url) ? url : null,
     lastSeen: day(o.last_seen),

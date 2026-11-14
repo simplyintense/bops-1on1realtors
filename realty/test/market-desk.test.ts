@@ -79,7 +79,7 @@ function fakeMarket(f: Fake = {}) {
   };
 }
 
-const base: DeskCriteria = { area: "", nearby: false, listingType: null, bedsMin: null, bedsMax: null, priceMin: null, priceMax: null, currency: "any" };
+const base: DeskCriteria = { area: "", nearby: false, listingType: null, bedsMin: null, bedsMax: null, priceMin: null, priceMax: null, propertyType: null, currency: "any" };
 const crit = (over: Partial<DeskCriteria>): DeskCriteria => ({ ...base, ...over });
 
 const hit = (title: string, over: Hit = {}): Hit => ({
@@ -150,36 +150,57 @@ test("an unmapped area is searched as typed, and the page is told it isn't known
   assert.equal(ok(result).area?.canonical, null);
 });
 
-test("beds: beds_min goes to the market; beds_max, and beds below the minimum, are checked here", async () => {
+test("beds: beds_min and beds_max both go to the market, and Bops keeps every hit the market returns", async () => {
   const hits = [hit("beds 1", { beds: 1 }), hit("beds 2", { beds: 2 }), hit("beds 3", { beds: 3 }), hit("beds 4", { beds: 4 }), hit("beds unknown", { beds: null })];
   const { result, fake } = await run(crit({ bedsMin: 2, bedsMax: 3 }), { hits: () => hits });
   const args = fake.searches()[0];
   assert.equal(args.beds_min, 2);
-  assert.equal("beds_max" in args, false, "beds_max is not an API argument");
-  assert.deepEqual(titles(result), ["beds 2", "beds 3"]);
+  assert.equal(args.beds_max, 3);
+  assert.deepEqual(titles(result), ["beds 1", "beds 2", "beds 3", "beds 4", "beds unknown"]);
 });
 
-test("price with TTD: the cap goes to the market; price min and other currencies are checked here", async () => {
+test("price with TTD: price min and max both go to the market, and Bops doesn't filter prices or currencies", async () => {
   const hits = [hit("TTD 3000", { price: 3000 }), hit("TTD 5000", { price: 5000 }), hit("TTD 8000", { price: 8000 }), hit("USD 5000", { price: 5000, currency: "USD" }), hit("no price", { price: null })];
   const { result, fake } = await run(crit({ currency: "TTD", priceMin: 4000, priceMax: 7000 }), { hits: () => hits });
   const args = fake.searches()[0];
+  assert.equal(args.price_min, 4000);
   assert.equal(args.price_max, 7000);
-  assert.equal("price_min" in args, false, "price_min is not an API argument");
-  assert.deepEqual(titles(result), ["TTD 5000"]);
+  assert.deepEqual(titles(result), ["TTD 3000", "TTD 5000", "TTD 8000", "USD 5000", "no price"]);
 });
 
-test("price with USD: no cap goes to the market, and the bounds are checked against USD listings only", async () => {
+test("price with USD: price min and max both go to the market, and Bops doesn't filter by currency", async () => {
   const hits = [hit("USD 1000", { price: 1000, currency: "USD" }), hit("USD 2000", { price: 2000, currency: "USD" }), hit("TTD 1000", { price: 1000 })];
-  const { result, fake } = await run(crit({ currency: "USD", priceMax: 1500 }), { hits: () => hits });
-  assert.equal("price_max" in fake.searches()[0], false);
-  assert.deepEqual(titles(result), ["USD 1000"]);
+  const { result, fake } = await run(crit({ currency: "USD", priceMin: 500, priceMax: 1500 }), { hits: () => hits });
+  const args = fake.searches()[0];
+  assert.equal(args.price_min, 500);
+  assert.equal(args.price_max, 1500);
+  assert.deepEqual(titles(result), ["TTD 1000", "USD 1000", "USD 2000"]);
 });
 
-test("price with any currency: the cap is sent as TTD, and the bounds compare the raw amounts", async () => {
+test("price with any currency: the bounds go to the market as raw amounts, and every hit is shown", async () => {
   const hits = [hit("TTD 3000", { price: 3000 }), hit("USD 1000", { price: 1000, currency: "USD" })];
   const { result, fake } = await run(crit({ currency: "any", priceMin: 2000, priceMax: 5000 }), { hits: () => hits });
+  assert.equal(fake.searches()[0].price_min, 2000);
   assert.equal(fake.searches()[0].price_max, 5000);
-  assert.deepEqual(titles(result), ["TTD 3000"]);
+  assert.deepEqual(titles(result), ["TTD 3000", "USD 1000"]);
+});
+
+test("property type: a valid one goes to the market as property_type, and an invalid one is ignored", async () => {
+  const valid = await run(crit({ area: "Woodbrook", propertyType: "apartment" }), { hits: () => [hit("A")] });
+  assert.equal(valid.fake.searches()[0].property_type, "apartment");
+  const invalid = await run(criteriaFromParams(new URLSearchParams("area=Woodbrook&propertyType=villa")), { hits: () => [hit("A")] });
+  assert.equal("property_type" in invalid.fake.searches()[0], false);
+  const wrongCase = await run(criteriaFromParams(new URLSearchParams("area=Woodbrook&propertyType=House")), { hits: () => [hit("A")] });
+  assert.equal("property_type" in wrongCase.fake.searches()[0], false);
+});
+
+test("property_class on a hit becomes propertyClass; a missing or blank one is null", async () => {
+  const hits = [hit("Typed", { property_class: "townhouse" }), hit("Blank", { property_class: "  " }), hit("Missing")];
+  const { result } = await run(crit({ area: "Woodbrook" }), { hits: () => hits });
+  const byTitle = Object.fromEntries(ok(result).listings.map((h) => [h.title, h.propertyClass]));
+  assert.equal(byTitle.Typed, "townhouse");
+  assert.equal(byTitle.Blank, null);
+  assert.equal(byTitle.Missing, null);
 });
 
 test("our own listings and unsafe links are dropped; a bad link is shown with no link", async () => {
@@ -227,10 +248,24 @@ test("last_seen shows as a date when the hit has one, and is null when it doesn'
 });
 
 test("criteriaFromParams reads the filters and ignores what it can't read", () => {
-  const c = criteriaFromParams(new URLSearchParams("area=%20%20west%20%20moorings%20&nearby=1&type=lease&bedsMin=2.7&bedsMax=abc&priceMin=-5&priceMax=9000&currency=EUR"));
-  assert.deepEqual(c, { area: "west moorings", nearby: true, listingType: null, bedsMin: 2, bedsMax: null, priceMin: null, priceMax: 9000, currency: "any" });
+  const c = criteriaFromParams(new URLSearchParams("area=%20%20west%20%20moorings%20&nearby=1&type=lease&bedsMin=2.7&bedsMax=abc&priceMin=-5&priceMax=9000&propertyType=villa&currency=EUR"));
+  assert.deepEqual(c, {
+    area: "west moorings",
+    nearby: true,
+    listingType: null,
+    bedsMin: 2,
+    bedsMax: null,
+    priceMin: null,
+    priceMax: 9000,
+    propertyType: null,
+    currency: "any",
+  });
   assert.equal(criteriaFromParams(new URLSearchParams("type=rent&nearby=0")).listingType, "rent");
   assert.equal(criteriaFromParams(new URLSearchParams("nearby=0")).nearby, false);
+  for (const t of ["house", "apartment", "townhouse", "land", "commercial"]) {
+    assert.equal(criteriaFromParams(new URLSearchParams(`propertyType=${t}`)).propertyType, t);
+  }
+  assert.equal(criteriaFromParams(new URLSearchParams("propertyType=")).propertyType, null);
 });
 
 test("staff only: the search API is refused on the public demo and needs a session when the gate is on", async () => {

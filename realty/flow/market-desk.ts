@@ -7,12 +7,16 @@ import { hitsFromToolResult, MarketClient, type CoBrokeHit, type MarketConfig } 
  * resolver it's given. It never writes an alias, never calls a learn_ tool, and sends and writes nothing. The lead
  * flow's five-hit cap (MarketSearch) doesn't apply here.
  *
- * The market gets listing_type, area, beds_min, and price_max only when the cap is TTD (an "any" currency is read as
- * TTD, the same as toolArguments). Everything else is checked here: beds_max, price_min, and any price bound for a
- * currency the market doesn't cap (USD). The page reads its filters from query params, so no token reaches the browser.
+ * The market applies every filter here (listing_type, area, beds_min and beds_max, price_min and price_max,
+ * property_type) in SQL before its limit, so this module must not apply them again: a listing the market returns is
+ * shown as it is. There is no currency parameter; the market compares raw amounts, so `currency` is not sent. The page
+ * reads its filters from query params, so no token reaches the browser.
  */
 
 export type Currency = "TTD" | "USD" | "any";
+
+export type PropertyType = "house" | "apartment" | "townhouse" | "land" | "commercial";
+const PROPERTY_TYPES: readonly PropertyType[] = ["house", "apartment", "townhouse", "land", "commercial"];
 
 export type DeskCriteria = {
   area: string;
@@ -22,6 +26,7 @@ export type DeskCriteria = {
   bedsMax: number | null;
   priceMin: number | null;
   priceMax: number | null;
+  propertyType: PropertyType | null;
   currency: Currency;
 };
 
@@ -54,6 +59,7 @@ export function criteriaFromParams(p: URLSearchParams): DeskCriteria {
   };
   const type = p.get("type");
   const currency = p.get("currency");
+  const propertyType = p.get("propertyType");
   return {
     area: (p.get("area") ?? "").trim().replace(/\s+/g, " ").slice(0, MAX_AREA_CHARS),
     nearby: p.get("nearby") === "1",
@@ -62,32 +68,22 @@ export function criteriaFromParams(p: URLSearchParams): DeskCriteria {
     bedsMax: beds("bedsMax"),
     priceMin: num("priceMin"),
     priceMax: num("priceMax"),
+    propertyType: PROPERTY_TYPES.find((t) => t === propertyType) ?? null,
     currency: currency === "TTD" || currency === "USD" ? currency : "any",
   };
 }
 
-/** The arguments for one search_market_listings call. price_max goes only as a TTD cap. */
+/** The arguments for one search_market_listings call. Every filter goes to the market, which applies it before the limit. */
 export function searchArgs(c: DeskCriteria, area: string | null): Record<string, string | number> {
   const args: Record<string, string | number> = { limit: LIMIT };
   if (c.listingType) args.listing_type = c.listingType;
   if (area) args.area = area;
   if (c.bedsMin !== null) args.beds_min = c.bedsMin;
-  if (c.priceMax !== null && c.currency !== "USD") args.price_max = c.priceMax;
+  if (c.bedsMax !== null) args.beds_max = c.bedsMax;
+  if (c.priceMin !== null) args.price_min = c.priceMin;
+  if (c.priceMax !== null) args.price_max = c.priceMax;
+  if (c.propertyType) args.property_type = c.propertyType;
   return args;
-}
-
-/**
- * The filters the market doesn't apply, here. A bound a listing can't meet (no beds or no price to check) drops it.
- * A listing with no currency stated passes the currency check; one in another currency is dropped. With "any",
- * the bounds compare the raw amounts (the same reading as the TTD cap).
- */
-export function keep(h: CoBrokeHit, c: DeskCriteria): boolean {
-  if (c.bedsMin !== null && (h.beds === null || h.beds < c.bedsMin)) return false;
-  if (c.bedsMax !== null && (h.beds === null || h.beds > c.bedsMax)) return false;
-  if (c.priceMin === null && c.priceMax === null) return true;
-  if (h.price === null) return false;
-  if (c.currency !== "any" && h.currency && h.currency.toUpperCase() !== c.currency) return false;
-  return (c.priceMin === null || h.price >= c.priceMin) && (c.priceMax === null || h.price <= c.priceMax);
 }
 
 /** The area names to search: the canonical area, then (with nearby on) its neighbours, each once. */
@@ -136,5 +132,5 @@ export async function marketDeskSearch(c: DeskCriteria, deps: DeskDeps): Promise
     seen.add(k);
     hits.push(h);
   }
-  return { status: "ok", area, listings: hits.filter((h) => keep(h, c)), returned: hits.length, failed: failures.length };
+  return { status: "ok", area, listings: hits, returned: hits.length, failed: failures.length };
 }

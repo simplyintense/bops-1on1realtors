@@ -66,7 +66,17 @@ function Filters({ c }: { c: DeskCriteria }) {
           <option value="rent">Rent</option>
         </select>
       </label>
-      <div />
+      <label className="text-sm font-medium">
+        Property type
+        <select name="propertyType" defaultValue={c.propertyType ?? ""} className={field}>
+          <option value="">Any type</option>
+          <option value="house">House</option>
+          <option value="apartment">Apartment</option>
+          <option value="townhouse">Townhouse</option>
+          <option value="land">Land</option>
+          <option value="commercial">Commercial</option>
+        </select>
+      </label>
       <fieldset className="text-sm font-medium">
         <legend>Beds</legend>
         <div className="mt-1 flex gap-3">
@@ -85,12 +95,13 @@ function Filters({ c }: { c: DeskCriteria }) {
           <select name="currency" defaultValue={c.currency} className={field}>
             <option value="TTD">TTD</option>
             <option value="USD">USD</option>
-            <option value="any">Any (read as TTD)</option>
+            <option value="any">Any</option>
           </select>
         </label>
       </fieldset>
       <p className="text-xs text-neutral-500 sm:col-span-2">
-        The market caps only a TTD price, so a TTD or &quot;any&quot; max is sent to it. Other price bounds, and beds max, are checked here.
+        Beds, price (min and max, raw amounts) and property type are sent to the market, which filters before its result limit. The market
+        has no currency filter, so the currency choice doesn&apos;t change the search. Nothing is filtered here.
       </p>
       <div className="sm:col-span-2">
         <button type="submit" className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-700">
@@ -123,18 +134,18 @@ function Results({ result, c }: { result: DeskResult; c: DeskCriteria }) {
         </Notice>
       ) : null}
       {result.listings.length === 0 ? (
-        <Notice>No matching listings{result.returned > 0 ? ` (${result.returned} from the market, none passed the filters)` : ""}.</Notice>
+        <Notice>No matching listings.</Notice>
       ) : (
         <>
           <p className="mb-3 text-sm text-neutral-600">
-            {result.listings.length} listing{result.listings.length === 1 ? "" : "s"} shown
-            {result.returned > result.listings.length ? ` of ${result.returned} from the market` : ""}.
+            {result.listings.length} listing{result.listings.length === 1 ? "" : "s"} from the market.
           </p>
           <div className="overflow-x-auto rounded-lg border border-neutral-200">
             <table className="min-w-full text-left text-sm">
               <thead className="bg-neutral-50 text-xs uppercase tracking-wider text-neutral-500">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Title</th>
+                  <th className="px-3 py-2 font-semibold">Property type</th>
                   <th className="px-3 py-2 font-semibold">Agency</th>
                   <th className="px-3 py-2 font-semibold">Area</th>
                   <th className="px-3 py-2 font-semibold">Beds</th>
@@ -165,6 +176,7 @@ function Row({ h }: { h: CoBrokeHit }) {
         {h.title}
         {h.listingType ? <span className="block text-xs text-neutral-500">{h.listingType}</span> : null}
       </td>
+      <td className="px-3 py-2 text-neutral-600">{h.propertyClass ?? "—"}</td>
       <td className="px-3 py-2 text-neutral-600">{h.source}</td>
       <td className="px-3 py-2 text-neutral-600">{h.area ?? "—"}</td>
       <td className="px-3 py-2">{h.beds ?? "—"}</td>
