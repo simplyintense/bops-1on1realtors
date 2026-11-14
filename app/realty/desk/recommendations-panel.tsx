@@ -1,17 +1,25 @@
 import type { ReactNode } from "react";
+import type { LiveCard, LiveDesk } from "@/realty/flow/live-match.ts";
 import { CRM_MISSING_TEXT, type BuyerMatch, type MatchItem, type Recommendations } from "@/realty/flow/recommendations.ts";
+import type { DeskView } from "@/realty/node/requests.ts";
 import { Notice } from "../notice";
 
 /**
- * "Top recommendations for you" on the desk. It renders the view the flow built (realty/flow/recommendations.ts): match
- * reasons and listings, never a score or a grade (the view has none). Unassigned matches appear only when the view has
- * them, which is only for an owner. Nothing here is sent or written.
+ * "Top recommendations for you" on the desk. It renders the view the server built (realty/node/requests.ts DeskView): the
+ * signed-in agent's own WhatsApp requests with their live matches, our listings (the CRM seam), and, for owners only, the
+ * unassigned WhatsApp requests and other agencies' open requests. Match reasons and listings, never a score or a grade
+ * (the view has none). The owner blocks are rendered only when the view has them, which is only for an owner. Nothing here
+ * is sent or written.
  */
 
-export function RecommendationsPanel({ recs }: { recs: Recommendations | null }) {
+export function RecommendationsPanel({ recs }: { recs: DeskView | null }) {
   if (!recs) return <Notice tone="error">Recommendations couldn&apos;t load right now. The rest of the desk still works.</Notice>;
   return (
     <div className="mt-4 grid gap-8">
+      <Block title="Matches for your WhatsApp requests">
+        <Yours yours={recs.live.yours} />
+      </Block>
+
       <Block title="Suggested from our listings">
         {recs.listings.status === "missing" ? <Notice tone="warn">{CRM_MISSING_TEXT}</Notice> : null}
         {recs.listings.status === "not-configured" ? <Notice tone="warn">Market search isn&apos;t set up on this server, so requests can&apos;t be checked against listings.</Notice> : null}
@@ -25,21 +33,73 @@ export function RecommendationsPanel({ recs }: { recs: Recommendations | null })
         ) : null}
       </Block>
 
-      <Block title="Live matches for the newest open requests">
-        <BuyerMatches buyers={recs.buyers} />
-      </Block>
+      {recs.live.unassigned ? (
+        <Block title="Unassigned WhatsApp requests">
+          <p className="rt-muted text-sm">Owners only. Requests from the agents&apos; group that aren&apos;t tied to one of our agents yet, with their live matches.</p>
+          {recs.live.unassigned.length ? <Cards cards={recs.live.unassigned} /> : <Notice>No unassigned WhatsApp requests right now.</Notice>}
+        </Block>
+      ) : null}
 
-      {recs.unassigned ? (
-        <Block title="Unassigned matches">
-          <p className="rt-muted text-sm">Matches nobody is routed to yet. Unassigned matches go to Wendy and Miles.</p>
-          {recs.unassigned.length ? <MatchList items={recs.unassigned} /> : <Notice>No unassigned matches right now.</Notice>}
+      {recs.owner ? (
+        <Block title="Other agencies' open requests">
+          <p className="rt-muted text-sm">Owners only. Live matches for the newest open co-broke requests in the market.</p>
+          <BuyerMatches buyers={recs.buyers} />
+          {recs.unassigned?.length ? (
+            <>
+              <h4 className="mt-2 font-medium">Unassigned matches</h4>
+              <p className="rt-muted text-sm">Matches nobody is routed to yet. Unassigned matches go to Wendy and Miles.</p>
+              <MatchList items={recs.unassigned} />
+            </>
+          ) : null}
         </Block>
       ) : null}
     </div>
   );
 }
 
+function Yours({ yours }: { yours: LiveDesk["yours"] }) {
+  if (yours.status === "signed-out") return <Notice>Sign in to see the matches for your requests.</Notice>;
+  if (yours.status === "no-agent") {
+    return (
+      <Notice tone="warn">
+        Your sign-in isn&apos;t linked to your WhatsApp number yet (that link comes from the 1on1 CRM, which isn&apos;t connected), so your requests&apos; matches can&apos;t show here yet.
+      </Notice>
+    );
+  }
+  if (!yours.cards.length) return <Notice>No requests from you in the agents&apos; WhatsApp group yet. Post one there and its matches show here.</Notice>;
+  return <Cards cards={yours.cards} />;
+}
+
+export function Cards({ cards }: { cards: LiveCard[] }) {
+  return (
+    <ul className="grid gap-4">
+      {cards.map((c, i) => (
+        <li key={`${c.receivedAt}-${i}`} className="rt-card p-4">
+          <p className="font-medium">{c.label}</p>
+          <p className="rt-muted mt-1 text-xs">
+            Posted {portOfSpainTime(c.receivedAt)} · {c.status === "matched" ? `${c.matches.length} ${c.matches.length === 1 ? "match" : "matches"}` : c.statusText}
+          </p>
+          {c.status === "matched" && !c.matches.length ? <p className="rt-muted mt-2 text-sm">No listing at other agencies fits this request yet.</p> : null}
+          {c.matches.length ? (
+            <div className="mt-3">
+              <MatchList items={c.matches} />
+            </div>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The time in Port of Spain (AST), e.g. "Nov 13, 9:05 PM AST". */
+export function portOfSpainTime(iso: string): string {
+  const t = new Date(iso);
+  if (!Number.isFinite(t.getTime())) return "at an unknown time";
+  return `${t.toLocaleString("en-US", { timeZone: "America/Port_of_Spain", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} AST`;
+}
+
 function BuyerMatches({ buyers }: { buyers: Recommendations["buyers"] }) {
+  if (buyers.status === "owners-only") return null;
   if (buyers.status === "not-configured") return <Notice tone="warn">Market search isn&apos;t set up on this server, so live matches can&apos;t run.</Notice>;
   if (buyers.status === "error") {
     return (
@@ -49,7 +109,7 @@ function BuyerMatches({ buyers }: { buyers: Recommendations["buyers"] }) {
     );
   }
   if (buyers.status === "no-requests") return <Notice>No open buyer requests right now, so there&apos;s nothing to match.</Notice>;
-  if (!buyers.matches.length) return <Notice>No live matches for the newest open requests yet.</Notice>;
+  if (!buyers.matches.length) return <Notice>No routed matches for the newest open requests.</Notice>;
   return <MatchList items={buyers.matches} />;
 }
 

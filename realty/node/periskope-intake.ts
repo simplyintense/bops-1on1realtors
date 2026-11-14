@@ -27,7 +27,7 @@ import {
 } from "../flow/periskope.ts";
 import { crmSourceFromEnv } from "../flow/live-crm.ts";
 import type { CrmSource } from "../flow/source.ts";
-import { GATE_COOKIE, gateConfig, publicDemo, readSession } from "../../lib/gate.ts";
+import { emailAllowed, GATE_COOKIE, gateConfig, parseAllowlist, publicDemo, readSession } from "../../lib/gate.ts";
 import { appendJsonl } from "./jsonl.ts";
 import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
 
@@ -459,6 +459,19 @@ export async function staffAccess(request: Request, env: Env = runtimeEnv()): Pr
   if (cfg === "misconfigured") return reply(503, { error: "Sign-in isn't set up on this server yet." });
   if (cfg && !(await readSession(cookieNamed(request, GATE_COOKIE), cfg))) return reply(401, { error: "Sign in first." });
   return null;
+}
+
+/**
+ * staffAccess, then owners only (BOPS_OWNER_EMAILS): 403 for a signed-in non-owner. With the login gate off (the Mac app,
+ * dev) there's no session to check, so the window token in proxy.ts stays the check, as for staffAccess.
+ */
+export async function ownerAccess(request: Request, env: Env = runtimeEnv()): Promise<Reply | null> {
+  const denied = await staffAccess(request, env);
+  if (denied) return denied;
+  const cfg = gateConfig(env);
+  if (!cfg || cfg === "misconfigured") return null;
+  const email = await readSession(cookieNamed(request, GATE_COOKIE), cfg);
+  return email && emailAllowed(email, parseAllowlist(env.BOPS_OWNER_EMAILS ?? "")) ? null : reply(403, { error: "Owners only." });
 }
 
 function cookieNamed(request: Request, name: string): string | undefined {

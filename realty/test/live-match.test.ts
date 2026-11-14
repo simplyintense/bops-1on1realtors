@@ -5,9 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { SAMPLE_CHAT, SAMPLE_MESSAGES, sampleEnvelope } from "../fixtures/whatsapp-samples.ts";
-import { liveBuyerArgs, liveRequestOf, matchOnArrival, requestLabel } from "../flow/live-match.ts";
+import { crmSeam, fixedCrmSeam, NOT_CONNECTED } from "../flow/crm-seam.ts";
+import { digestOf, liveBuyerArgs, liveDesk, liveRequestOf, matchOnArrival, requestLabel } from "../flow/live-match.ts";
 import { interpret } from "../flow/periskope.ts";
-import { handleWebhook, optOutSender, purgeExpiredPeriskope, setConsent } from "../node/periskope-intake.ts";
+import { GATE_COOKIE, gateConfig, makeSession } from "../../lib/gate.ts";
+import { handleWebhook, optOutSender, ownerAccess, purgeExpiredPeriskope, setConsent } from "../node/periskope-intake.ts";
+import { staffDigest } from "../node/requests.ts";
 import { PeriskopeStore } from "../node/periskope-store.ts";
 import { replaySamples } from "../node/replay.ts";
 import { fakeCaller } from "./desk-fakes.ts";
@@ -156,4 +159,71 @@ test("the replay runs every sample through the signed webhook into a throwaway s
   assert.match(r.messages.find((m) => m.id === "sample-chatter")!.result, /dropped/);
   assert.equal(r.duplicate, "ignored: already seen");
   assert.equal(readdirSync(tmpdir()).filter((f) => f.startsWith("bops-replay-")).length, before);
+});
+
+test("the desk's live side: an agent sees only their own requests; unassigned requests are for owners only", async () => {
+  const w = world();
+  await w.consent();
+  for (const m of SAMPLE_MESSAGES) await w.post(sampleEnvelope(m));
+  const rows = w.store().live();
+  assert.equal(rows.length, 3);
+  const agents = [{ email: "kerry@1on1.example", phone: "+18685550101" }];
+
+  const agent = liveDesk({ email: "Kerry@1on1.example", owner: false, agents, rows });
+  assert.equal(agent.unassigned, null, "staff never get the unassigned list");
+  assert.ok(agent.yours.status === "ok");
+  assert.deepEqual(agent.yours.cards.map((c) => c.label), ["rent · 2 bed apartment · Westmoorings · up to TT$9,000 a month"]);
+  assert.doesNotMatch(JSON.stringify(agent), /555010[23]|Diego Martin|Chaguanas/, "no one else's request in an agent's view");
+
+  const owner = liveDesk({ email: "miles@1on1.example", owner: true, agents, rows });
+  assert.deepEqual(owner.yours, { status: "no-agent" });
+  assert.deepEqual(owner.unassigned?.map((c) => c.label.split(" · ")[2]).sort(), ["Chaguanas", "Diego Martin"]);
+  assert.doesNotMatch(JSON.stringify(owner), /\+1868|sample-/, "cards carry no phone or message id");
+
+  // No CRM: nobody is an agent, so staff see "no-agent" and owners see every request as unassigned.
+  assert.deepEqual(liveDesk({ email: "kerry@1on1.example", owner: false, agents: [], rows }), { yours: { status: "no-agent" }, unassigned: null });
+  assert.equal(liveDesk({ email: "miles@1on1.example", owner: true, agents: [], rows }).unassigned?.length, 3);
+  assert.deepEqual(liveDesk({ email: null, owner: false, agents, rows }).yours, { status: "signed-out" });
+});
+
+test("the CRM seam: not connected says so honestly, with no listings and no agents", async () => {
+  assert.equal(NOT_CONNECTED.connected, false);
+  const l = await NOT_CONNECTED.listings();
+  assert.equal(l.status, "not-connected");
+  assert.match(l.status === "not-connected" ? l.text : "", /CRM not connected/);
+  assert.deepEqual(await NOT_CONNECTED.agents(), []);
+  assert.equal(crmSeam(), NOT_CONNECTED);
+  const fixed = fixedCrmSeam([{ id: "L1" }], [{ email: " Kerry@1on1.example ", phone: "868-555-0101" }, { email: "x@1on1.example", phone: "n/a" }]);
+  assert.deepEqual(await fixed.agents(), [{ email: "kerry@1on1.example", phone: "+18685550101" }]);
+});
+
+test("the daily digest counts the last 24 hours and is for owners only", async () => {
+  const w = world();
+  await w.consent();
+  for (const m of SAMPLE_MESSAGES) await w.post(sampleEnvelope(m));
+  const d = digestOf(w.store().live(), new Date(NOW.getTime() + 3_600_000));
+  assert.equal(d.requests, 3);
+  assert.equal(d.withMatches, 3);
+  assert.equal(d.noMatches + d.notMatched, 0);
+  assert.equal(digestOf(w.store().live(), new Date(NOW.getTime() + 25 * 3_600_000)).requests, 0, "older than a day is out");
+
+  const env = { BOPS_OWNER_EMAILS: "miles@1on1.example, wendy@1on1.example" };
+  assert.deepEqual(staffDigest({ email: "kerry@1on1.example", env, intakeRoot: w.root }), { owner: false });
+  assert.deepEqual(staffDigest({ email: null, env, intakeRoot: w.root }), { owner: false });
+  const owner = staffDigest({ email: "wendy@1on1.example", env, intakeRoot: w.root, now: new Date(NOW.getTime() + 60_000) });
+  assert.ok(owner.owner && owner.digest.requests === 3 && owner.crm === "not-connected");
+});
+
+test("the replay endpoint's gate: owners only when sign-in is on, 401 signed out, 403 on the public demo", async () => {
+  const env = { BOPS_LOGIN_GATE: "google", BOPS_GATE_SECRET: "x".repeat(40), BOPS_ALLOWED_EMAILS: "@1on1.example", BOPS_OWNER_EMAILS: "miles@1on1.example", GOOGLE_OAUTH_CLIENT_ID: "id", GOOGLE_OAUTH_CLIENT_SECRET: "secret", BOPS_PUBLIC_URL: "https://bops.example" };
+  const cfg = gateConfig(env);
+  assert.ok(cfg && cfg !== "misconfigured", "test gate config is complete");
+  const as = async (email: string | null) => {
+    const headers: Record<string, string> = email ? { cookie: `${GATE_COOKIE}=${await makeSession(email, cfg)}` } : {};
+    return ownerAccess(new Request("https://bops.example/api/realty/replay", { method: "POST", headers }), env);
+  };
+  assert.equal(await as("miles@1on1.example"), null);
+  assert.equal((await as("kerry@1on1.example"))?.status, 403);
+  assert.equal((await as(null))?.status, 401);
+  assert.equal((await ownerAccess(new Request("https://bops.example/x", { method: "POST" }), { ONEON1_PUBLIC_DEMO: "1" }))?.status, 403);
 });

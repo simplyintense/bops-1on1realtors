@@ -14,9 +14,11 @@ import { budgetLabel, jsonHits, numish, readOnlyCall, sortRequests, timedOut, ty
  * { status: "missing", missing: "crm-listings" } and calls neither match_requests nor score_matches. A CRM listings provider
  * plugs in by passing its listings as `listings`.
  *
- * Owners: a match whose route_to is missing or "unassigned" (and who has no holder_agent) is unassigned. Unassigned matches are in the view only for an owner
- * (BOPS_OWNER_EMAILS, passed in as `owners` and checked with emailAllowed). For anyone else they are left out entirely, and
- * nobody else's email is ever in the view.
+ * Owners only: these are other agencies' requests, not the signed-in agent's own, so the whole buyer side is for owners
+ * (BOPS_OWNER_EMAILS, passed in as `owners` and checked with emailAllowed). For anyone else it is { status: "owners-only" },
+ * match_buyer isn't called, and nothing from it is in the view. An agent's own WhatsApp requests are the live side
+ * (live-match.ts liveDesk). A match whose route_to is missing or "unassigned" (and who has no holder_agent) is unassigned.
+ * Nobody else's email is ever in the view.
  *
  * Portable: no node:*, no next, no bare process.
  */
@@ -55,6 +57,7 @@ export type Recommendations = {
     | { status: "error" }
     | { status: "ok"; items: MatchItem[] };
   buyers:
+    | { status: "owners-only" }
     | { status: "not-configured" }
     | { status: "error"; reason: "timeout" | "unavailable" }
     | { status: "no-requests" }
@@ -80,7 +83,7 @@ export type RecommendationsInput = {
 
 export async function recommendationsFor(input: RecommendationsInput): Promise<Recommendations> {
   const owner = !!input.email && emailAllowed(input.email, input.owners);
-  const buyers = await buyerSide(input);
+  const buyers: BuyerSide = owner ? await buyerSide(input) : { buyers: { status: "owners-only" }, unassigned: [] };
   return {
     listings: await listingSide(input),
     buyers: buyers.buyers,

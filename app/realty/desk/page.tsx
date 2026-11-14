@@ -9,7 +9,8 @@ import { RecommendationsPanel } from "./recommendations-panel";
 /**
  * The staff desk: the home for signed-in staff. The login gate covers every /realty page, and the public demo redirects
  * them. Three shortcuts (market search; the 1on1 CRM's agent portal on 1on1realtors.com, in a new tab; the buyer requests
- * feed), then the "Top recommendations for you" panel. Read only: nothing here sends or writes. The Bops chat app at /
+ * feed), a fourth for owners only (the daily digest), then the "Top recommendations for you" panel. Read only: nothing here
+ * sends or writes. The Bops chat app at /
  * is unchanged, and so is the post-login redirect.
  */
 
@@ -38,7 +39,7 @@ export default async function RealtyDesk() {
       <h1 className="mt-2 text-3xl font-semibold">1on1 Realtors staff desk</h1>
       <p className="rt-muted mt-3">Tools for the 1on1 Realtors team. Nothing on these pages sends a message or writes to the CRM.</p>
 
-      <ul className="mt-8 grid gap-4 md:grid-cols-3">
+      <ul className={`mt-8 grid gap-4 ${recs?.owner ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
         <Tile href="/realty/market" title="Market search" cta="Search the market">
           Other agencies&apos; listings for an area, with filters. Read-only.
         </Tile>
@@ -48,6 +49,11 @@ export default async function RealtyDesk() {
         <Tile href="/realty/requests" title="Buyer requests" cta="See the requests">
           Co-broke buyer requests from the WhatsApp and email feed, through the market. Read-only.
         </Tile>
+        {recs?.owner ? (
+          <Tile href="/realty/digest" title="Daily digest" cta="Open the digest">
+            Owners only. The last day&apos;s WhatsApp requests and their matches, and a sample replay.
+          </Tile>
+        ) : null}
       </ul>
 
       <section className="mt-12" aria-labelledby="recommendations-heading">

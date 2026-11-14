@@ -395,6 +395,28 @@ Config:
 
 `purgeExpiredPeriskope` is callable on its own and from `LeadFlow.tick()` via `onTick`.
 
+### Live matching (realty/flow/live-match.ts, crm-seam.ts)
+
+Every buyer request the intake takes is stored as a live request (`live-matches.jsonl`: structured facts and
+the posting agent's number, never the text) and matched once on arrival with the market's read-only
+`match_buyer` tool. The co-broke rules are the market's (same island, same or neighbouring area, price within
+20%, beds within one, sale vs rent, type); Bops keeps the top five with the market's reason line and drops
+scores (1on1 scoring isn't decided yet). This works with no CRM: the lead flow still runs only when a CRM is
+set up. Seen is marked before matching, so a slow or failed match never stores a request twice; the status
+(`matched`, `no-intent`, `not-configured`, `timeout`, `unavailable`) is kept on the row. Opt-out and the request
+retention window remove live rows too.
+
+The desk shows each agent "Matches for your WhatsApp requests" (by the agent's number from the CRM seam).
+Requests not tied to one of our agents, and other agencies' open requests from the market, are for owners
+(`BOPS_OWNER_EMAILS`) only. `/realty/digest` is the owners' daily digest (last 24 hours) with a
+"Replay sample WhatsApp messages" button (`POST /api/realty/replay`, owners only): the samples in
+`realty/fixtures/whatsapp-samples.ts` go through the signed webhook path into a temp store with
+market-ingest off; nothing is kept or sent.
+
+The CRM seam (`crm-seam.ts`) is where the CRM plugs in: `listings()` for our own listings and `agents()` for
+agent email and WhatsApp number. It is `NOT_CONNECTED` until the read-only CRM adapter is wired in, so the desk
+says "CRM not connected" and every WhatsApp request shows as unassigned to owners.
+
 Node helpers live in `realty/node/periskope-store.ts` and `realty/node/periskope-intake.ts` (signature,
 store, outbox, staff functions). The staff routes are `/api/intake/periskope/consent` and
 `/api/intake/periskope/opt-out`.

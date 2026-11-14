@@ -1,4 +1,5 @@
 import type { ToolCaller } from "./areas.ts";
+import type { SeamAgent } from "./crm-seam.ts";
 import { moneyLabel } from "./market-search.ts";
 import { listingTypeOf, type Facts } from "./periskope.ts";
 import { parseMatch, type MatchItem } from "./recommendations.ts";
@@ -44,6 +45,34 @@ export type LiveMatchStatus =
   | "unavailable";
 
 export type LiveMatchResult = { status: LiveMatchStatus; matches: MatchItem[] };
+
+/** A stored request as the desk and digest read it (realty/node/periskope-store.ts LiveRow has these and more). */
+export type LiveEntry = {
+  messageId: string;
+  /** The posting agent's own number, normalized. Used only to tie a request to an agent; never shown. */
+  senderPhone: string;
+  receivedAt: string;
+  request: LiveRequest;
+  status: LiveMatchStatus | "pending";
+  matches: MatchItem[];
+};
+
+/** A request with its matches, as a page shows it: no phone number, no message id, no message text. */
+export type LiveCard = { label: string; receivedAt: string; status: LiveMatchStatus | "pending"; statusText: string | null; matches: MatchItem[] };
+
+/** Newest first, at most `limit`. */
+export function liveCards(rows: readonly LiveEntry[], limit = 10): LiveCard[] {
+  return [...rows]
+    .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
+    .slice(0, limit)
+    .map((r) => ({
+      label: requestLabel(r.request),
+      receivedAt: r.receivedAt,
+      status: r.status,
+      statusText: r.status === "matched" ? null : r.status === "pending" ? "Matching hasn't finished." : STATUS_TEXT[r.status],
+      matches: r.matches,
+    }));
+}
 
 /** The request from the parser's facts. Intent falls back to sale/rent from the budget (listingTypeOf). */
 export function liveRequestOf(f: Facts): LiveRequest {
@@ -107,3 +136,56 @@ export const STATUS_TEXT: Record<Exclude<LiveMatchStatus, "matched">, string> = 
   timeout: "Not matched: the market search didn't answer in time.",
   unavailable: "Not matched: the market search was unavailable.",
 };
+
+/**
+ * The live side of the desk. "Yours": the signed-in agent's own WhatsApp requests and their matches, found by the agent's
+ * number (from the CRM seam). "Unassigned": requests from a number that isn't one of our agents. Owners only: for anyone
+ * else it is null, so those requests are not in the view at all. Until the CRM is connected there are no agents, so
+ * every request is unassigned and staff see "no-agent".
+ */
+export type LiveDesk = {
+  yours: { status: "signed-out" } | { status: "no-agent" } | { status: "ok"; cards: LiveCard[] };
+  unassigned: LiveCard[] | null;
+};
+
+export function liveDesk(i: { email: string | null; owner: boolean; agents: readonly SeamAgent[]; rows: readonly LiveEntry[] }): LiveDesk {
+  const phones = new Set(i.agents.map((a) => a.phone));
+  const me = i.email ? i.agents.find((a) => a.email === i.email!.trim().toLowerCase()) ?? null : null;
+  const yours: LiveDesk["yours"] = !i.email
+    ? { status: "signed-out" }
+    : !me
+      ? { status: "no-agent" }
+      : { status: "ok", cards: liveCards(i.rows.filter((r) => r.senderPhone === me.phone)) };
+  return { yours, unassigned: i.owner ? liveCards(i.rows.filter((r) => !phones.has(r.senderPhone))) : null };
+}
+
+/** The owners' daily digest: the requests that came in over the last `hours`, how many found matches, and the cards. */
+export type Digest = {
+  since: string;
+  until: string;
+  requests: number;
+  /** Requests with at least one match. */
+  withMatches: number;
+  /** Matched, but nothing fits yet. */
+  noMatches: number;
+  /** Not matched: no intent, market not set up, or the market failed. */
+  notMatched: number;
+  cards: LiveCard[];
+};
+
+export function digestOf(rows: readonly LiveEntry[], now: Date, hours = 24): Digest {
+  const since = new Date(now.getTime() - hours * 3_600_000);
+  const recent = rows.filter((r) => {
+    const t = Date.parse(r.receivedAt);
+    return t >= since.getTime() && t <= now.getTime();
+  });
+  return {
+    since: since.toISOString(),
+    until: now.toISOString(),
+    requests: recent.length,
+    withMatches: recent.filter((r) => r.status === "matched" && r.matches.length > 0).length,
+    noMatches: recent.filter((r) => r.status === "matched" && r.matches.length === 0).length,
+    notMatched: recent.filter((r) => r.status !== "matched").length,
+    cards: liveCards(recent, 50),
+  };
+}

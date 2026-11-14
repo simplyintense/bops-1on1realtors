@@ -4,7 +4,8 @@ import type { DeskListing } from "./recommendations.ts";
 /**
  * The seam where the 1on1 CRM plugs into live matching and the desk. Two questions only:
  *   listings()          our own active listings, for match_requests / score_matches (CRM listings side)
- *   agentPhone(email)   the WhatsApp number of the signed-in agent, so the desk can show "your" requests
+ *   agents()            1on1's agents with their email and WhatsApp number, so the desk can show the signed-in
+ *                       agent "your" requests, and tell an agent's request from one nobody owns yet
  *
  * The CRM isn't connected yet (the bot's CRM account is waiting on a signup fix), so crmSeam() returns
  * NOT_CONNECTED: no listings, an honest "CRM not connected" state, and no agent numbers. When the read-only CRM
@@ -19,17 +20,19 @@ export type CrmListingsState = { status: "not-connected"; text: string } | { sta
 export interface CrmSeam {
   readonly connected: boolean;
   listings(): Promise<CrmListingsState>;
-  /** The agent's WhatsApp number, normalized (+1868…), or null when the email isn't a known agent. */
-  agentPhone(email: string): Promise<string | null>;
+  /** 1on1's agents: sign-in email and WhatsApp number (normalized, +1868…). Empty when the CRM isn't connected. */
+  agents(): Promise<SeamAgent[]>;
 }
+
+export type SeamAgent = { email: string; phone: string };
 
 export const NOT_CONNECTED: CrmSeam = {
   connected: false,
   async listings() {
     return { status: "not-connected", text: CRM_NOT_CONNECTED_TEXT };
   },
-  async agentPhone() {
-    return null;
+  async agents() {
+    return [];
   },
 };
 
@@ -40,9 +43,11 @@ export function fixedCrmSeam(listings: DeskListing[], agents: { email: string; p
     async listings() {
       return { status: "ok", listings };
     },
-    async agentPhone(email) {
-      const a = agents.find((x) => x.email.trim().toLowerCase() === email.trim().toLowerCase());
-      return a ? normalizePhone(a.phone) : null;
+    async agents() {
+      return agents.flatMap((a) => {
+        const phone = normalizePhone(a.phone);
+        return phone ? [{ email: a.email.trim().toLowerCase(), phone }] : [];
+      });
     },
   };
 }
