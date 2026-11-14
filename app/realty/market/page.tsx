@@ -38,7 +38,7 @@ export default async function MarketSearchPage({ searchParams }: { searchParams:
       <h1 className="mt-2 text-3xl font-semibold">Search Full Online Market</h1>
       <p className="rt-muted mt-3">Other agencies&apos; listings from the market. Nothing is saved, sent or written to the CRM.</p>
 
-      {strip ? <StatsStrip listings={strip.listings} areas={strip.areas} /> : null}
+      {strip ? <StatsStrip {...strip} /> : null}
 
       <Filters c={c} />
 

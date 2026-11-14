@@ -37,7 +37,11 @@ function useCountUp(target: number, durationMs = DURATION_MS): number {
   return n;
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function withListingsNote(n: number | null): string | null {
+  return n === null ? null : `${formatCount(n)} with listings`;
+}
+
+function Stat({ label, value, note }: { label: string; value: number; note?: string | null }) {
   const n = useCountUp(value);
   return (
     <div className="rt-stat">
@@ -46,19 +50,23 @@ function Stat({ label, value }: { label: string; value: number }) {
         <span className="rt-stat-count-static">{formatCount(value)}</span>
       </div>
       <div className="rt-stat-label">{label}</div>
+      {note ? <div className="rt-stat-note">{note}</div> : null}
       <span className="rt-sr-only">
-        {formatCount(value)} {label}
+        {formatCount(value)} {label}{note ? `, ${note}` : ""}
       </span>
     </div>
   );
 }
 
 /** Real market_stats totals at the top of /realty/market. Counts up on load unless the user prefers reduced motion. */
-export function StatsStrip({ listings, areas }: MarketStrip) {
+export function StatsStrip({ listings, areas, subAreas, areasWithListings, subAreasWithListings }: MarketStrip) {
   return (
     <div className="rt-stats" aria-label="Market size">
       <Stat label="Listings" value={listings} />
-      {areas !== null ? <Stat label="Areas" value={areas} /> : null}
+      {areas !== null ? <Stat label="areas mapped" value={areas} note={withListingsNote(areasWithListings)} /> : null}
+      {subAreas !== null ? (
+        <Stat label="sub-areas mapped" value={subAreas} note={withListingsNote(subAreasWithListings)} />
+      ) : null}
     </div>
   );
 }

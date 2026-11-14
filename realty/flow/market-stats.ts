@@ -3,9 +3,12 @@ import { jsonBlock, numish } from "./requests.ts";
 
 /**
  * The market-search page's stats strip: real totals from the read-only `market_stats` tool.
- * `listings` is `active` (the searchable market; `total` also counts inactive rows). `areas` is the number of
- * distinct named areas in `byArea`, leaving out the tool's "(none)" bucket. Sub-areas are not in the tool's
- * reply, so they are not on the strip. Nothing is invented: if `active` is missing, the strip is null.
+ * `listings` is `active` (the searchable market; `total` also counts inactive rows).
+ * When the tool returns `areaCounts`, `areas` and `subAreas` are the official mapped totals
+ * (`areaCounts.areas` / `areaCounts.subAreas`), and the with-listings figures follow the
+ * filters passed to the tool. If `areaCounts` is missing, `areas` falls back to the number of
+ * distinct named areas in `byArea` (leaving out "(none)") and the sub-areas tile is omitted.
+ * Nothing is invented: if `active` is missing, the strip is null; a missing count is null, not 0.
  */
 
 export const MARKET_STATS_TOOL = "market_stats";
@@ -13,21 +16,47 @@ export const MARKET_STRIP_TTL_MS = 10 * 60 * 1000;
 
 export type MarketStrip = {
   listings: number;
-  /** Distinct named areas on active listings, or null when byArea is missing. */
+  /** Official mapped areas, or the named byArea count when areaCounts is missing. */
   areas: number | null;
+  /** Official mapped sub-areas from areaCounts.subAreas. Null when areaCounts is missing. */
+  subAreas: number | null;
+  areasWithListings: number | null;
+  subAreasWithListings: number | null;
 };
+
+function namedByAreaCount(data: Record<string, unknown>): number | null {
+  const byArea = data.byArea;
+  if (!byArea || typeof byArea !== "object" || Array.isArray(byArea)) return null;
+  return Object.keys(byArea).filter((k) => k !== "(none)").length;
+}
+
+function fromAreaCounts(raw: unknown): Omit<MarketStrip, "listings"> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const areas = numish(o.areas);
+  if (areas === null) return null;
+  return {
+    areas,
+    subAreas: numish(o.subAreas),
+    areasWithListings: numish(o.areasWithListings),
+    subAreasWithListings: numish(o.subAreasWithListings),
+  };
+}
 
 export function stripFromStats(result: unknown): MarketStrip | null {
   const data = jsonBlock(result);
   if (!data) return null;
   const listings = numish(data.active);
   if (listings === null) return null;
-  const byArea = data.byArea;
-  if (!byArea || typeof byArea !== "object" || Array.isArray(byArea)) {
-    return { listings, areas: null };
-  }
-  const areas = Object.keys(byArea).filter((k) => k !== "(none)").length;
-  return { listings, areas };
+  const counted = fromAreaCounts(data.areaCounts);
+  if (counted) return { listings, ...counted };
+  return {
+    listings,
+    areas: namedByAreaCount(data),
+    subAreas: null,
+    areasWithListings: null,
+    subAreasWithListings: null,
+  };
 }
 
 async function fetchStrip(caller: ToolCaller): Promise<MarketStrip | null> {

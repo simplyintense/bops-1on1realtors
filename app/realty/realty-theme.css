@@ -268,6 +268,12 @@
   color: hsl(var(--muted-foreground));
 }
 
+.rt-stat-note {
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+
 .rt-stat-count-static { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
