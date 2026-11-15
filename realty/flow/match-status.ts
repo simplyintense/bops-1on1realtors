@@ -1,5 +1,6 @@
 /**
- * Follow-up status for one listing match on a WhatsApp request: contacted, not a fit, or closed. Bops's own record only:
+ * Follow-up status for one listing match on a WhatsApp request: contacted, viewing booked, not a fit, already in touch, or
+ * closed (the first three and the last two are the same set as before, plus the two new ones). Bops's own record only:
  * nothing here, and nothing in its node store, sends a message, writes to the CRM or calls out. A status is keyed by the
  * request (requestId, a hash of its WhatsApp message id: the id itself can carry a sender's number) and the listing's
  * identity (its url, or its title and source when there's no url). Setting the same status again changes nothing; a
@@ -7,12 +8,18 @@
  * Portable: no node:*, no next, no bare process.
  */
 
-export const MATCH_STATUSES = ["contacted", "not-a-fit", "closed"] as const;
+export const MATCH_STATUSES = ["contacted", "viewing-booked", "not-a-fit", "already-in-touch", "closed"] as const;
 export type MatchStatus = (typeof MATCH_STATUSES)[number];
 
-export const STATUS_LABEL: Record<MatchStatus, string> = { contacted: "Contacted", "not-a-fit": "Not a fit", closed: "Closed" };
+export const STATUS_LABEL: Record<MatchStatus, string> = {
+  contacted: "Contacted",
+  "viewing-booked": "Viewing booked",
+  "not-a-fit": "Not a fit",
+  "already-in-touch": "Already in touch",
+  closed: "Closed",
+};
 
-/** Hidden on the desk unless "Show hidden" is on. Contacted stays visible. */
+/** Hidden on the desk unless "Show hidden" is on. Every other status stays visible. */
 const HIDDEN: readonly MatchStatus[] = ["not-a-fit", "closed"];
 
 /** A request id as the desk shows it: 24 lowercase hex characters (realty/node/periskope-store.ts requestIdOf). */
@@ -59,7 +66,7 @@ export function parseStatusPost(body: unknown): { ok: true; post: StatusPost } |
   if (typeof requestId !== "string" || !REQUEST_ID.test(requestId)) return { ok: false, error: "requestId isn't valid" };
   if (typeof key !== "string" || !key || key.length > 2000) return { ok: false, error: "listingKey isn't valid" };
   if (status !== null && !(MATCH_STATUSES as readonly unknown[]).includes(status)) {
-    return { ok: false, error: "status must be contacted, not-a-fit or closed, or null to clear" };
+    return { ok: false, error: `status must be one of ${MATCH_STATUSES.join(", ")}, or null to clear` };
   }
   return { ok: true, post: { requestId, listingKey: key, status: status as MatchStatus | null } };
 }

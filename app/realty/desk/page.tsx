@@ -2,13 +2,15 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { staffRecommendations } from "@/realty/node/requests.ts";
+import { staffLeads } from "@/realty/node/automatch-leads.ts";
 import { viewer } from "../viewer";
+import { LeadCards } from "./lead-cards";
 import { RecommendationsPanel } from "./recommendations-panel";
 
 /**
  * The staff desk: the home for signed-in staff. The login gate covers every /realty page, and the public demo redirects
  * them. Shortcuts: online search and the 1on1 CRM's agent portal (on 1on1realtors.com, in a new tab) for everyone; for owners
- * only (checked on the server, not just hidden), 1on1 CRM Automatch, Supply & Demand, All posts and the daily digest. Then the "Top recommendations
+ * only (checked on the server, not just hidden), 1on1 CRM Automatch, Supply & Demand, All posts and the daily digest. Then "Automatch leads" (strong matches on the listings you hold; every card for an owner), then the "Top recommendations
  * for you" panel, where matches marked not a fit or closed are hidden unless "Show hidden" is on. Read only: nothing here
  * sends or writes. The Bops chat app at / is unchanged, and so is the post-login redirect.
  */
@@ -23,6 +25,7 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
   const showHidden = (await searchParams).hidden === "1";
   // Never throws out of the page: a failure is the panel's error state.
   const recs = await staffRecommendations({ email, showHidden }).catch(() => null);
+  const leads = await staffLeads({ email, showHidden }).catch(() => null);
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
@@ -54,6 +57,19 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
           </>
         ) : null}
       </ul>
+
+      <section className="mt-12" aria-labelledby="leads-heading">
+        <h2 id="leads-heading" className="text-2xl font-semibold">
+          Automatch leads
+        </h2>
+        <p className="rt-muted mt-2 text-sm">
+          Strong matches (75 and above) for the listings you hold in the 1on1 CRM: who asked, the listing, and a suggested message. Owners see every card; a
+          listing with no agent is the office&apos;s.
+        </p>
+        <div className="mt-4">
+          <LeadCards view={leads} showHidden={showHidden} toggleHref={showHidden ? "/realty/desk" : "/realty/desk?hidden=1"} />
+        </div>
+      </section>
 
       <section className="mt-12" aria-labelledby="recommendations-heading">
         <h2 id="recommendations-heading" className="text-2xl font-semibold">

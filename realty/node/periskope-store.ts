@@ -5,6 +5,7 @@ import type { LiveMatchStatus, LiveRequest } from "../flow/live-match.ts";
 import { developmentNameOf, foldPrice, priceKey, setOf, unknownPlaceHints, type PriceRangeRow, type StrongAlert, type UnknownPlace } from "../flow/observe.ts";
 import { applyRecordOverride, type GroupConsent, type Kind, type KindOverride, type MarketIngestItem, type PostRecord } from "../flow/periskope.ts";
 import { applyStatus, type MatchStatus, type StatusRow } from "../flow/match-status.ts";
+import type { MatchSeenRow } from "../flow/automatch-leads.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
 
@@ -66,6 +67,7 @@ const FILES = {
   leads: "leads.jsonl",
   live: "live-matches.jsonl",
   matchStatus: "match-status.jsonl",
+  matchSeen: "match-seen.jsonl",
   posts: "posts.jsonl",
   supply: "supply.jsonl",
   demand: "demand.jsonl",
@@ -405,9 +407,33 @@ export class PeriskopeStore {
     return { changed: next.changed };
   }
 
-  /** Drops the statuses whose request is no longer live (purged, or the sender opted out). */
+  /**
+   * Drops the statuses and first-seen rows whose request is gone: not live, and not a stored post either (purged, or the
+   * sender opted out). An Automatch ask is a stored post, so its outcome outlives the live window and goes with the post.
+   */
   pruneMatchStatuses(): void {
-    const ids = new Set(this.live().map((r) => r.requestId));
+    const ids = new Set([...this.live().map((r) => r.requestId), ...this.posts().map((p) => requestIdOf(p.messageId))]);
     this.removeWhere<StatusRow>("matchStatus", (r) => !ids.has(r.requestId));
+    this.removeWhere<MatchSeenRow>("matchSeen", (r) => !ids.has(r.requestId));
+  }
+
+  /* ---- first seen per pair (Automatch: when Bops first saw a pair, for the stale rule); Bops's own record ---- */
+
+  matchSeenRows(): MatchSeenRow[] {
+    return this.rows<MatchSeenRow>("matchSeen");
+  }
+
+  /** Appends the pairs not yet recorded (the first sighting stands). Returns how many were added. */
+  recordMatchSeen(rows: readonly MatchSeenRow[]): number {
+    const known = new Set(this.matchSeenRows().map((r) => `${r.requestId}|${r.listingKey}`));
+    let added = 0;
+    for (const r of rows) {
+      const key = `${r.requestId}|${r.listingKey}`;
+      if (known.has(key)) continue;
+      known.add(key);
+      this.add("matchSeen", r);
+      added += 1;
+    }
+    return added;
   }
 }

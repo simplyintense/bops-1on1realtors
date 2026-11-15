@@ -5,7 +5,9 @@ import { askBudgetLabel } from "@/realty/flow/automatch.ts";
 import { listingPriceLabel } from "@/realty/flow/live-match.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { staffAutomatch, type AutomatchRow } from "@/realty/node/automatch.ts";
+import { staffLeads } from "@/realty/node/automatch-leads.ts";
 import { Notice } from "../notice";
+import { LeadCards } from "../desk/lead-cards";
 import { viewer } from "../viewer";
 
 /**
@@ -19,12 +21,15 @@ export const metadata: Metadata = { title: "1on1 CRM Automatch · 1on1 Realtors 
 
 const beds = (n: number | null) => (n == null ? null : `${n} bed${n === 1 ? "" : "s"}`);
 
-export default async function Automatch({ searchParams }: { searchParams: Promise<{ band?: string | string[] }> }) {
+export default async function Automatch({ searchParams }: { searchParams: Promise<{ band?: string | string[]; hidden?: string | string[] }> }) {
   const { email } = await viewer();
   const view = await staffAutomatch({ email });
   if (!view.owner) redirect("/realty/desk");
   const raw = await searchParams;
   const all = (Array.isArray(raw.band) ? raw.band[0] : raw.band) === "all";
+  const showHidden = (Array.isArray(raw.hidden) ? raw.hidden[0] : raw.hidden) === "1";
+  // Never throws out of the page: a failure is the section's error state.
+  const leads = await staffLeads({ email, showHidden }).catch(() => null);
   const shown = all ? view.pairs : view.pairs.filter((p) => p.band === "strong");
 
   return (
@@ -67,6 +72,18 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
           <Notice tone="warn">{view.crmText}</Notice>
         </div>
       ) : null}
+
+      <section className="mt-8" aria-labelledby="lead-cards-heading">
+        <h2 id="lead-cards-heading" className="text-2xl font-semibold">
+          Lead cards
+        </h2>
+        <p className="rt-muted mt-2 text-sm">
+          Every strong match (75 and above): who asked, the listing and its agent (or the office), a suggested message, and the outcome buttons.
+        </p>
+        <div className="mt-4">
+          <LeadCards view={leads} showHidden={showHidden} toggleHref={showHidden ? "/realty/automatch" : "/realty/automatch?hidden=1"} />
+        </div>
+      </section>
 
       <section className="mt-8" aria-label="Pairs">
         {shown.length ? (

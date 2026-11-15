@@ -3,8 +3,10 @@ import { ownerAllowed } from "../../lib/gate.ts";
 import { CachedAreaResolver, type AreaResolver } from "../flow/areas.ts";
 import { askOf, automatchPairs, bandOf, dedupeCounts, FAIR, foldSameSenderPairs, type AutomatchAsk, type AutomatchGroup, type Band } from "../flow/automatch.ts";
 import { CRM_UNREACHABLE_TEXT, type CrmListingsState, type CrmSeam, type SeamAgent } from "../flow/crm-seam.ts";
+import { listingKey } from "../flow/match-status.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import { aliasesOf } from "../flow/knowledge.ts";
+import { OUR_AGENCY } from "../flow/live-match.ts";
 import { crmSeamFromEnv } from "./crm-shared.ts";
 import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
 import { withTaught } from "../flow/taught-areas.ts";
@@ -23,6 +25,8 @@ import type { KnownTerm } from "../flow/knowledge.ts";
 
 export type AutomatchAskRow = AutomatchAsk & {
   senderName: string | null;
+  /** The poster's agency as the store has it (SearchRow.firm), or null. */
+  firm: string | null;
   senderPhone: string;
   /** The stored post's id for /realty/posts/[messageId] (requestIdOf), or null. */
   postId: string | null;
@@ -45,7 +49,11 @@ export type AutomatchRow = {
     beds: number | null;
     /** The holding agent's name; "agent #id" when the id is known but not named; null when unassigned. */
     agentName: string | null;
+    /** The holding agent's CRM id; null when unassigned (the office's). */
+    agentId: number | null;
   };
+  /** The listing's match key (match-status.ts listingKey), the same rule a live match's listing uses. */
+  listingKey: string;
   /** Posts this row stands for: the sender's near-identical asks on this listing, folded (the sum of their sightings). */
   posts: number;
 };
@@ -69,13 +77,18 @@ export type AutomatchResult = {
   pairs: AutomatchRow[];
 };
 
-type Opts = { env?: Env; root?: string; seam?: CrmSeam; fetcher?: typeof fetch; areas?: AreaResolver; now?: Date };
+export type AutomatchOpts = { env?: Env; root?: string; seam?: CrmSeam; fetcher?: typeof fetch; areas?: AreaResolver; now?: Date };
 
 /**
  * The matching itself, with no owner check (the CLI is run on the server by its operator). Reads the demand, the active
  * listings and the agents, then pairs them. Nothing is written except what the search store's sync always does.
  */
-export async function loadAutomatch(o: Opts = {}): Promise<AutomatchResult> {
+export async function loadAutomatch(o: AutomatchOpts = {}): Promise<AutomatchResult> {
+  return (await automatchRun(o)).result;
+}
+
+/** The matching, with the CRM's agents too (the leads need them to tell whose listing is whose). Read only. */
+export async function automatchRun(o: AutomatchOpts = {}): Promise<{ result: AutomatchResult; agents: SeamAgent[] }> {
   const env = o.env ?? runtimeEnv();
   const root = o.root ?? periskopeRoot(env);
   const seam = o.seam ?? crmSeamFromEnv(env, o.fetcher);
@@ -91,7 +104,7 @@ export async function loadAutomatch(o: Opts = {}): Promise<AutomatchResult> {
     return a ? [a] : [];
   });
   const none = { strong: { before: 0, after: 0 }, fair: { before: 0, after: 0 } };
-  if (crm.status !== "ok") return { demand: usable.length, asks: asks.length, listings: 0, crmText: crm.text, strong: 0, fair: 0, dedupe: none, pairs: [] };
+  if (crm.status !== "ok") return { result: { demand: usable.length, asks: asks.length, listings: 0, crmText: crm.text, strong: 0, fair: 0, dedupe: none, pairs: [] }, agents };
 
   const active = crm.listings.filter((l) => l.status === "active");
   const areas = o.areas ?? areasOf(root, env, o.fetcher, taught);
@@ -101,7 +114,7 @@ export async function loadAutomatch(o: Opts = {}): Promise<AutomatchResult> {
   const groups = foldSameSenderPairs(scored);
   const dedupe = dedupeCounts(scored);
   const pairs = groups.filter((p) => p.score >= FAIR).map((p) => rowOf(p, byId.get(p.ask.id), names));
-  return { demand: usable.length, asks: asks.length, listings: active.length, crmText: null, strong: dedupe.strong.after, fair: dedupe.fair.after, dedupe, pairs };
+  return { result: { demand: usable.length, asks: asks.length, listings: active.length, crmText: null, strong: dedupe.strong.after, fair: dedupe.fair.after, dedupe, pairs }, agents };
 }
 
 /** The area resolver, kept for ten minutes as the intake keeps its own (periskope-intake.ts oursAreas), so a page load doesn't look the same areas up again. */
@@ -125,6 +138,7 @@ function rowOf(p: AutomatchGroup, d: SearchRow | undefined, names: Map<number, s
     ask: {
       ...p.ask,
       senderName: d?.senderName ?? null,
+      firm: d?.firm ?? null,
       senderPhone: d?.senderPhone ?? "",
       postId: d?.messageIds[0] ? requestIdOf(d.messageIds[0]) : null,
     },
@@ -137,7 +151,9 @@ function rowOf(p: AutomatchGroup, d: SearchRow | undefined, names: Map<number, s
       ttdEquiv: p.listing.ttdEquiv ?? null,
       beds: p.listing.beds || null,
       agentName: holder == null ? null : (names.get(holder) ?? `agent #${holder}`),
+      agentId: holder,
     },
+    listingKey: listingKey({ url: /^https?:\/\//i.test(p.listing.url) ? p.listing.url : null, title: p.listing.title || `${OUR_AGENCY} listing ${p.listing.id}`, source: OUR_AGENCY }),
   };
 }
 
@@ -145,7 +161,7 @@ function rowOf(p: AutomatchGroup, d: SearchRow | undefined, names: Map<number, s
  * The owners' Automatch (app/realty/automatch). Anyone who isn't an owner (ownerAllowed) gets { owner: false }, and nothing is
  * read: not the store, not the CRM.
  */
-export async function staffAutomatch(o: Opts & { email: string | null }): Promise<{ owner: false } | ({ owner: true } & AutomatchResult)> {
+export async function staffAutomatch(o: AutomatchOpts & { email: string | null }): Promise<{ owner: false } | ({ owner: true } & AutomatchResult)> {
   const env = o.env ?? runtimeEnv();
   if (!ownerAllowed(o.email, env)) return { owner: false };
   return { owner: true, ...(await loadAutomatch({ ...o, env })) };
