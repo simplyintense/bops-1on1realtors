@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { demoRoute, emailAllowed, emailFromIdToken, gateConfig, makeSession, parseAllowlist, publicDemo, readSession, readValue, safeNext, signValue } from "../../lib/gate.ts";
+import { demoRoute, emailAllowed, emailFromIdToken, gateConfig, HOME_AFTER_SIGN_IN, makeSession, parseAllowlist, publicDemo, readSession, readValue, safeNext, signValue } from "../../lib/gate.ts";
 
 /** The hosted login gate (lib/gate.ts). */
 
@@ -55,11 +55,25 @@ test("ID token checks: issuer, audience, expiry, verified email", () => {
   assert.equal(emailFromIdToken(tok({ ...good, email_verified: false }), "client-id"), null);
 });
 
-test("redirects after sign-in stay on the site", () => {
+test("redirects after sign-in stay on the site; the default and the site root land on the desk", () => {
   assert.equal(safeNext("/chats?x=1"), "/chats?x=1");
-  assert.equal(safeNext("//evil.example"), "/");
-  assert.equal(safeNext("https://evil.example"), "/");
-  assert.equal(safeNext("/\\evil.example"), "/");
+  assert.equal(safeNext("//evil.example"), "/realty/desk");
+  assert.equal(safeNext("https://evil.example"), "/realty/desk");
+  assert.equal(safeNext("/\\evil.example"), "/realty/desk");
+  assert.equal(safeNext("/api/gate/login"), "/realty/desk", "never back into the sign-in flow");
+  assert.equal(safeNext("javascript:alert(1)"), "/realty/desk");
+  assert.equal(safeNext("realty/desk"), "/realty/desk", "a relative path is not a site path");
+  assert.equal(safeNext(""), "/realty/desk");
+  assert.equal(safeNext(null), "/realty/desk");
+  assert.equal(safeNext(undefined), "/realty/desk");
+  assert.equal(safeNext("/"), "/realty/desk", "an explicit site root (signed out) goes to the desk after sign-in");
+});
+
+test("a deep link still goes where it points, and the default is the desk, not the Bops chat app", () => {
+  assert.equal(safeNext("/realty/search"), "/realty/search");
+  assert.equal(safeNext("/realty/market?q=maraval"), "/realty/market?q=maraval");
+  assert.equal(safeNext("/realty/desk"), "/realty/desk");
+  assert.equal(HOME_AFTER_SIGN_IN, "/realty/desk");
 });
 
 test("public demo: on with ONEON1_PUBLIC_DEMO=1 or on Vercel, off only on purpose", () => {

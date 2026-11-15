@@ -244,6 +244,7 @@ export function sortRequests(rows: BuyerRequest[], s: Sort): BuyerRequest[] {
 /* ---------------- Search ---------------- */
 
 export type RequestsResult =
+  | { status: "owners-only" }
   | { status: "not-configured" }
   | { status: "error"; reason: "timeout" | "unavailable" }
   | { status: "ok"; rows: BuyerRequest[] };

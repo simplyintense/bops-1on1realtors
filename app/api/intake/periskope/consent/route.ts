@@ -4,12 +4,13 @@ import { listConsents, setConsent, staffAccess } from "@/realty/node/periskope-i
 export const dynamic = "force-dynamic";
 
 /**
- * Staff only (behind the login gate; not an open path). A group is accepted only once its notice is
- * posted (staff do that by hand) and an admin's OK is recorded: both timestamps set, and active is not
- * false. POST also queues kind=group for market-ingest (active: true). Revoke with active: false.
+ * Staff only (behind the login gate; not an open path). A group is accepted once an admin's OK is
+ * recorded and either a notice was posted or the owner waived the notice (noticeWaivedAt / noticeWaivedBy),
+ * and active is not false. Do not invent a noticePostedAt to stand in for a waiver. POST also queues
+ * kind=group for market-ingest (active: true). Revoke with active: false.
  *   GET:  the consent records (group ids and staff notes; no secrets).
- *   POST: { chatId, groupName?, noticePostedAt?, adminOkBy?, adminOkAt?, active? }, a partial update.
- *         adminOkBy is a business name or role, never a phone number.
+ *   POST: { chatId, groupName?, noticePostedAt?, noticeWaivedAt?, noticeWaivedBy?, adminOkBy?, adminOkAt?, active? }.
+ *         adminOkBy and noticeWaivedBy are a name or role, never a phone number.
  */
 export async function GET(request: Request) {
   const denied = await staffAccess(request);

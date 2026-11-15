@@ -59,6 +59,27 @@ export function emailAllowed(email: string, allowed: string[]): boolean {
   return allowed.some((a) => (a.startsWith("@") ? a === domain : a === e));
 }
 
+/**
+ * Owners' screens and APIs (BOPS_OWNER_EMAILS): with the login gate off there's no session to check, so anyone may
+ * (as ownerAccess always did); with it on, the signed-in email must be an owner. A misconfigured gate says no.
+ */
+export function ownerAllowed(email: string | null | undefined, env: Env = process.env): boolean {
+  const cfg = gateConfig(env);
+  if (!cfg) return true;
+  return cfg !== "misconfigured" && !!email && emailAllowed(email, parseAllowlist(env.BOPS_OWNER_EMAILS ?? ""));
+}
+
+/**
+ * The teach page and API (BOPS_TEACH_EMAILS, comma-separated, case-insensitive). Unlike ownerAllowed, the gate being off
+ * is no pass: there's no signed-in email, so nobody may teach through the web. Unset or empty: nobody. Misconfigured: nobody.
+ */
+export function teachAllowed(email: string | null | undefined, env: Env = process.env): boolean {
+  const cfg = gateConfig(env);
+  if (!cfg || cfg === "misconfigured") return false;
+  const teachers = parseAllowlist(env.BOPS_TEACH_EMAILS ?? "").filter((a) => !a.startsWith("@"));
+  return !!email && emailAllowed(email, teachers);
+}
+
 /** Paths that skip the gate: they prove themselves (signatures, tokens) or say nothing. */
 export const GATE_OPEN_PATHS = new Set([
   "/api/health",
@@ -75,9 +96,16 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/intake/periskope",
 ]);
 
-/** A redirect target that stays on this site. */
+/** Where staff land after sign-in: the desk (the Bops chat app at / is one click away in the nav). */
+export const HOME_AFTER_SIGN_IN = "/realty/desk";
+
+/**
+ * A redirect target that stays on this site. Empty, invalid or off-site targets, the API's own paths, and the site root (a
+ * sign-in from / lands on the desk too) all go to the desk, HOME_AFTER_SIGN_IN. Anything else on the site is kept as it is.
+ */
 export function safeNext(next: string | null | undefined): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\") || next.startsWith("/api/gate/")) return "/";
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\") || next.startsWith("/api/gate/")) return HOME_AFTER_SIGN_IN;
+  if (next === "/") return HOME_AFTER_SIGN_IN;
   return next;
 }
 

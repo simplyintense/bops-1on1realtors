@@ -7,13 +7,23 @@ import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "..
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
-import { marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
+import { syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
+import { aliasesOf } from "../flow/knowledge.ts";
+import { CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
+import { liveRequestOf, matchOnArrival, matchOurListings, type LiveRequest } from "../flow/live-match.ts";
+import { veryStrongOurListings, type StrongAlert } from "../flow/observe.ts";
+import { MarketClient, marketConfigFromEnv, MarketSearch } from "../flow/market-search.ts";
 import { DryRunOutbox } from "../flow/outbox.ts";
 import {
   consentIsComplete,
   decide,
+  envelopeOf,
+  interpret,
   marketWriteConfigFromEnv,
+  parseMessage,
+  phoneOf,
   postMarketItem,
+  postRecordOf,
   recordsDueForPurge,
   retentionFromEnv,
   toMarketGroupItem,
@@ -22,12 +32,19 @@ import {
   type GroupConsent,
   type MarketIngestItem,
   type MarketSourceItem,
+  type PostRecord,
 } from "../flow/periskope.ts";
-import { crmSourceFromEnv } from "../flow/live-crm.ts";
-import type { CrmSource } from "../flow/source.ts";
-import { GATE_COOKIE, gateConfig, publicDemo, readSession } from "../../lib/gate.ts";
+import type { CrmSource, Listing } from "../flow/source.ts";
+import { sharedCrmSource } from "./crm-shared.ts";
+import { GATE_COOKIE, gateConfig, ownerAllowed, publicDemo, readSession, teachAllowed } from "../../lib/gate.ts";
 import { appendJsonl } from "./jsonl.ts";
-import { PeriskopeStore, type LeadRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
+import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
+import { pollGroups } from "./periskope-groups.ts";
+import { saveListingPhotos, sweepMedia } from "./listing-media.ts";
+import { isListingCategory } from "../flow/listing-photos.ts";
+import { matchingKnowledgeFrom, taughtTermsFrom } from "./search-store.ts";
+import { periskopeRoot } from "./periskope-root.ts";
+import { recordWebhookAccepted, type WebhookOutcome } from "./webhook-status.ts";
 
 /**
  * The Periskope WhatsApp intake, Node side: the signature check, the webhook's ingest, opt-outs, group
@@ -38,8 +55,8 @@ import { PeriskopeStore, type LeadRow, type MarketOutboxRow, type SeenRow } from
  * 403 not_allowlisted / opted_out is logged and not retried.
  *
  * Files under root (default .data/realty/periskope, 0700 dir, 0600 files):
- *   seen.jsonl, opt-out.jsonl, consent.jsonl, market-outbox.jsonl, leads.jsonl,
- *   flow-state.json (the lead flow's snapshot), outbox.jsonl (dry-run client/agent messages).
+ *   seen.jsonl, opt-out.jsonl, consent.jsonl, market-outbox.jsonl, leads.jsonl, live-matches.jsonl,
+ *   match-status.jsonl (the desk's follow-up per match), flow-state.json (the lead flow's snapshot), outbox.jsonl (dry-run client/agent messages).
  * The area aliases and pair records are a sibling store: areas/ next to root (realty/node/area-store.ts).
  *
  * One intake or staff change runs at a time in this process (exclusive below). Across several processes
@@ -47,6 +64,9 @@ import { PeriskopeStore, type LeadRow, type MarketOutboxRow, type SeenRow } from
  */
 
 export const SIGNATURE_HEADER = "x-periskope-signature";
+
+/** Messages dropped by the group allowlist since this process started. Only the count is logged, never the content. */
+let droppedNotAllowlisted = 0;
 
 /** The admin address the dry-run outbox uses. None is configured yet, so admin messages go nowhere real. */
 const ADMIN = { name: "Admin", address: "(no admin address set)" };
@@ -62,39 +82,123 @@ export type IntakeOptions = {
   fetch?: typeof fetch;
   /** The area aliases and pair records. Default: "areas" next to root (.data/realty/areas). */
   areasRoot?: string;
+  /** The market client for live matching (match_buyer). Unset: from ONEON1_MARKET_SEARCH_* (null when they aren't set). */
+  market?: ToolCaller | null;
+  /** Where our own listings come from for live matching. Unset: the same CRM as `crm`. Null: no listings of ours. */
+  ours?: Pick<CrmSource, "listings"> | null;
 };
 
 export type Reply = { status: number; body: Record<string, unknown> };
 const reply = (status: number, body: Record<string, unknown>): Reply => ({ status, body });
 
-type Ctx = { env: Env; now: Date; root: string; store: PeriskopeStore; areas: AreaStore; crm: CrmSource | null; fetch: typeof fetch };
+type Ctx = {
+  env: Env;
+  now: Date;
+  root: string;
+  store: PeriskopeStore;
+  areas: AreaStore;
+  crm: CrmSource | null;
+  fetch: typeof fetch;
+  market: ToolCaller | null;
+  ours: Pick<CrmSource, "listings"> | null;
+  /** Injected fetch means a test: no shared area cache then. */
+  shared: boolean;
+};
 
 function context(o: IntakeOptions): Ctx {
   const env = o.env ?? runtimeEnv();
-  const root = o.root ?? join(process.cwd(), ".data", "realty", "periskope");
+  const root = o.root ?? periskopeRoot(env);
+  const crm = o.crm !== undefined ? o.crm : liveCrm(env);
   return {
     env,
     now: o.now?.() ?? new Date(),
     root,
     store: new PeriskopeStore(root),
     areas: new AreaStore(o.areasRoot ?? join(dirname(root), "areas")),
-    crm: o.crm !== undefined ? o.crm : liveCrm(env),
+    crm,
     fetch: o.fetch ?? fetch,
+    market: o.market !== undefined ? o.market : marketClient(env, o.fetch ?? fetch),
+    ours: o.ours !== undefined ? o.ours : crm,
+    shared: !o.fetch,
   };
 }
 
+function marketClient(env: Env, fetcher: typeof fetch): ToolCaller | null {
+  const cfg = marketConfigFromEnv(env);
+  return cfg ? new MarketClient(cfg, fetcher) : null;
+}
+
 function liveCrm(env: Env): CrmSource | null {
+  return sharedCrmSource(env);
+}
+
+/** The area resolver for matching our listings, kept for ten minutes so a request doesn't resolve the same areas again. */
+let areaCache: { at: number; resolver: AreaResolver } | null = null;
+const AREA_CACHE_MS = 10 * 60_000;
+
+/** The taught places, as exact-text aliases for the matcher (the knowledge store; none before it exists). */
+function taughtAliases(root: string) {
+  return aliasesOf(taughtTermsFrom(root));
+}
+
+function oursAreas(c: Ctx): AreaResolver {
+  if (!c.shared) return areasFromEnv(c.areas, c.env, c.fetch, taughtAliases(c.root));
+  if (!areaCache || Date.now() - areaCache.at > AREA_CACHE_MS) areaCache = { at: Date.now(), resolver: new CachedAreaResolver(areasFromEnv(c.areas, c.env, undefined, taughtAliases(c.root))) };
+  return areaCache.resolver;
+}
+
+/** Our own listings that fit, or none if the CRM can't be read: the request is still taken (fail closed). */
+async function oursFor(request: LiveRequest, c: Ctx) {
+  if (!c.ours) return [];
+  let listings: Listing[];
   try {
-    return crmSourceFromEnv(env);
+    listings = await c.ours.listings();
   } catch {
-    return null;
+    return [];
   }
+  return matchOurListings(request, listings, oursAreas(c), undefined, matchingKnowledgeFrom(c.root)).catch(() => []);
+}
+
+/** Very strong CRM matches only (same development or area, exact beds, in-band). Never a neighbour. */
+async function strongFor(request: LiveRequest, c: Ctx) {
+  if (!c.ours) return [];
+  let listings: Listing[];
+  try {
+    listings = await c.ours.listings();
+  } catch {
+    return [];
+  }
+  try {
+    return veryStrongOurListings(request, listings);
+  } catch {
+    return [];
+  }
+}
+
+function alertOf(d: { messageId: string; chatId: string; post: { sentAt: string; groupName?: string | null; area: string | null; beds: number | null } }, request: LiveRequest, m: { title: string; url: string | null; area: string | null; price: string | null; beds: number | null; reason: string | null }): StrongAlert {
+  return {
+    at: d.post.sentAt,
+    messageId: d.messageId,
+    chatId: d.chatId,
+    groupName: d.post.groupName ?? null,
+    requestArea: request.area ?? d.post.area ?? "",
+    requestBeds: request.beds ?? d.post.beds,
+    requestBudget: request.priceMax ?? request.priceMin,
+    currency: request.currency,
+    listingType: request.intent === "rent" ? "rent" : "sale",
+    listingTitle: m.title,
+    listingArea: m.area,
+    listingPrice: m.price,
+    listingBeds: m.beds,
+    listingUrl: m.url,
+    reason: m.reason ?? "very strong match",
+  };
 }
 
 let chain: Promise<unknown> = Promise.resolve();
 
 /** Runs one job at a time in this process, so two deliveries can't both read the same state and write it twice. */
-function exclusive<T>(job: () => T | Promise<T>): Promise<T> {
+export function exclusive<T>(job: () => T | Promise<T>): Promise<T> {
   const run = chain.then(job, job);
   chain = run.catch(() => undefined);
   return run;
@@ -112,8 +216,8 @@ export function signatureOk(raw: Uint8Array, signature: string | null, key: stri
 
 /**
  * POST /api/intake/periskope. 503 with no signing key; 401 for a missing or wrong signature; otherwise 200
- * for everything it accepts or ignores (wrong event, from us, not a group, no consent, opted out, media,
- * already seen, other). 500 only if taking a buyer request fails, so Periskope can retry it.
+ * for everything it accepts, ignores or drops (wrong event, from us, not allowlisted, no consent, opted
+ * out, media, already seen, other). 500 only if taking a buyer request fails, so Periskope can retry it.
  */
 export async function handleWebhook(raw: Uint8Array, signature: string | null, o: IntakeOptions = {}): Promise<Reply> {
   const env = o.env ?? runtimeEnv();
@@ -121,10 +225,16 @@ export async function handleWebhook(raw: Uint8Array, signature: string | null, o
   if (!key) return reply(503, { error: "PERISKOPE_SIGNING_KEY isn't set" });
   if (!signatureOk(raw, signature, key)) return reply(401, { error: "bad signature" });
   const text = new TextDecoder().decode(raw);
-  return exclusive(() => ingest(text, context(o)));
+  const result = await exclusive(() => ingest(text, context(o), true));
+  await syncAutoMatchAlertsSafely({ env, root: context(o).root, now: context(o).now });
+  return result;
 }
 
-async function ingest(text: string, c: Ctx): Promise<Reply> {
+/**
+ * One payload through the pipeline. `webhook` is true only on the signed webhook path: that path alone logs the accepted
+ * delivery and counts it in webhook-status.json (see noteWebhook). The poll and backfill (ingestEvent) never do.
+ */
+async function ingest(text: string, c: Ctx, webhook = false): Promise<Reply> {
   let payload: unknown;
   try {
     payload = JSON.parse(text);
@@ -138,29 +248,120 @@ async function ingest(text: string, c: Ctx): Promise<Reply> {
     optedOut: c.store.optOuts(),
     consentOf: (chatId) => c.store.consent(chatId),
     seen: (id) => c.store.isSeen(id),
+    terms: taughtTermsFrom(c.root),
+    // The same groups the poller watches (pinned plus roster, minus deny), so the webhook accepts what the poll reads.
+    watched: pollGroups(c.root, c.env).map((g) => g.chatId),
   });
-  return act(d, c);
+  if (d.action === "ignore" && d.reason === "already seen") await refillPost(c, payload);
+  const r = await act(d, c);
+  if (webhook) noteWebhook(c, payload, d);
+  return r;
 }
+
+/**
+ * Logs and counts a signed webhook delivery after it has been handled. Accepted: a stored message (buyer request,
+ * co-broke listing, other) as outcome=added, or one already seen as outcome=duplicate. Signed but not message.created
+ * (ignored): logged only, not counted, so a Periskope event-name mismatch shows up in the logs. Drops, opt-outs and
+ * other ignores are not logged here. The log line carries no message text, phone or chat id.
+ */
+function noteWebhook(c: Ctx, payload: unknown, d: Decision): void {
+  const e = envelopeOf(payload);
+  const eventType = e && SAFE_EVENT.test(e.eventType) ? e.eventType : "unknown";
+  let outcome: WebhookOutcome;
+  if (d.action === "buyer_request" || d.action === "cobroke_listing" || d.action === "other") outcome = "added";
+  else if (d.action === "ignore" && d.reason === "already seen") outcome = "duplicate";
+  else {
+    // The reason is decide()'s "<event> isn't handled", rebuilt from the sanitised token so no raw payload text reaches the log.
+    if (d.action === "ignore" && e && e.eventType !== "message.created") console.info(`periskope: webhook ignored event=${eventType} reason=${eventType} isn't handled`);
+    return;
+  }
+  const group = logGroupName(parseMessage(e?.data)?.chatName ?? null);
+  console.info(`periskope: webhook accepted event=${eventType} group=${group ?? "unnamed"} outcome=${outcome}`);
+  recordWebhookAccepted(c.root, { at: c.now.toISOString(), eventType, groupName: group, outcome });
+}
+
+/** Event types we log as-is: a short token, so a stray value can't add a line or a long string to the log. */
+const SAFE_EVENT = /^[A-Za-z0-9_.:-]{1,60}$/;
+
+/** The group's name for the log and the status: one line, trimmed, at most 80 characters. */
+function logGroupName(name: string | null): string | null {
+  const one = name?.replace(/\s+/g, " ").trim() ?? "";
+  return one ? one.slice(0, 80) : null;
+}
+
+/**
+ * Ingest a trusted event (already authenticated, e.g. a backfill from the Periskope read API). Same
+ * pipeline as the webhook after the signature check. Does not call Periskope, and never sends.
+ */
+export async function ingestEvent(payload: unknown, o: IntakeOptions = {}): Promise<Reply> {
+  const c = context(o);
+  const result = await exclusive(() => ingest(JSON.stringify(payload), c));
+  await syncAutoMatchAlertsSafely({ env: c.env, root: c.root, now: c.now });
+  return result;
+}
+
+/** Store the structured post. For listing posts only, also try to save photos under root/media. Idempotent: a second call only fills missing text or photos. */
+async function keepPost(c: Ctx, post: PostRecord): Promise<void> {
+  const existing = c.store.post(post.messageId);
+  const listing = isListingCategory(post.category);
+  const needPhotos = listing && (!(existing?.mediaFiles && existing.mediaFiles.length)) && (post.mediaUrls?.length ?? 0) > 0;
+  const saved = needPhotos ? await saveListingPhotos(c.root, post.mediaUrls ?? [], c.fetch) : null;
+  const photos = saved?.files.length ? { mediaFiles: saved.files, mediaHashes: saved.hashes } : { mediaFiles: existing?.mediaFiles, mediaHashes: existing?.mediaHashes };
+  const row = listing ? { ...post, mediaUrls: post.mediaUrls ?? existing?.mediaUrls, ...photos } : { ...post, mediaUrls: undefined, mediaFiles: undefined, mediaHashes: undefined };
+  c.store.upsertPost(row);
+}
+
+/**
+ * If this message is already stored without originalText, fill it in (and a missing post row) without
+ * rematching. Does not log the text.
+ */
+async function refillPost(c: Ctx, payload: unknown): Promise<void> {
+  const e = envelopeOf(payload);
+  const m = e ? parseMessage(e.data) : null;
+  if (!m?.hasText) return;
+  const phone = phoneOf(m.sender);
+  if (!phone) return;
+  const sentAt = m.sentAt ?? c.now.toISOString();
+  const post = postRecordOf({ message: m, phone, interpretation: interpret(m.body, taughtTermsFrom(c.root)), sentAt });
+  await keepPost(c, post);
+}
+
 
 async function act(d: Decision, c: Ctx): Promise<Reply> {
   const at = c.now.toISOString();
   switch (d.action) {
     case "ignore":
       return reply(200, { result: `ignored: ${d.reason}` });
+    case "drop":
+      // Counted only: nothing is stored or marked seen, and the body is never read.
+      droppedNotAllowlisted += 1;
+      console.info(`periskope: dropped not allowlisted, total=${droppedNotAllowlisted} reason=${d.reason}`);
+      return reply(200, { result: "dropped: not allowlisted" });
     case "other":
-      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "other", at });
+      await keepPost(c, d.post);
+      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "other", at: d.post.sentAt });
       return reply(200, { result: "dropped: not a buyer request or a co-broke listing" });
     case "cobroke_listing":
       if (d.item) await queueMarket(c, d.item);
-      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "cobroke_listing", at });
+      await keepPost(c, d.post);
+      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "cobroke_listing", at: d.post.sentAt });
       return reply(200, { result: d.item ? "listing recorded for market-ingest" : "listing noted (not enough fields for market-ingest)" });
     case "buyer_request": {
-      if (!c.crm) return reply(200, { result: "ignored: no CRM set up to route a buyer request" });
-      const lead = await receive(d.inquiry, c, c.crm);
-      c.store.addLead({ leadId: lead.id, messageId: d.messageId, senderPhone: d.phone, receivedAt: at });
-      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at });
+      // With a CRM the request also enters the lead flow (routing, timeouts, dry-run messages only); without one, or if the
+      // CRM can't be reached, it is still stored and matched.
+      const lead = c.crm ? await receive(d.inquiry, c, c.crm).catch(() => null) : null;
+      if (lead) c.store.addLead({ leadId: lead.id, messageId: d.messageId, senderPhone: d.phone, receivedAt: d.post.sentAt });
+      const request = liveRequestOf(d.facts);
+      c.store.addLive({ messageId: d.messageId, chatId: d.chatId, senderPhone: d.phone, receivedAt: d.post.sentAt, request, status: "pending", matchedAt: null, matches: [] });
+      await keepPost(c, d.post);
+      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at: d.post.sentAt });
       if (d.item) await queueMarket(c, d.item);
-      return reply(200, { result: `buyer request taken as ${lead.id}` });
+      // Seen is marked first, so a slow or failed match never makes Periskope deliver the message twice.
+      const [m, ours, strong] = await Promise.all([matchOnArrival(request, d.messageId, at, c.market), oursFor(request, c), strongFor(request, c)]);
+      c.store.updateLive(d.messageId, { status: m.status, matches: m.matches, ours, matchedAt: c.now.toISOString() });
+      for (const hit of strong) c.store.addAlert(alertOf(d, request, hit));
+      const taken = lead ? `buyer request taken as ${lead.id}` : c.crm ? "buyer request stored (CRM unreachable: not routed)" : "buyer request stored (no CRM: not routed)";
+      return reply(200, { result: taken, matching: m.status, matches: m.matches.length, ours: ours.length, strong: strong.length });
     }
   }
 }
@@ -230,7 +431,7 @@ function openFlow(c: Ctx, crm: CrmSource, onTick?: (now: Date) => void | Promise
     clock: () => c.now,
     outbox: new DryRunOutbox({ clock: () => c.now, append: (line) => appendJsonl(join(c.root, "outbox.jsonl"), line) }),
     market: marketFrom(c.env),
-    areas: areasFromEnv(c.areas, c.env, c.fetch),
+    areas: areasFromEnv(c.areas, c.env, c.fetch, taughtAliases(c.root)),
     pairStore: c.areas,
     timeoutMs: timeoutMsFromEnv(c.env),
     hours: businessHoursFromEnv(c.env),
@@ -279,7 +480,7 @@ function sourceItem(row: MarketOutboxRow): MarketSourceItem | null {
 }
 
 /**
- * Deletes what is past its window: buyer-request leads (PERISKOPE_REQUEST_RETENTION_DAYS, default 60) and
+ * Deletes what is past its window: buyer-request leads and live requests (PERISKOPE_REQUEST_RETENTION_DAYS, default 60) and
  * co-broke listings (PERISKOPE_LISTING_RETENTION_DAYS, default 90), each with its seen rows and market
  * outbox source items. Seen rows of other messages go on the request window. kind=group / optout rows
  * are left (they are not listings or requests). LeadFlow.tick() calls this through onTick (tickFlow).
@@ -325,8 +526,17 @@ export function purgeExpiredPeriskope(store: PeriskopeStore, now: Date, env: Env
     ).map((r) => r.id),
   ]);
   const leads = store.removeWhere<LeadRow>("leads", (r) => leadIds.has(r.leadId)).length;
+  const liveDue = new Set(recordsDueForPurge(store.live(), now, requestDays).map((r) => r.messageId));
+  store.removeWhere<LiveRow>("live", (r) => liveDue.has(r.messageId));
+  store.pruneMatchStatuses();
   const marketN = store.removeWhere<MarketOutboxRow>("market", (r) => marketIds.has(r.localId)).length;
-  const seenN = store.removeWhere<SeenRow>("seen", (r) => seenDue.has(r.id) || messageIds.has(r.id)).length;
+  const seenN = store.removeWhere<SeenRow>("seen", (r) => seenDue.has(r.id) || messageIds.has(r.id) || liveDue.has(r.id)).length;
+  store.removeWhere<PostRecord>("posts", (r) => {
+    const listing = r.category === "listing_for_sale" || r.category === "listing_for_rent" || r.category === "cobroke";
+    const days = listing ? listingDays : requestDays;
+    return Date.parse(r.sentAt) < now.getTime() - days * 86_400_000 || messageIds.has(r.messageId) || liveDue.has(r.messageId) || seenDue.has(r.messageId);
+  });
+  sweepMedia(store, now);
   return { leads, market: marketN, seen: seenN, leadIds: [...leadIds] };
 }
 
@@ -371,7 +581,7 @@ export type OptOutResult = { senderPhone: string; added: boolean; leads: number;
 
 /**
  * Adds the number to the opt-out list and deletes what's stored from it: its leads (and their lines in the
- * flow state), its listing/request outbox records and its seen rows. Then queues kind=optout for
+ * flow state), its live requests and matches, its listing/request outbox records and its seen rows. Then queues kind=optout for
  * market-ingest (senderHash of the number). Later messages from this sender are dropped before the body is read.
  */
 export function optOutSender(senderPhone: string, o: IntakeOptions = {}): Promise<OptOutResult> {
@@ -384,6 +594,9 @@ export function optOutSender(senderPhone: string, o: IntakeOptions = {}): Promis
       return item?.agencyPhone === senderPhone;
     }).length;
     const seen = c.store.removeWhere<SeenRow>("seen", (r) => r.senderPhone === senderPhone).length;
+    c.store.removeWhere<LiveRow>("live", (r) => r.senderPhone === senderPhone);
+    c.store.removeWhere<PostRecord>("posts", (r) => r.senderPhone === senderPhone);
+    c.store.pruneMatchStatuses();
     dropFromFlowState(c.root, leadIds);
     await queueMarket(c, { kind: "optout", senderHash: senderHashOf(senderPhone) });
     return { senderPhone, added, leads: leadIds.length, market, seen };
@@ -401,19 +614,20 @@ const definedOnly = <T extends object>(o: T): Partial<T> => Object.fromEntries(O
 
 /**
  * Creates or updates a group's consent record. Partial: a field left out stays as it was. A group is
- * accepted only once both noticePostedAt and adminOkAt are set and active is not false. When the record
- * becomes complete, kind=group (active: true) is queued for market-ingest. Revoke with active: false
- * (the same call, not by clearing adminOkAt).
+ * accepted only once adminOkAt is set and either noticePostedAt or noticeWaivedAt is set, and active is
+ * not false. When the record becomes complete, kind=group (active: true) is queued for market-ingest.
+ * Revoke with active: false (the same call, not by clearing adminOkAt).
  */
 export function setConsent(patch: ConsentPatch, o: IntakeOptions = {}): Promise<GroupConsent> {
   return exclusive(async () => {
     const c = context(o);
-    const base: GroupConsent = c.store.consent(patch.chatId) ?? { chatId: patch.chatId, groupName: null, noticePostedAt: null, adminOkBy: null, adminOkAt: null, active: true };
+    const base: GroupConsent = c.store.consent(patch.chatId) ?? { chatId: patch.chatId, groupName: null, noticePostedAt: null, noticeWaivedAt: null, noticeWaivedBy: null, adminOkBy: null, adminOkAt: null, active: true };
     const before = { complete: consentIsComplete(base) && base.active !== false, active: base.active !== false };
     const raw = { ...base, ...definedOnly(patch) };
     const next = c.store.setConsent({
       ...raw,
       noticePostedAt: isoOrSame(raw.noticePostedAt),
+      noticeWaivedAt: isoOrSame(raw.noticeWaivedAt ?? null),
       adminOkAt: isoOrSame(raw.adminOkAt),
     });
     const complete = consentIsComplete(next) && next.active !== false;
@@ -440,6 +654,32 @@ export async function staffAccess(request: Request, env: Env = runtimeEnv()): Pr
   if (cfg === "misconfigured") return reply(503, { error: "Sign-in isn't set up on this server yet." });
   if (cfg && !(await readSession(cookieNamed(request, GATE_COOKIE), cfg))) return reply(401, { error: "Sign in first." });
   return null;
+}
+
+/**
+ * staffAccess, then owners only (BOPS_OWNER_EMAILS, ownerAllowed): 403 for a signed-in non-owner. With the login gate off (the
+ * Mac app, dev) there's no session to check, so the window token in proxy.ts stays the check, as for staffAccess.
+ */
+export async function ownerAccess(request: Request, env: Env = runtimeEnv()): Promise<Reply | null> {
+  const denied = await staffAccess(request, env);
+  if (denied) return denied;
+  return ownerAllowed(await staffEmail(request, env), env) ? null : reply(403, { error: "Owners only." });
+}
+
+/**
+ * staffAccess, then the teachers only (BOPS_TEACH_EMAILS, teachAllowed). A signed-in non-teacher gets a 404, not a 403: the
+ * teach endpoint is not there for them. With the gate off there's no email, so nobody teaches over the API (the CLI does).
+ */
+export async function teacherAccess(request: Request, env: Env = runtimeEnv()): Promise<Reply | null> {
+  const denied = await staffAccess(request, env);
+  if (denied) return denied;
+  return teachAllowed(await staffEmail(request, env), env) ? null : reply(404, { error: "Not found." });
+}
+
+/** The signed-in staff email, or null (gate off, or no valid session). Call after staffAccess has let the request through. */
+export async function staffEmail(request: Request, env: Env = runtimeEnv()): Promise<string | null> {
+  const cfg = gateConfig(env);
+  return cfg && cfg !== "misconfigured" ? readSession(cookieNamed(request, GATE_COOKIE), cfg) : null;
 }
 
 function cookieNamed(request: Request, name: string): string | undefined {

@@ -56,9 +56,9 @@ export class AreaStore implements AreaPairStore {
     return readRows<AliasRow>(join(this.root, ALIAS_FILE));
   }
 
-  /** The local alias table, as it is now: the flow reads it fresh for each intake. */
-  aliasTable(): AliasTable {
-    return new AliasTable(this.aliasRows());
+  /** The local alias table, as it is now: the flow reads it fresh for each intake. Taught places (extra) come last, so they win. */
+  aliasTable(extra: { alias: string; canonical: string }[] = []): AliasTable {
+    return new AliasTable([...this.aliasRows(), ...extra]);
   }
 
   addAlias(row: AliasRow): void {
@@ -81,12 +81,13 @@ function marketClientFrom(env: Env, fetcher?: typeof fetch): MarketClient | null
 }
 
 /**
- * The area resolver for a flow, from the environment. Aliases are read from the store now; the market's
- * resolve_area is used only when the market search is configured, and exact text otherwise.
+ * The area resolver for a flow, from the environment. Aliases are read from the store now, plus the taught places passed in
+ * (aliasesOf the knowledge store); the market's resolve_area is used only when the market search is configured, and exact
+ * text otherwise.
  */
-export function areasFromEnv(store: AreaStore, env: Env = runtimeEnv(), fetcher?: typeof fetch): AreaResolver {
+export function areasFromEnv(store: AreaStore, env: Env = runtimeEnv(), fetcher?: typeof fetch, taught: { alias: string; canonical: string }[] = []): AreaResolver {
   const client = marketClientFrom(env, fetcher);
-  return new CompositeAreaResolver({ aliases: store.aliasTable(), market: client ? new MarketAreaResolver(client) : null });
+  return new CompositeAreaResolver({ aliases: store.aliasTable(taught), market: client ? new MarketAreaResolver(client) : null });
 }
 
 function cleanName(v: unknown): string | null {

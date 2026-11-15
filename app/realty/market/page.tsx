@@ -3,18 +3,20 @@ import { criteriaFromParams, type DeskArea, type DeskCriteria, type DeskResult }
 import { staffMarketSearch } from "@/realty/node/market-desk.ts";
 import { staffMarketStrip } from "@/realty/node/market-stats.ts";
 import { Notice } from "../notice";
+import { viewer } from "../viewer";
 import { ListingTable } from "./listing-table";
 import { StatsStrip } from "./stats-strip";
 
 /**
- * Market search for staff: other agencies' listings for an area, with filters (realty/flow/market-desk.ts). Read-only:
+ * Online search for staff: other agencies' listings for an area, with filters (realty/flow/market-desk.ts). Read-only:
  * the form is a GET, the search runs on the server, and the market token never reaches the browser. The same search is
  * at /api/realty/market/search (staff only). Nothing here writes an alias, learns a neighbour, or sends anything.
- * The page sits in the realty layout (the theme, the header and the nav).
+ * The page sits in the realty layout (the theme, the header and the nav). The stats strip is for owners only: it's read
+ * only for them, so it never reaches anyone else.
  */
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Market search · 1on1 Realtors staff", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Online search · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 type Params = Record<string, string | string[] | undefined>;
 
@@ -27,15 +29,16 @@ export default async function MarketSearchPage({ searchParams }: { searchParams:
   }
   const ran = params.size > 0;
   const c = criteriaFromParams(params);
+  const { owner } = await viewer();
   const [result, strip] = await Promise.all([
     ran ? staffMarketSearch(c) : Promise.resolve(null),
-    staffMarketStrip(),
+    owner ? staffMarketStrip() : Promise.resolve(null),
   ]);
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
       <p className="rt-eyebrow">Staff only · read-only</p>
-      <h1 className="mt-2 text-3xl font-semibold">Search Full Online Market</h1>
+      <h1 className="mt-2 text-3xl font-semibold">Online search</h1>
       <p className="rt-muted mt-3">Other agencies&apos; listings from the market. Nothing is saved, sent or written to the CRM.</p>
 
       {strip ? <StatsStrip {...strip} /> : null}
@@ -120,14 +123,14 @@ function Results({ result, c }: { result: DeskResult; c: DeskCriteria }) {
   if (result.status === "not-configured") {
     return (
       <Notice tone="warn">
-        Market search is off on this server. It turns on once the server has ONEON1_MARKET_SEARCH_URL and ONEON1_MARKET_SEARCH_TOKEN set
+        Online search is off on this server. It turns on once the server has ONEON1_MARKET_SEARCH_URL and ONEON1_MARKET_SEARCH_TOKEN set
         (whoever runs the server can set them). Until then nothing is searched.
       </Notice>
     );
   }
   if (result.status === "error") {
     const why = result.reason === "timeout" ? "didn't answer in time" : "is unavailable";
-    return <Notice tone="error">The market search {why}. Try again in a minute.</Notice>;
+    return <Notice tone="error">The online search {why}. Try again in a minute.</Notice>;
   }
   return (
     <>

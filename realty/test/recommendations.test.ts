@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { CRM_MISSING_TEXT, recommendationsFor, reasonText, type DeskListing } from "../flow/recommendations.ts";
 import type { ToolCaller } from "../flow/areas.ts";
@@ -10,18 +13,18 @@ import { type Answer, fakeCaller, fakeMarketFetch, MATCH_LIVE, MATCH_ROUTED, MAT
 /**
  * The desk's "Top recommendations for you" (realty/flow/recommendations.ts) against a fake market. Nothing invented: no
  * requests, no buyers; no CRM listings, no match_requests or score_matches. Scores and grades never reach the view, and
- * unassigned matches reach only an owner. Only the desk's read-only tools are called.
+ * the market side (other agencies' requests) reaches only an owner. Only the desk's read-only tools are called.
  */
 
 const OWNERS = parseAllowlist("wendy@example.test, miles@example.test");
 const ALL_REQUESTS = [REQ_BUY, REQ_RENT, REQ_USD, REQ_NO_INTENT, REQ_OLD];
 const UNASSIGNED_TITLE = "Unassigned flat, Westmoorings";
 
-/** One desk run: the market answers (the requests and two matches by default), the requests read from it, then the recommendations. */
+/** One desk run as an owner by default: the market answers (the requests and two matches), the requests read from it, then the recommendations. */
 async function run(answers: Record<string, Answer>, o: { email?: string | null; listings?: DeskListing[] | null; requests?: RequestsResult } = {}) {
   const f = fakeCaller({ search_market_requests: { total: 5, hits: ALL_REQUESTS }, match_buyer: { total: 2, hits: [MATCH_ROUTED, MATCH_UNASSIGNED] }, ...answers });
   const requests = o.requests ?? (await searchRequests(OPEN_REQUESTS, f.caller));
-  const recs = await recommendationsFor({ email: o.email ?? null, owners: OWNERS, listings: o.listings, requests, caller: f.caller });
+  const recs = await recommendationsFor({ email: o.email === undefined ? "miles@example.test" : o.email, owners: OWNERS, listings: o.listings, requests, caller: f.caller });
   return { recs, f };
 }
 
@@ -99,7 +102,7 @@ test("matches show the market's reason text; the view has no score or grade, and
   assert.ok(!json.includes("agent-private-7"), "route_to must not reach the view");
 });
 
-test("unassigned matches: an owner sees them; anyone else gets none, and no one's email", async () => {
+test("the market side is owners only: an owner sees routed and unassigned matches; anyone else gets none, no call, and no one's email", async () => {
   const owner = await run({}, { email: "miles@example.test" });
   assert.equal(owner.recs.owner, true);
   assert.deepEqual(owner.recs.unassigned?.map((m) => m.title), [UNASSIGNED_TITLE]);
@@ -114,11 +117,13 @@ test("unassigned matches: an owner sees them; anyone else gets none, and no one'
   for (const s of [UNASSIGNED_TITLE, "wendy@example.test", "miles@example.test", "agent@example.test", "ava@example.com", "+1 868 555 0199"]) {
     assert.ok(!json.includes(s), `view leaks ${s}`);
   }
-  assert.ok(other.recs.buyers.status === "ok" && other.recs.buyers.matches.length === 1, "routed matches still show to staff");
+  assert.deepEqual(other.recs.buyers, { status: "owners-only" }, "other agencies' requests are not an agent's own");
+  assert.ok(!other.f.tools().includes("match_buyer"));
 
   const signedOut = await run({}, { email: null });
   assert.equal(signedOut.recs.owner, false);
   assert.equal(signedOut.recs.unassigned, null);
+  assert.deepEqual(signedOut.recs.buyers, { status: "owners-only" });
 });
 
 test("only the desk's read-only tools are called, never learn_* or opt-out", async () => {
@@ -165,7 +170,7 @@ test("a failing match_buyer is an error status, never a throw; a partial failure
     },
   };
   const requests = await searchRequests(OPEN_REQUESTS, f.caller);
-  const recs = await recommendationsFor({ email: null, owners: OWNERS, requests, caller: flaky });
+  const recs = await recommendationsFor({ email: "wendy@example.test", owners: OWNERS, requests, caller: flaky });
   assert.equal(recs.buyers.status, "ok");
   assert.equal(recs.buyers.status === "ok" ? recs.buyers.matches.length : -1, 1);
 });
@@ -185,16 +190,26 @@ test("the node wrapper: the market's settings and BOPS_OWNER_EMAILS, read-only, 
     BOPS_OWNER_EMAILS: "miles@example.test",
   };
   const fake = fakeMarketFetch({ answers: { search_market_requests: { total: 1, hits: [REQ_RENT] }, match_buyer: { total: 2, hits: [MATCH_ROUTED, MATCH_UNASSIGNED] } } });
-  const recs = await staffRecommendations({ email: "miles@example.test", env, fetcher: fake.fetcher });
+  const intakeRoot = mkdtempSync(join(tmpdir(), "desk-intake-"));
+  const recs = await staffRecommendations({ email: "miles@example.test", env, fetcher: fake.fetcher, intakeRoot });
   assert.equal(recs.owner, true);
   assert.deepEqual(recs.unassigned?.map((m) => m.title), [UNASSIGNED_TITLE]);
   assert.deepEqual(recs.listings, { status: "missing", missing: "crm-listings" });
   assert.ok(fake.tools().every((t) => (DESK_TOOLS as readonly string[]).includes(t)));
   assert.deepEqual(fake.tools(), ["match_buyer", "search_market_requests"]);
 
-  const off = await staffRecommendations({ email: "miles@example.test", env: {}, fetcher: fake.fetcher });
-  assert.deepEqual(off.buyers, { status: "not-configured" });
+  assert.equal(recs.crm, "not-connected");
+  assert.deepEqual(recs.live, { yours: { status: "no-agent" }, onListings: [], unassigned: [], unheld: [] });
+
+  const noMarket = await staffRecommendations({ email: "miles@example.test", env: { BOPS_OWNER_EMAILS: "miles@example.test" }, fetcher: fake.fetcher, intakeRoot });
+  assert.deepEqual(noMarket.buyers, { status: "not-configured" });
+
+  const before = fake.tools().length;
+  const off = await staffRecommendations({ email: "miles@example.test", env: {}, fetcher: fake.fetcher, intakeRoot });
+  assert.deepEqual(off.buyers, { status: "owners-only" });
   assert.equal(off.unassigned, null, "without BOPS_OWNER_EMAILS nobody is an owner");
+  assert.equal(off.live.unassigned, null);
+  assert.equal(fake.tools().length, before);
 });
 
 test("a live Match shape: listing_ref, reason, recommended_contact.url, and a matches array; route_to unassigned is not routed; contact phone stays out of the view", async () => {

@@ -1,0 +1,9 @@
+import { serveMedia } from "@/realty/node/media-route.ts";
+
+export const dynamic = "force-dynamic";
+
+/** Staff only: the thumb of a stored listing photo by its content hash. Never public, never a directory listing. */
+export async function GET(request: Request, ctx: { params: Promise<{ hash: string }> }) {
+  const { hash } = await ctx.params;
+  return serveMedia(request, hash, true);
+}

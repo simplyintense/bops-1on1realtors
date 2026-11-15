@@ -84,10 +84,6 @@
   font-weight: 600;
 }
 
-.rt-nav .rt-back {
-  margin-left: auto;
-}
-
 /* Text */
 .rt-eyebrow {
   font-size: 0.75rem;
@@ -153,6 +149,32 @@
 
 .rt-btn:hover {
   background: hsl(var(--brand-purple-dark));
+}
+
+/* A small toggle (the match follow-up buttons): pressed shows the current status. */
+.rt-chip {
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.rt-chip:hover {
+  border-color: hsl(var(--primary));
+}
+
+.rt-chip[aria-pressed="true"] {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.rt-chip:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .rt-field {

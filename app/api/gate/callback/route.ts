@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   const email = idToken ? emailFromIdToken(idToken, cfg.clientId) : null;
   if (!email) return page(400, "Google didn't confirm an email address. Please try again.");
   if (!emailAllowed(email, cfg.allowed)) return page(403, "This Google account isn't on the 1on1 Realtors team list. Ask Miles to add it.");
-  const res = NextResponse.redirect(new URL(safeNext(typeof st.next === "string" ? st.next : "/"), cfg.publicUrl));
+  const res = NextResponse.redirect(new URL(safeNext(typeof st.next === "string" ? st.next : null), cfg.publicUrl));
   res.cookies.set(GATE_COOKIE, await makeSession(email, cfg), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: SESSION_SECONDS });
   res.cookies.set(GATE_STATE_COOKIE, "", { path: "/api/gate/", maxAge: 0 });
   return res;

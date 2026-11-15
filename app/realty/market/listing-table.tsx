@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import type { CoBrokeHit } from "@/realty/flow/market-search.ts";
 import { moneyLabel } from "@/realty/flow/market-search.ts";
+import { ContactBlock } from "../contact-block";
 
 /**
  * The results table and the hover/tap card. Listings themselves are loaded on the server; this file only
@@ -51,6 +52,7 @@ export function ListingTable({ listings }: { listings: CoBrokeHit[] }) {
             <th className="px-3 py-2 font-semibold">Photo</th>
             <th className="px-3 py-2 font-semibold">Title</th>
             <th className="px-3 py-2 font-semibold">Source</th>
+            <th className="px-3 py-2 font-semibold">Agent</th>
             <th className="px-3 py-2 font-semibold">First seen</th>
             <th className="px-3 py-2 font-semibold">Last seen</th>
             <th className="px-3 py-2 font-semibold">Beds</th>
@@ -97,6 +99,16 @@ export function ListingTable({ listings }: { listings: CoBrokeHit[] }) {
                 )}
               </td>
               <td className="rt-muted px-3 py-2">{sourceLabel(h.source)}</td>
+              <td className="px-3 py-2">
+                {h.agent || h.agency ? (
+                  <>
+                    {h.agent ? <span className="block font-medium">{h.agent}</span> : null}
+                    {h.agency ? <span className="rt-muted block text-xs">{h.agency}</span> : null}
+                  </>
+                ) : (
+                  "—"
+                )}
+              </td>
               <td className="rt-muted whitespace-nowrap px-3 py-2">{h.firstSeen ?? "—"}</td>
               <td className="rt-muted whitespace-nowrap px-3 py-2">{h.lastSeen ?? "—"}</td>
               <td className="px-3 py-2">{h.beds ?? "—"}</td>
@@ -132,9 +144,10 @@ function ListingCard({ h, onClose, onShow, onHide }: { h: CoBrokeHit; onClose: (
           {h.area ? ` · ${h.area}` : ""}
         </p>
         <p className="rt-muted mt-1">Last change: {h.lastSeen ?? "—"}</p>
+        <ContactBlock c={h} listing={h} />
         <div className="mt-3 flex items-center justify-between gap-3">
           {h.url ? (
-            <a href={h.url} target="_blank" rel="noopener noreferrer" className="rt-link">
+            <a href={h.url} target="_blank" rel="noopener noreferrer" className="rt-link" onClick={(e) => e.stopPropagation()}>
               Open listing
             </a>
           ) : (
