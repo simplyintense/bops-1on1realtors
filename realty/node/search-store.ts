@@ -287,9 +287,13 @@ function toItem(raw: SourceRow, side: Side, terms: readonly KnownTerm[], over?: 
 /** The same parsed ask: category, place, type, sale or rent, beds and price. Nulls match nulls. */
 function sameAsk(a: Item | Rec, b: Rec): boolean {
   const placeOf = (x: Item | Rec) => normalizeText(x.area) || normalizeText(x.development);
+  const place = placeOf(a);
+  // No place, beds or price: leave folding to near-identical text, so two underspecified
+  // but different asks (e.g. Carnival for 1 person vs 8) stay separate.
+  if (!place && a.beds == null && b.beds == null && a.price == null && b.price == null) return false;
   return (
     a.category === b.category &&
-    placeOf(a) === placeOf(b) &&
+    place === placeOf(b) &&
     (a.type ?? null) === (b.type ?? null) &&
     (a.listingType ?? null) === (b.listingType ?? null) &&
     (a.beds ?? null) === (b.beds ?? null) &&

@@ -55,7 +55,7 @@ export function termIn(text: string, term: string): boolean {
 
 /** A shorter term that must not fire when a longer compound place is present (bare "savannah" vs Savannah Mews). */
 const TERM_EXCEPTIONS: Record<string, string[]> = {
-  savannah: ["savannah mews", "grand savannah"],
+  savannah: ["savannah mews", "grand savannah", "caroni savannah", "savannah villas"],
 };
 
 /** Drop blocked compound phrases, then test whether the term still remains. */

@@ -188,6 +188,19 @@ test("vague posts merge on near-identical text only, never on an empty ask", () 
   assert.deepEqual(queue.find((q) => q.messageIds.length === 2)?.groups, ["Test Group A", "Test Group B"]);
 });
 
+test("two underspecified shortlet asks with different wording do not merge on type alone", () => {
+  const base = { area: null, development: null, price: null, beds: null, type: "carnival rental", listingType: "shortlet", category: "rental_request", set: "demand" };
+  const root = world({
+    demand: [
+      post({ messageId: "c-1", sentAt: "2026-11-02T12:00:00.000Z", ...base, originalText: "Looking for Carnival rental for one person from Jan 15- end February." }),
+      post({ messageId: "c-2", sentAt: "2026-11-03T12:00:00.000Z", ...base, originalText: "Looking for Carnival rental for 8 persons from Jan 31 - Feb 14th." }),
+    ],
+  });
+  syncFromJsonl(root);
+  const rows = rowsOf(root, "demand");
+  assert.equal(rows.length, 2, "party size and dates differ, so they stay two records");
+});
+
 test("sync is idempotent, skips the rebuild when the JSONL is unchanged, and rebuilds when a message is rewritten", () => {
   const root = world({ supply: [post({ messageId: "i-1" })] });
   const first = syncFromJsonl(root);

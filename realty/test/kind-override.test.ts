@@ -45,6 +45,8 @@ test("bare savannah is Queen's Park Savannah, but Savannah Mews and Grand Savann
   assert.equal(applyKnownTerms({ area: null, development: null, type: null, listingType: null }, "Rental close to the Savannah, 1-2 bed", terms).area, "Queen's Park Savannah");
   assert.equal(applyKnownTerms({ area: null, development: null, type: null, listingType: null }, "Savannah Mews 2 bed for rent", terms).area, "Belmont");
   assert.equal(applyKnownTerms({ area: null, development: null, type: null, listingType: null }, "Grand Savannah townhouse", terms).area, "Grand Savannah");
+  assert.equal(applyKnownTerms({ area: null, development: null, type: null, listingType: null }, "Land on Caroni savannah road / Charlieville down to Perseverance", terms).area, null);
+  assert.equal(applyKnownTerms({ area: null, development: null, type: null, listingType: null }, "FOR SALE SAVANNAH VILLAS BUILDING 5", terms).area, null);
 });
 
 test("a kind override moves a misfiled listing to supply, and a reparse does not put it back", () => {
