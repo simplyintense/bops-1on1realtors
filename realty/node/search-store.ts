@@ -41,7 +41,7 @@ export const CROSS_POST_DAYS = 3;
 export const ASK_CROSS_POST_DAYS = ASK_FOLD_DAYS;
 /** Token-set similarity at or above this counts as near-identical text. */
 const NEAR_IDENTICAL = 0.9;
-const SCHEMA_VERSION = "4";
+const SCHEMA_VERSION = "5";
 export const SEARCH_DB = "search.db";
 const DAY_MS = 86_400_000;
 /** Places are Trinidad and Tobago, which does not observe DST: AST is always UTC-4. */

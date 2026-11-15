@@ -36,6 +36,12 @@ test("the same-ask rule: same place, beds, type, sale or rent, budget within 10%
   assert.ok(ASK_BUDGET_TOLERANCE === 0.1);
 });
 
+test("a house and a townhouse from one sender are the same ask; a house and an apartment are not", () => {
+  assert.equal(sameDemandAsk(FACTS({ type: "house" }), FACTS({ type: "townhouse" })), true);
+  assert.equal(sameDemandAsk(FACTS({ type: "house" }), FACTS({ type: "apartment" })), false);
+  assert.equal(sameDemandAsk(FACTS({ type: null }), FACTS({ type: "apartment" })), true, "no type given agrees with any");
+});
+
 test("a development and its parent area are the same broad area; two different developments in one parent are not", () => {
   const parent = FACTS({ area: "Westmoorings", development: null });
   assert.equal(sameDemandAsk(FACTS({ area: "Westmoorings", development: "La Fontaine" }), parent), true, "a development and its parent");

@@ -9,7 +9,7 @@ import { placeKey } from "./taught-areas.ts";
  * near-identical asks that are still left, per sender and listing. Both sides are the parsed fields, so one rule serves both. Pure.
  *
  * Same when: the category and sale or rent agree; the same place, or a development and its parent area; beds agree (no beds
- * matches no beds only); the type agrees, or one side gives none; the budget is within ASK_BUDGET_TOLERANCE in TT$. An ask with
+ * matches no beds only); the type agrees (a house and a townhouse agree), or one side gives none; the budget is within ASK_BUDGET_TOLERANCE in TT$. An ask with
  * no place, no beds and no budget is never the same as another, so two underspecified asks (a Carnival rental for one person and
  * one for eight) stay apart.
  */
@@ -59,7 +59,13 @@ function budgetSame(a: AskFacts, b: AskFacts): boolean {
   return Math.abs(x - y) <= ASK_BUDGET_TOLERANCE * Math.max(x, y);
 }
 
-const typeSame = (a: string | null, b: string | null) => !a || !b || a.trim().toLowerCase() === b.trim().toLowerCase();
+/** Kinds people use for the same ask: a "house" and a "townhouse" from one sender are one ask (parsing varies between reposts). */
+const TYPE_FAMILY: Record<string, string> = { house: "house", townhouse: "house" };
+const typeKey = (t: string) => {
+  const k = t.trim().toLowerCase();
+  return TYPE_FAMILY[k] ?? k;
+};
+const typeSame = (a: string | null, b: string | null) => !a || !b || typeKey(a) === typeKey(b);
 
 /** The same ask (see the header). Pure; the time window is the caller's. */
 export function sameDemandAsk(a: AskFacts, b: AskFacts): boolean {
