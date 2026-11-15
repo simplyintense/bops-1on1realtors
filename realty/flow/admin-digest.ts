@@ -154,7 +154,6 @@ export const INTRO_BODY = [
   "Please have a look and let me know if you'd rather forward these to the agents yourself, or if you'd like the agents to follow up from the Desk.",
 ];
 export const INTRO_EMPTY = "There are no new strong matches waiting for a follow-up today, so nothing needs forwarding.";
-export const INTRO_SIGN = ["Thanks,", "Miles"];
 
 /** The subject: "Today's listing matches (3)". */
 export function digestSubject(n: number): string {
@@ -179,30 +178,46 @@ export function buildAdminDigest(rows: readonly LeadInput[], o: { statuses: read
 
 /* ---------------- Plain text ---------------- */
 
+/*
+ * The plain text and the HTML say the same words, in the same order: digestTextFromHtml(html) and text agree once whitespace is
+ * collapsed (the test checks it). So the headings carry no decoration (no dashes), and every link shows its own URL.
+ */
+
 function renderText(groups: readonly DigestGroup[], matches: number): string {
   const out: string[] = [INTRO_HELLO, ""];
   if (matches) out.push(...INTRO_BODY.flatMap((p) => [p, ""]));
   else out.push(INTRO_EMPTY, "");
-  out.push(...INTRO_SIGN, "");
   for (const g of groups) {
-    out.push(`---- ${g.agent}: ${g.matches.length} match${g.matches.length === 1 ? "" : "es"} ----`, "");
+    out.push(`${g.agent}: ${countWord(g.matches.length)}`, "");
     g.matches.forEach((m, i) => out.push(...matchText(m, i + 1), ""));
   }
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
 
+/** "1 match" or "2 matches". */
+const countWord = (n: number): string => `${n} match${n === 1 ? "" : "es"}`;
+
+const NO_PRICE = "no price listed";
+const NO_POSTED = "time not given";
+const NO_LINK = "no link on file";
+const NO_WA = "No usable WhatsApp number on this ask, so there's no link.";
+const WA_LABEL = "WhatsApp, with the message filled in (opens in your own browser):";
+const DESK_LABEL = "Record how it went on the Desk:";
+const NOTE_USD = "this ask was in US$; the TT$ figure is the fixed-rate equivalent.";
+
 function matchText(m: DigestMatch, n: number): string[] {
-  const lines = [`${n}. ${m.listing.title} (score ${m.score})`];
-  lines.push(`   Price: ${m.listing.price ?? "no price listed"}`);
+  const lines = [`${n}. ${m.listing.title}`];
+  lines.push(`   Price: ${m.listing.price ?? NO_PRICE}`);
   lines.push(`   Ask: ${m.ask}`);
-  if (m.usd) lines.push("   Note: this ask was in US$; the TT$ figure is the fixed-rate equivalent.");
-  lines.push(`   Posted: ${m.posted || "time not given"}`);
+  if (m.usd) lines.push(`   Note: ${NOTE_USD}`);
+  lines.push(`   Posted: ${m.posted || NO_POSTED}`);
   lines.push(`   From: ${m.from}`);
-  lines.push(`   Listing: ${m.listing.url ?? "no link on file"}`);
+  lines.push(`   Listing: ${m.listing.url ?? NO_LINK}`);
+  lines.push(`   Score: ${m.score}`);
   lines.push("   Suggested message:");
   lines.push(`     ${m.message}`);
-  lines.push(m.waUrl ? `   WhatsApp, with the message filled in (opens in your own browser): ${m.waUrl}` : "   No usable WhatsApp number on this ask, so there's no link.");
-  lines.push(`   Record how it went on the Desk: ${m.deskUrl}`);
+  lines.push(m.waUrl ? `   ${WA_LABEL} ${m.waUrl}` : `   ${NO_WA}`);
+  lines.push(`   ${DESK_LABEL} ${m.deskUrl}`);
   return lines;
 }
 
@@ -213,48 +228,51 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 }
 
+/**
+ * The HTML body, for pasting into an email draft that rejects any style attribute: only p, h3, ul, li, a, br and strong (plus the
+ * html and body wrapper), and href is the only attribute, on a. No inline CSS, no class, no id. The mail client adds the signature.
+ */
 function renderHtml(groups: readonly DigestGroup[], matches: number): string {
   const e = escapeHtml;
   const paras = matches ? INTRO_BODY : [INTRO_EMPTY];
-  const body = groups
-    .map(
-      (g) =>
-        `<h2 style="font-size:17px;margin:28px 0 8px">${e(g.agent)} <span style="color:#666;font-weight:normal">(${g.matches.length})</span></h2>` +
-        g.matches.map((m, i) => matchHtml(m, i + 1)).join(""),
-    )
-    .join("");
-  return [
-    `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#111;font-size:15px;line-height:1.45;max-width:640px;margin:24px auto;padding:0 16px">`,
-    `<p>${e(INTRO_HELLO)}</p>`,
-    ...paras.map((p) => `<p>${e(p)}</p>`),
-    `<p>${e(INTRO_SIGN[0])}<br>${e(INTRO_SIGN[1])}</p>`,
-    body,
-    `</body></html>`,
-  ].join("\n");
+  const body = groups.map((g) => `<h3>${e(g.agent)}: ${e(countWord(g.matches.length))}</h3>` + g.matches.map((m, i) => matchHtml(m, i + 1)).join("")).join("");
+  return ["<!doctype html>", "<html><body>", `<p>${e(INTRO_HELLO)}</p>`, ...paras.map((p) => `<p>${e(p)}</p>`), body, "</body></html>"].join("\n");
 }
 
 function matchHtml(m: DigestMatch, n: number): string {
   const e = escapeHtml;
-  const rows = [
-    `<li><strong>Price:</strong> ${e(m.listing.price ?? "no price listed")}</li>`,
+  const items = [
+    `<li><strong>Price:</strong> ${e(m.listing.price ?? NO_PRICE)}</li>`,
     `<li><strong>Ask:</strong> ${e(m.ask)}</li>`,
-    m.usd ? `<li><strong>Note:</strong> this ask was in US$; the TT$ figure is the fixed-rate equivalent.</li>` : "",
-    `<li><strong>Posted:</strong> ${e(m.posted || "time not given")}</li>`,
+    m.usd ? `<li><strong>Note:</strong> ${e(NOTE_USD)}</li>` : "",
+    `<li><strong>Posted:</strong> ${e(m.posted || NO_POSTED)}</li>`,
     `<li><strong>From:</strong> ${e(m.from)}</li>`,
-    `<li><strong>Listing:</strong> ${m.listing.url ? `<a href="${e(m.listing.url)}">${e(m.listing.url)}</a>` : "no link on file"}</li>`,
+    `<li><strong>Listing:</strong> ${m.listing.url ? `<a href="${e(m.listing.url)}">${e(m.listing.url)}</a>` : e(NO_LINK)}</li>`,
     `<li><strong>Score:</strong> ${m.score}</li>`,
   ].join("");
-  const wa = m.waUrl
-    ? `<a href="${e(m.waUrl)}">Open WhatsApp with the message filled in</a>`
-    : "No usable WhatsApp number on this ask, so there&#39;s no link.";
+  const wa = m.waUrl ? `<p>${e(WA_LABEL)} <a href="${e(m.waUrl)}">${e(m.waUrl)}</a></p>` : `<p>${e(NO_WA)}</p>`;
   return (
-    `<div style="border-top:1px solid #ddd;padding:12px 0">` +
-    `<p style="margin:0 0 6px"><strong>${n}. ${e(m.listing.title)}</strong></p>` +
-    `<ul style="margin:0 0 8px;padding-left:18px">${rows}</ul>` +
-    `<p style="margin:0 0 4px"><strong>Suggested message</strong></p>` +
-    `<blockquote style="margin:0 0 8px;padding:8px 12px;background:#f6f6f6;border-left:3px solid #ccc">${e(m.message)}</blockquote>` +
-    `<p style="margin:0 0 4px">${wa}</p>` +
-    `<p style="margin:0">Record how it went on the Desk: <a href="${e(m.deskUrl)}">${e(m.deskUrl)}</a></p>` +
-    `</div>`
+    `<p><strong>${n}. ${e(m.listing.title)}</strong></p>` +
+    `<ul>${items}</ul>` +
+    `<p><strong>Suggested message:</strong><br>${e(m.message)}</p>` +
+    wa +
+    `<p>${e(DESK_LABEL)} <a href="${e(m.deskUrl)}">${e(m.deskUrl)}</a></p>`
   );
+}
+
+const HTML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/**
+ * The words of an HTML body as plain text: line breaks at <br>, </p>, </li>, </h3> and </ul>, the tags dropped, and the entities
+ * decoded. The plain-text body and this must say the same words (the test checks them, whitespace collapsed). Pure.
+ */
+export function digestTextFromHtml(html: string): string {
+  const withBreaks = html.replace(/<br\s*\/?>|<\/(?:p|li|h3|ul)>/gi, "\n");
+  return withBreaks
+    .replace(/<[^>]+>/g, "")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (_, name: string) => {
+      if (name[0] === "#") return String.fromCodePoint(name[1].toLowerCase() === "x" ? Number.parseInt(name.slice(2), 16) : Number.parseInt(name.slice(1), 10));
+      return HTML_ENTITIES[name.toLowerCase()] ?? `&${name};`;
+    })
+    .replace(/\n{2,}/g, "\n");
 }

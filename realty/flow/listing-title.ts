@@ -32,6 +32,11 @@ const BEDS_IN_TITLE_RE = /\b(\d{1,2})\s*-?\s*(?:br|bd|bed|beds|bedroom|bedrooms)
 const CONNECTORS = new Set(["of", "and", "the", "at", "in", "on", "a", "an", "de", "la", "du", "to", "by", "for"]);
 /** A street is used as a name only when it's this short; a long address is never dumped into a title. */
 const STREET_MAX = 40;
+/** Punctuation left dangling at the start or end of a name or a segment once words are taken out ("Name -", "Name …", "Name,"). */
+const EDGE_PUNCT_RE = /^[\s,.;:|\/&+*…\-–—]+|[\s,.;:|\/&+*…\-–—]+$/g;
+/** Connector words left dangling by the same stripping ("Name or Townhouse" → "Name or" → "Name"). Whole words only. */
+const LEAD_CONNECTOR_RE = /^(?:or|and|of|for|with|to|by|vs)\b/i;
+const TRAIL_CONNECTOR_RE = /\b(?:or|and|of|for|with|to|by|vs)$/i;
 
 /** The listing type word in a title, canonical (apartment, townhouse, house, condo, villa, land, commercial, office), or null. */
 export function typeOfTitle(title: string): string | null {
@@ -68,14 +73,29 @@ function titleCase(s: string): string {
   });
 }
 
-/** The title with the boilerplate, the beds, the baths, the price and the type words taken out, tidied and title-cased. */
+/**
+ * One comma-separated segment, tidied: dangling punctuation and connector words come off both ends, again and again until
+ * neither is left. A segment that's only punctuation or connectors comes back "" (and the caller drops it).
+ */
+function tidySegment(seg: string): string {
+  let t = seg.replace(/\s+/g, " ").trim();
+  for (;;) {
+    const before = t;
+    t = t.replace(EDGE_PUNCT_RE, "").replace(LEAD_CONNECTOR_RE, "").replace(TRAIL_CONNECTOR_RE, "").trim();
+    if (t === before) return t;
+  }
+}
+
+/**
+ * The title with the boilerplate, the beds, the baths, the price and the type words taken out, then each comma-separated
+ * segment tidied (no dangling connectors or punctuation), empty segments dropped, and title-cased.
+ */
 function nameOf(title: string): string {
   let s = (title ?? "").replace(/\s+/g, " ");
   s = s.replace(FOR_SALE_RE, " ").replace(BATH_RE, " ").replace(BED_RE, " ").replace(BEDWORD_RE, " ").replace(PRICE_RE, " ").replace(TYPE_RE, " ");
   s = s.replace(/\s+[-–—|/]\s+/g, ", ");
-  s = s.replace(/\s+,/g, ",").replace(/,(?:\s*,)+/g, ",").replace(/\s{2,}/g, " ");
-  s = s.replace(/^[\s,.;:|\-–—]+|[\s,.;:|\-–—]+$/g, "");
-  return titleCase(s);
+  const segments = s.split(",").map(tidySegment).filter(Boolean);
+  return titleCase(segments.join(", "));
 }
 
 /** Letters and digits only, lower-cased and padded, so "Petit Valley" finds itself as a whole word and not inside another word. */
@@ -84,7 +104,8 @@ const words = (s: string): string => ` ${s.toLowerCase().replace(/[^\p{L}\p{N}]+
 /** The short street from an address: its first part, with a leading house number dropped; "" when there's none or it's long. */
 function streetOf(address: string | null | undefined): string {
   const first = (address ?? "").split(",")[0].trim().replace(/^(?:#\s*)?\d[\d\-/A-Za-z]*\s+/, "").trim();
-  return first && first.length <= STREET_MAX ? titleCase(first) : "";
+  const tidy = tidySegment(first);
+  return tidy && tidy.length <= STREET_MAX ? titleCase(tidy) : "";
 }
 
 /**
@@ -99,7 +120,7 @@ export function shortListingTitle(l: ShortTitleInput): string {
   const beds = l.beds && l.beds > 0 ? l.beds : titleBeds ? Number(titleBeds[1]) : null;
   const type = l.type?.trim() ? canonicalType(l.type.trim()) : typeOfTitle(l.title ?? "");
   const name = nameOf(l.title ?? "") || streetOf(l.address);
-  const area = l.area?.trim() ? titleCase(l.area.trim()) : "";
+  const area = l.area?.trim() ? titleCase(tidySegment(l.area)) : "";
   const parts: string[] = [];
   if (name) parts.push(name);
   if (area && !(name && words(name).includes(words(area)))) parts.push(area);

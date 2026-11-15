@@ -102,8 +102,27 @@ export type LeadsView = { cards: LeadCardView[]; /** Cards hidden as not a fit o
 
 /* ---------------- Words ---------------- */
 
-/** A usable first name from a sender's name, or null: the first word, letters only, two or more. Never a number or a phone. */
+/** Words that mark a company, not a person (matched as whole words, lower-case; "Real Estate" is checked as a pair below). */
+const COMPANY_WORDS = new Set([
+  "realty", "realtors", "limited", "ltd", "properties", "property", "company", "co", "inc", "incorporated", "llc", "llp", "plc",
+  "group", "holdings", "associates", "agency", "agencies", "brokerage", "services", "enterprises", "corp", "corporation",
+]);
+
+/**
+ * True when a sender's name is a company ("DRL Realty Limited", "Bar Co.", "Westside Group"): a company word as a whole word, or
+ * "Real Estate". Dots are dropped first, so "Co." and "Inc." match and "Cole" or "Incorporate" don't. Pure.
+ */
+export function isCompanyName(name: string | null | undefined): boolean {
+  const words = (name ?? "").toLowerCase().replace(/\./g, "").match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.some((w, i) => COMPANY_WORDS.has(w) || (w === "real" && words[i + 1] === "estate"));
+}
+
+/**
+ * A usable first name from a sender's name, or null: the first word, letters only, two or more. Never a number or a phone, and
+ * never a company (the greeting is then just "Hi,").
+ */
 export function firstNameOf(name: string | null): string | null {
+  if (isCompanyName(name)) return null;
   const first = (name ?? "").trim().split(/\s+/)[0] ?? "";
   return /^\p{L}[\p{L}'’-]*$/u.test(first) && first.length >= 2 ? first : null;
 }

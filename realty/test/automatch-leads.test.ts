@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { GATE_COOKIE, gateConfig, makeSession } from "../../lib/gate.ts";
 import { MemoryAreaResolver } from "../flow/areas.ts";
-import { matchedAt, isStale, LEAD_STALE_MS, leadCardId, leadMessage, leadsView, canSeeLead, firstNameOf, waUrlFor, askLine, type LeadInput, type MatchSeenRow } from "../flow/automatch-leads.ts";
+import { matchedAt, isStale, LEAD_STALE_MS, leadCardId, leadMessage, leadsView, canSeeLead, firstNameOf, isCompanyName, waUrlFor, askLine, type LeadInput, type MatchSeenRow } from "../flow/automatch-leads.ts";
 import { shortListingTitle, listingTypeWord } from "../flow/listing-title.ts";
 import { applyStatus, isHidden, MATCH_STATUSES, parseStatusPost, STATUS_LABEL, type StatusRow } from "../flow/match-status.ts";
 import type { CrmSeam, SeamAgent } from "../flow/crm-seam.ts";
@@ -86,6 +86,36 @@ test("with no usable name the greeting is just \"Hi,\", and with no listing link
   assert.equal(firstNameOf(null), null);
 });
 
+test("a company sender gets \"Hi,\", never its first word: DRL Realty Limited is not 'DRL'", () => {
+  const companies = ["DRL Realty Limited", "Acme Properties", "Foo Ltd", "Bar Co.", "Baz Inc", "Real Estate Plus", "Westside Group", "Quay Holdings LLC", "Corp Services"];
+  for (const name of companies) {
+    assert.equal(isCompanyName(name), true, name);
+    assert.equal(firstNameOf(name), null, name);
+    assert.match(leadMessage(LEAD({}, { senderName: name })), /^Hi, I hear you/, name);
+  }
+  assert.match(leadMessage(LEAD({}, { senderName: "DRL Realty Limited" })), /^Hi, I hear you have a client looking for a 3 bed townhouse in Maraval/);
+});
+
+test("company words match whole words only: Co, Inc and the rest don't fire inside other words", () => {
+  for (const name of ["Cole Tester", "Cora Tester", "Incognito Tester", "Dana Coley", "Groupie Tester", "Dana Ltdless"]) {
+    assert.equal(isCompanyName(name), false, name);
+  }
+  assert.equal(isCompanyName("Dana Co"), true, "Co on its own, as a word, is a company word");
+  assert.equal(firstNameOf("Dana Cole"), "Dana");
+  assert.equal(firstNameOf("Cora"), "Cora");
+  assert.equal(firstNameOf("Incognito"), "Incognito");
+});
+
+test("people keep their first name; a phone, a single letter and no name stay \"Hi,\"", () => {
+  for (const [name, first] of [["Dana Tester", "Dana"], ["Émile", "Émile"]] as const) {
+    assert.equal(isCompanyName(name), false, name);
+    assert.equal(firstNameOf(name), first, name);
+  }
+  for (const name of ["+1 868 555 0199", "A", null, "", "   "]) assert.equal(firstNameOf(name), null, String(name));
+  assert.match(leadMessage(LEAD({}, { senderName: "+1 868 555 0199" })), /^Hi, I hear you/);
+  assert.match(leadMessage(LEAD({}, { senderName: null })), /^Hi, I hear you/);
+});
+
 test("a USD ask and a rent say so: the money in US$ with TT$, and a month for a rent", () => {
   assert.match(askLine(LEAD({}, { currency: "USD", budget: 650_000 }).ask), /^Looking to buy a 3-bed townhouse in Maraval, asked in US\$ \(US\$650k ≈ TT\$/);
   const rent = leadMessage(LEAD({}, { listingType: "rent", budget: 9000, currency: "TTD" }, { price: 9000 }));
@@ -154,6 +184,50 @@ test("land with no beds: the type word is land and no beds are said", () => {
   assert.equal(listingTypeWord("LOT 5 GASPAREE LAND FOR SALE", null), "land");
   assert.equal(listingTypeWord("THIRD URBAN", "commercial"), "commercial", "the CRM's kind counts when the title has no type word");
   assert.equal(listingTypeWord("THIRD URBAN", "rental"), null, "a rental or a sale isn't a type word");
+});
+
+test("no trailing connectors: 'or', 'and' and the rest come off the end of the name, and off the start too", () => {
+  assert.equal(shortListingTitle({ title: "Name or Townhouse For Sale" }), "Name, townhouse");
+  assert.equal(shortListingTitle({ title: "Name or Townhouse For Sale", area: "Maraval" }), "Name, Maraval, townhouse");
+  assert.equal(shortListingTitle({ title: "Maraval Heights and" }), "Maraval Heights");
+  assert.equal(shortListingTitle({ title: "And Maraval Heights" }), "Maraval Heights");
+  assert.equal(shortListingTitle({ title: "Maraval Heights, with, to" }), "Maraval Heights");
+  assert.equal(shortListingTitle({ title: "Or And" }), "Listing", "nothing left but connectors: no name");
+  assert.equal(shortListingTitle({ title: "Major Heights" }), "Major Heights", "a connector inside a word stays");
+  assert.equal(shortListingTitle({ title: "Sandy Bay Or" }), "Sandy Bay", "a word ending in 'and' or 'or' is not a connector");
+});
+
+test("house and land, area: 'and' goes with the stripped type words, and the area is kept", () => {
+  assert.equal(shortListingTitle({ title: "House and Land, Maraval" }), "Maraval, house");
+  assert.equal(shortListingTitle({ title: "House and Land, Maraval", beds: 3 }), "Maraval, 3-bed house");
+});
+
+test("no dangling punctuation: trailing hyphens, commas, slashes and ellipses come off each segment and the whole", () => {
+  assert.equal(shortListingTitle({ title: "Westmoorings -" }), "Westmoorings");
+  assert.equal(shortListingTitle({ title: "Westmoorings,, - " }), "Westmoorings");
+  assert.equal(shortListingTitle({ title: "Westmoorings /" }), "Westmoorings");
+  assert.equal(shortListingTitle({ title: "Westmoorings …" }), "Westmoorings");
+  assert.equal(shortListingTitle({ title: "Name - - Area" }), "Name, Area", "a doubled separator drops its empty segment");
+  assert.equal(shortListingTitle({ title: "Glencoe, , Westmoorings ,", beds: 2 }), "Glencoe, Westmoorings, 2-bed");
+  assert.equal(shortListingTitle({ title: "Westmoorings", area: "Glencoe,", beds: 2 }), "Westmoorings, Glencoe, 2-bed", "a structured area is tidied too");
+});
+
+test("the production case: 'Large 3-Storey Building or Commercial …' leaves no 'or,' behind; no development name is invented", () => {
+  const title = "Frederick Street, Port of Spain, Large 3-Storey Building or Commercial … For Sale";
+  const out = shortListingTitle({ title, area: "Port of Spain" });
+  assert.equal(out, "Frederick Street, Port of Spain, Large 3-Storey Building, commercial");
+  assert.doesNotMatch(out, /\bor\b|…|,\s*,|\s{2,}|^[\s,]|[\s,]$/);
+  assert.equal(shortListingTitle({ title: "Large 3-Storey Building or Commercial For Sale", area: "Frederick Street" }), "Large 3-Storey Building, Frederick Street, commercial", "the name, then the area, then the type");
+});
+
+test("the existing short titles still come out the same: names, areas, beds, land, a street, no price, no duplicate area", () => {
+  assert.equal(shortListingTitle({ title: "WEST HILLS, PETIT VALLEY 3BR Apartment For Sale", area: "Petit Valley", beds: 3, type: "apartment" }), "West Hills, Petit Valley, 3-bed apartment");
+  assert.equal(shortListingTitle({ title: "NEWBURY HILL EXTENSION", area: "Glencoe", beds: 3, type: null }), "Newbury Hill Extension, Glencoe, 3-bed");
+  assert.equal(shortListingTitle({ title: "THIRD URBAN", beds: null, area: null }), "Third Urban");
+  assert.equal(shortListingTitle({ title: "LOT 5 GASPAREE LAND FOR SALE", area: "Gasparee", beds: null }), "Lot 5 Gasparee, land");
+  assert.equal(shortListingTitle({ title: "", address: "12 Lady Chancellor Road, Maraval", area: "Maraval" }), "Lady Chancellor Road, Maraval");
+  assert.doesNotMatch(shortListingTitle({ title: "THIRD URBAN TT$3.7M", beds: 3, area: "Glencoe" }), /TT|\$|3\.7/);
+  assert.equal(shortListingTitle({ title: "WEST HILLS, PETIT VALLEY", area: "Petit Valley" }), "West Hills, Petit Valley", "no duplicated area");
 });
 
 test("leadMessage and the card use the short title, and the message still never names a group, scanning, or Bops", () => {

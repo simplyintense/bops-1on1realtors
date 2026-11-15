@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { GATE_COOKIE, gateConfig, makeSession } from "../../lib/gate.ts";
 import { MemoryAreaResolver } from "../flow/areas.ts";
 import { dateAst } from "../flow/ast-time.ts";
-import { buildAdminDigest, digestRows, digestSendState, DEFAULT_PUBLIC_URL, DIGEST_SEND_FLAG, escapeHtml, INTRO_BODY, INTRO_EMPTY, parseDigestArgs, publicBaseUrl, SEND_REFUSED } from "../flow/admin-digest.ts";
+import { buildAdminDigest, digestRows, digestSendState, digestTextFromHtml, DEFAULT_PUBLIC_URL, DIGEST_SEND_FLAG, escapeHtml, INTRO_BODY, INTRO_EMPTY, parseDigestArgs, publicBaseUrl, SEND_REFUSED } from "../flow/admin-digest.ts";
 import { leadCardId, leadMessage, type LeadInput } from "../flow/automatch-leads.ts";
 import { MATCH_STATUSES, type StatusRow } from "../flow/match-status.ts";
 import type { CrmSeam, SeamAgent } from "../flow/crm-seam.ts";
@@ -88,9 +88,19 @@ test("one email to Crystal: a count in the subject, a plain body and an HTML bod
   assert.equal(d.matches, 3);
   assert.equal(d.agents, 3);
   assert.ok(d.text.startsWith("Hi Crystal,\n"), d.text.slice(0, 40));
-  assert.match(d.text, /\nThanks,\nMiles\n/);
   assert.ok(d.html.startsWith("<!doctype html>"));
   assert.match(d.html, /<p>Hi Crystal,<\/p>/);
+});
+
+test("no sign-off: the intro ends after the body paragraphs, and Gmail adds the signature (no Thanks, and no Miles)", () => {
+  const d = buildAdminDigest([ROW(), EVE_ROW()], BASE_OPTS);
+  assert.doesNotMatch(d.text, /Thanks|Miles/);
+  assert.doesNotMatch(d.html, /Thanks|Miles/);
+  assert.ok(d.text.includes(`${INTRO_BODY[1]}\n\nDana Holder: 1 match\n`), "the first heading follows the last intro paragraph");
+  assert.ok(d.html.includes(`<p>${escapeHtml(INTRO_BODY[1])}</p>\n<h3>Dana Holder: 1 match</h3>`), "the same in the HTML");
+  const empty = buildAdminDigest([], BASE_OPTS);
+  assert.doesNotMatch(empty.text, /Thanks|Miles/);
+  assert.match(empty.text, /^Hi Crystal,\n\n(?:.+\n)+$/, "the empty digest is the greeting and one line");
 });
 
 test("grouped by the holding agent, with the unassigned listings under Office, last", () => {
@@ -105,8 +115,8 @@ test("grouped by the holding agent, with the unassigned listings under Office, l
     ],
   );
   assert.equal(d.groups[2].office, true);
-  assert.match(d.text, /---- Dana Holder: 2 matches ----/);
-  assert.match(d.text, /---- Office \(unassigned listings\): 1 match ----/);
+  assert.match(d.text, /^Dana Holder: 2 matches$/m);
+  assert.match(d.text, /^Office \(unassigned listings\): 1 match$/m);
 });
 
 test("75 and above only: 74, 50 and below are left out; 75 is in", () => {
@@ -192,8 +202,82 @@ test("the listing: short title, price and its link; the agent's name only in the
   assert.equal(m.listing.title, "West Hills, Petit Valley, 3-bed apartment");
   assert.equal(m.listing.price, "TT$3.7m");
   assert.equal(m.listing.url, URL_A);
-  assert.match(d.text, /1\. West Hills, Petit Valley, 3-bed apartment \(score 90\)/);
+  assert.match(d.text, /^1\. West Hills, Petit Valley, 3-bed apartment$/m);
+  assert.match(d.text, /^   Score: 90$/m);
   assert.match(d.text, /Listing: https:\/\/1on1realtors\.com\/property\/third-urban/);
+});
+
+test("an already-in-touch match is left out of the digest, like any other outcome", () => {
+  const statuses: StatusRow[] = [{ requestId: RID_A, listingKey: KEY_A, status: "already-in-touch", by: OWNER, at: NOW.toISOString() }];
+  const d = buildAdminDigest([ROW(), EVE_ROW()], { statuses, baseUrl: BASE });
+  assert.equal(d.matches, 1, "THIRD URBAN, already in touch, is out; GLENCOE FLAT stays");
+  assert.equal(d.groups[0].matches[0].listing.url, URL_B);
+  assert.doesNotMatch(d.text, /THIRD URBAN|Third Urban/);
+  assert.doesNotMatch(d.html, /Third Urban/);
+});
+
+/* ---------------- HTML: simple tags only, and the same words as the text ---------------- */
+
+const ALLOWED_TAGS = new Set(["html", "body", "p", "h3", "ul", "li", "a", "br", "strong"]);
+
+/** Every tag and attribute in an HTML body: only the allowed tags, no style/class/id, and href only on an anchor. */
+function htmlProblems(html: string): string[] {
+  const problems: string[] = [];
+  for (const m of html.matchAll(/<\/?([a-z0-9]+)\b([^>]*)>/gi)) {
+    const tag = m[1].toLowerCase();
+    if (!ALLOWED_TAGS.has(tag)) problems.push(`tag <${tag}>`);
+    const attrs = m[2].trim();
+    if (attrs === "") continue;
+    if (tag !== "a" || !/^href="[^"]*"$/.test(attrs)) problems.push(`attribute "${attrs}" on <${tag}>`);
+  }
+  if (/\sstyle\s*=/i.test(html)) problems.push("a style attribute");
+  return problems;
+}
+
+/** The whitespace-normalized words of a body: what the text and the HTML must agree on. */
+const wordsOf = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+const DIGEST_CASES: [string, LeadInput[]][] = [
+  ["empty", []],
+  ["one match", [ROW()]],
+  ["a USD note", [ROW({}, { currency: "USD", budget: 650_000 })]],
+  ["no wa number", [ROW({}, { senderPhone: "" })]],
+  ["no listing link and no price", [ROW({}, {}, { url: null, price: null })]],
+  ["several agents, with the office", [ROW(), EVE_ROW(), OFFICE_ROW()]],
+  ["a name with markup, and an apostrophe", [ROW({}, { senderName: "<i>Dana</i> O'Neal" }, { title: "Tom & Jerry's & <b>flat</b>" })]],
+];
+
+test("the HTML has no style attribute, no class or id, and only the simple tags (p, h3, ul, li, a, br, strong)", () => {
+  for (const [label, rows] of DIGEST_CASES) {
+    const d = buildAdminDigest(rows, BASE_OPTS);
+    assert.deepEqual(htmlProblems(d.html), [], label);
+    assert.doesNotMatch(d.html, /style|class=|id=|blockquote|<div|<h2|<span/i, label);
+  }
+  const bad = htmlProblems(`<p>x</p><div>no</div><a title="t" href="h">y</a><p style="margin:0">z</p>`);
+  assert.ok(bad.includes("tag <div>"), "the checker catches a tag outside the set");
+  assert.ok(bad.includes('attribute "title="t" href="h"" on <a>'), "and an attribute other than href");
+  assert.ok(bad.includes('attribute "style="margin:0"" on <p>') && bad.includes("a style attribute"), "and a style attribute");
+});
+
+test("the text and the HTML say the same words, the same URLs included (whitespace collapsed), for every kind of digest", () => {
+  for (const [label, rows] of DIGEST_CASES) {
+    const d = buildAdminDigest(rows, BASE_OPTS);
+    assert.equal(wordsOf(d.text), wordsOf(digestTextFromHtml(d.html)), label);
+  }
+});
+
+test("digestTextFromHtml: tags and breaks come out, the entities decode, and links keep their URL as the words", () => {
+  assert.equal(digestTextFromHtml(`<p>a &amp; &lt;b&gt; &#39;x&#39; &quot;y&quot; &#x27;z&#x27;</p><ul><li>one</li><li>two</li></ul><p>Go to <a href="https://x.example/?a=1&amp;b=2">https://x.example/?a=1&amp;b=2</a><br>next</p>`), `a & <b> 'x' "y" 'z'\none\ntwo\nGo to https://x.example/?a=1&b=2\nnext\n`);
+  assert.equal(digestTextFromHtml(`<p>&unknown; stays</p>`), "&unknown; stays\n");
+});
+
+test("the wa.me and Desk links show their own URL as the words, in the HTML and in the text", () => {
+  const d = buildAdminDigest([ROW()], BASE_OPTS);
+  const m = d.groups[0].matches[0];
+  assert.ok(d.html.includes(`<a href="${m.waUrl}">${m.waUrl}</a>`), "the wa link's text is the URL");
+  assert.ok(d.html.includes(`<a href="${m.deskUrl}">${m.deskUrl}</a>`), "the Desk link's text is the URL");
+  assert.ok(d.text.includes(`WhatsApp, with the message filled in (opens in your own browser): ${m.waUrl}`));
+  assert.doesNotMatch(d.html, /Open WhatsApp|Open in WhatsApp/);
 });
 
 test("the intro and the body never mention bots, AI, Bops, Automatch, Periskope, group scanning or monitoring", () => {
