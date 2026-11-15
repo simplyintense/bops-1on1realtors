@@ -4,6 +4,7 @@ import { CachedAreaResolver, type AreaResolver } from "../flow/areas.ts";
 import { askOf, automatchPairs, bandOf, dedupeCounts, FAIR, foldSameSenderPairs, type AutomatchAsk, type AutomatchGroup, type Band } from "../flow/automatch.ts";
 import { CRM_UNREACHABLE_TEXT, type CrmListingsState, type CrmSeam, type SeamAgent } from "../flow/crm-seam.ts";
 import { learnFromFeedback, ourListingKey, listingFingerprint } from "../flow/agent-feedback.ts";
+import { listingTypeWord } from "../flow/listing-title.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import { aliasesOf } from "../flow/knowledge.ts";
 import { crmSeamFromEnv } from "./crm-shared.ts";
@@ -46,6 +47,10 @@ export type AutomatchRow = {
     /** The CRM's TTD equivalent (price_ttd_equiv), or null. Shown next to a USD price. */
     ttdEquiv: number | null;
     beds: number | null;
+    /** The listing's type word (apartment, townhouse, land…) from its title or the CRM's property kind, or null. */
+    type: string | null;
+    /** The listing's street address from the CRM, or null. */
+    address: string | null;
     /** The holding agent's name; "agent #id" when the id is known but not named; null when unassigned. */
     agentName: string | null;
     /** The holding agent's CRM id; null when unassigned (the office's). */
@@ -157,6 +162,8 @@ function rowOf(p: AutomatchGroup, d: SearchRow | undefined, names: Map<number, s
       currency: p.listing.currency,
       ttdEquiv: p.listing.ttdEquiv ?? null,
       beds: p.listing.beds || null,
+      type: listingTypeWord(p.listing.title, p.listing.propertyKind),
+      address: p.listing.address || null,
       agentName: holder == null ? null : (names.get(holder) ?? `agent #${holder}`),
       agentId: holder,
       fingerprint: listingFingerprint(p.listing),

@@ -28,7 +28,8 @@
     "realty:automatch": "node --experimental-strip-types --no-warnings realty/cli/automatch.ts",
     "realty:discover": "node --experimental-strip-types --no-warnings --env-file-if-exists=.env.local realty/cli/periskope-discover.ts",
     "realty:kind-override": "node --experimental-strip-types --no-warnings realty/cli/kind-override.ts",
-    "realty:area-teach": "node --experimental-strip-types --no-warnings realty/cli/area-teach.ts"
+    "realty:area-teach": "node --experimental-strip-types --no-warnings realty/cli/area-teach.ts",
+    "realty:admin-digest": "node --experimental-strip-types --no-warnings realty/cli/admin-digest.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

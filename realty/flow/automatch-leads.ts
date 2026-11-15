@@ -1,6 +1,7 @@
 import { bandOf } from "./automatch.ts";
 import { isUsd, moneyWithTtd, shortMoney } from "./fx.ts";
 import { followUpsOf, isHidden, type FollowUp, type StatusRow } from "./match-status.ts";
+import { shortListingTitle } from "./listing-title.ts";
 
 /**
  * Automatch lead cards: one card per Automatch row scoring 75 and above (STRONG), for the agent who holds the listing and for
@@ -40,11 +41,14 @@ export type LeadInput = {
     type: string | null;
     listingType: "sale" | "rent";
     lastSeenAt: string;
+    /** When the ask was first seen (ISO), when the record has it: the posted time the digest shows. */
+    postedAt?: string | null;
     senderName: string | null;
     firm: string | null;
     senderPhone: string;
   };
   listing: {
+    /** The CRM title as it came; the cards and messages show shortListingTitle of it (with the fields below). */
     title: string;
     url: string | null;
     price: number | null;
@@ -53,8 +57,26 @@ export type LeadInput = {
     /** The holding agent's CRM id, or null when unassigned (the office's). */
     agentId: number | null;
     agentName: string | null;
+    /** The listing's area, beds, type word and street, when the CRM has them (shortListingTitle reads them). */
+    area?: string | null;
+    beds?: number | null;
+    type?: string | null;
+    address?: string | null;
   };
 };
+
+/**
+ * The card's id on the Desk (and the anchor an email links to): "lead-<requestId>-<hash of the listing key>". Stable for the same
+ * pair, and free of anything a URL would need escaped. Pure.
+ */
+export function leadCardId(requestId: string, listingKey: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < listingKey.length; i++) {
+    h ^= listingKey.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `lead-${requestId}-${h.toString(16).padStart(8, "0")}`;
+}
 
 /** A card as the desk and the owners' page show it. The phone is shown here only, never in a log. */
 export type LeadCardView = {
@@ -125,7 +147,7 @@ export function leadMessage(r: LeadInput): string {
   const budget = a.budget != null ? ` around ${budgetMsg(a.budget, a.currency, a.listingType)}` : "";
   const price = listingPriceText(r.listing, a.listingType);
   const link = r.listing.url ? `: ${r.listing.url}` : "";
-  const have = `I have ${r.listing.title}${price ? ` at ${price}` : ""}${link}`;
+  const have = `I have ${shortListingTitle(r.listing)}${price ? ` at ${price}` : ""}${link}`;
   return `${hi ? `Hi ${hi},` : "Hi,"} I hear you have ${want}${budget}. ${have}. Happy to set up a viewing.`;
 }
 
@@ -199,7 +221,7 @@ export function leadsView(
       score: r.score,
       ask: askLine(r.ask),
       sender: { name: r.ask.senderName, firm: r.ask.firm, phone: r.ask.senderPhone },
-      listing: { title: r.listing.title, url: r.listing.url, price: listingPriceText(r.listing, r.ask.listingType), agent: r.listing.agentId == null ? "Office" : (r.listing.agentName ?? "Agent") },
+      listing: { title: shortListingTitle(r.listing), url: r.listing.url, price: listingPriceText(r.listing, r.ask.listingType), agent: r.listing.agentId == null ? "Office" : (r.listing.agentName ?? "Agent") },
       reason: r.reason,
       message,
       waUrl: waUrlFor(r.ask.senderPhone, message),

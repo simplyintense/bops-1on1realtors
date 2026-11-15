@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { GATE_COOKIE, gateConfig, makeSession } from "../../lib/gate.ts";
 import { MemoryAreaResolver } from "../flow/areas.ts";
-import { matchedAt, isStale, LEAD_STALE_MS, leadMessage, leadsView, canSeeLead, firstNameOf, waUrlFor, askLine, type LeadInput, type MatchSeenRow } from "../flow/automatch-leads.ts";
+import { matchedAt, isStale, LEAD_STALE_MS, leadCardId, leadMessage, leadsView, canSeeLead, firstNameOf, waUrlFor, askLine, type LeadInput, type MatchSeenRow } from "../flow/automatch-leads.ts";
+import { shortListingTitle, listingTypeWord } from "../flow/listing-title.ts";
 import { applyStatus, isHidden, MATCH_STATUSES, parseStatusPost, STATUS_LABEL, type StatusRow } from "../flow/match-status.ts";
 import type { CrmSeam, SeamAgent } from "../flow/crm-seam.ts";
 import type { Listing } from "../flow/source.ts";
@@ -70,7 +71,7 @@ test("the message is a lead from the office: it never names a WhatsApp group, sc
 test("the suggested message reads like the example: a first name, the ask, the listing, its link and a viewing", () => {
   assert.equal(
     leadMessage(LEAD()),
-    "Hi Dana, I hear you have a client looking for a 3 bed townhouse in Maraval around TT$4.3m. I have THIRD URBAN at TT$3.7m: https://1on1realtors.com/property/third-urban. Happy to set up a viewing.",
+    "Hi Dana, I hear you have a client looking for a 3 bed townhouse in Maraval around TT$4.3m. I have Third Urban at TT$3.7m: https://1on1realtors.com/property/third-urban. Happy to set up a viewing.",
   );
 });
 
@@ -89,12 +90,89 @@ test("a USD ask and a rent say so: the money in US$ with TT$, and a month for a 
   assert.match(askLine(LEAD({}, { currency: "USD", budget: 650_000 }).ask), /^Looking to buy a 3-bed townhouse in Maraval, asked in US\$ \(US\$650k ≈ TT\$/);
   const rent = leadMessage(LEAD({}, { listingType: "rent", budget: 9000, currency: "TTD" }, { price: 9000 }));
   assert.match(rent, /looking for a 3 bed townhouse in Maraval around TT\$9,000 a month/);
-  assert.match(rent, /I have THIRD URBAN at TT\$9,000 a month/);
+  assert.match(rent, /I have Third Urban at TT\$9,000 a month/);
 });
 
 test("the plain ask line: beds, the kind of place, the area and the budget; without a budget, no budget clause", () => {
   assert.equal(askLine(LEAD().ask), "Looking to buy a 3-bed townhouse in Maraval, around TT$4.3m");
   assert.equal(askLine(LEAD({}, { budget: null, beds: null, type: null }).ask), "Looking to buy a property in Maraval");
+});
+
+/* ---------------- Short listing titles ---------------- */
+
+test("ALL CAPS cleanup: the development is title-cased, with the structured area, beds and type added", () => {
+  assert.equal(
+    shortListingTitle({ title: "WEST HILLS, PETIT VALLEY 3BR Apartment For Sale", area: "Petit Valley", beds: 3, type: "apartment" }),
+    "West Hills, Petit Valley, 3-bed apartment",
+  );
+  assert.equal(shortListingTitle({ title: "NEWBURY HILL EXTENSION", area: "Glencoe", beds: 3, type: null }), "Newbury Hill Extension, Glencoe, 3-bed");
+  assert.equal(shortListingTitle({ title: "WEST INDIES OF TOBAGO" }), "West Indies of Tobago", "small connectors stay small");
+  assert.equal(shortListingTitle({ title: "D'ARCY ST-JAMES" }), "D'Arcy St-James", "apostrophes and hyphens start a new capital");
+});
+
+test("boilerplate is stripped: for sale, for rent, for-sale, 3BR, 3 BR, 3-bed, bedroom, the type words, the price and trailing punctuation", () => {
+  assert.equal(shortListingTitle({ title: "THIRD URBAN For Sale" }), "Third Urban");
+  assert.equal(shortListingTitle({ title: "Westmoorings for-sale" }), "Westmoorings");
+  assert.equal(shortListingTitle({ title: "Westmoorings FOR RENT" }), "Westmoorings");
+  assert.equal(shortListingTitle({ title: "Westmoorings 3 BR" }), "Westmoorings, 3-bed", "the bed count is kept as beds, not as words");
+  assert.equal(shortListingTitle({ title: "Westmoorings 3-bed" }), "Westmoorings, 3-bed");
+  assert.equal(shortListingTitle({ title: "Westmoorings - 3BR Townhouse for-sale" }), "Westmoorings, 3-bed townhouse", "the title's beds and type are read, with no structured fields");
+  assert.equal(shortListingTitle({ title: "Glencoe, 2 Bedroom Condo," }), "Glencoe, 2-bed condo");
+  assert.equal(shortListingTitle({ title: "THIRD URBAN TT$3.7M" }), "Third Urban", "the price is never in the short title");
+  assert.doesNotMatch(shortListingTitle({ title: "THIRD URBAN TT$3.7M", beds: 3, area: "Glencoe" }), /TT|\$|3\.7/);
+});
+
+test("nothing is said twice: an area already in the name, and beds or a type the title already carries", () => {
+  assert.equal(shortListingTitle({ title: "3 bed apartment Westmoorings", area: "Westmoorings", beds: 3, type: "apartment" }), "Westmoorings, 3-bed apartment");
+  assert.equal(shortListingTitle({ title: "Maraval 3 bed", area: "Maraval", beds: 3 }), "Maraval, 3-bed");
+  assert.equal(shortListingTitle({ title: "WEST HILLS, PETIT VALLEY", area: "Petit Valley" }), "West Hills, Petit Valley");
+  assert.equal(shortListingTitle({ title: "Westmoorings Heights", area: "Westmoorings", beds: 2 }), "Westmoorings Heights, 2-bed", "the area is a word already in the name");
+  assert.equal(shortListingTitle({ title: "THIRD URBAN", beds: 3, type: "townhouse" }), "Third Urban, 3-bed townhouse");
+});
+
+test("missing fields: a name alone is the name; no name falls back to the area and beds; nothing at all is 'Listing'", () => {
+  assert.equal(shortListingTitle({ title: "THIRD URBAN", area: null, beds: null, type: null }), "Third Urban");
+  assert.equal(shortListingTitle({ title: "THIRD URBAN", area: "Glencoe", beds: null, type: null }), "Third Urban, Glencoe");
+  assert.equal(shortListingTitle({ title: "", area: "Maraval", beds: 2, type: "townhouse" }), "Maraval, 2-bed townhouse");
+  assert.equal(shortListingTitle({ title: "" }), "Listing");
+  assert.equal(shortListingTitle({ title: "   " }), "Listing");
+});
+
+test("a street from the address is the name when the title has none, shortened; a long address is never dumped", () => {
+  assert.equal(
+    shortListingTitle({ title: "", address: "12 Lady Chancellor Road, Maraval", area: "Maraval", beds: 2, type: "apartment" }),
+    "Lady Chancellor Road, Maraval, 2-bed apartment",
+  );
+  assert.equal(shortListingTitle({ title: "", address: "12-14 Lady Chancellor Road, Maraval", area: "Maraval" }), "Lady Chancellor Road, Maraval");
+  const long = "Some Very Long Development Name That Goes On And On Forever Road, Maraval";
+  assert.equal(shortListingTitle({ title: "", address: long, area: "Maraval" }), "Maraval", "too long for a name: the area stands alone");
+});
+
+test("land with no beds: the type word is land and no beds are said", () => {
+  assert.equal(shortListingTitle({ title: "LOT 5 GASPAREE LAND FOR SALE", area: "Gasparee", beds: null }), "Lot 5 Gasparee, land");
+  assert.equal(shortListingTitle({ title: "Gasparee Land", area: "Gasparee", beds: null, type: "land" }), "Gasparee, land", "the type word is not repeated in the name");
+  assert.equal(listingTypeWord("LOT 5 GASPAREE LAND FOR SALE", null), "land");
+  assert.equal(listingTypeWord("THIRD URBAN", "commercial"), "commercial", "the CRM's kind counts when the title has no type word");
+  assert.equal(listingTypeWord("THIRD URBAN", "rental"), null, "a rental or a sale isn't a type word");
+});
+
+test("leadMessage and the card use the short title, and the message still never names a group, scanning, or Bops", () => {
+  const withFields = LEAD({}, {}, { title: "WEST HILLS, PETIT VALLEY 3BR Apartment For Sale", area: "Petit Valley", beds: 3, type: "apartment" });
+  const m = leadMessage(withFields);
+  assert.match(m, /I have West Hills, Petit Valley, 3-bed apartment at TT\$3\.7m: https:\/\/1on1realtors\.com\/property\/third-urban\. Happy/);
+  assert.doesNotMatch(m, /WEST HILLS|3BR/);
+  assert.doesNotMatch(m, /whatsapp|group|scan|monitor|bops|periskope|automatch/i);
+  const card = leadsView([withFields], { owner: true, agentId: null, statuses: [], firstSeen: [], now: NOW }).cards[0];
+  assert.equal(card.listing.title, "West Hills, Petit Valley, 3-bed apartment", "the card label agrees with the message");
+  assert.equal(card.message, m);
+});
+
+test("the card id is stable for the same pair, and differs between listings", () => {
+  const id = leadCardId(RID, KEY);
+  assert.equal(id, leadCardId(RID, KEY));
+  assert.match(id, /^lead-[0-9a-f]{24}-[0-9a-f]{8}$/);
+  assert.notEqual(id, leadCardId(RID, "url:https://x.example/b"));
+  assert.equal(new URL(`https://bop.example/realty/desk#${id}`).hash, `#${id}`, "a plain fragment: no escaping needed");
 });
 
 /* ---------------- wa.me link ---------------- */

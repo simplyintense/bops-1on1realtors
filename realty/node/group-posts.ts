@@ -1,5 +1,6 @@
 import type { PostRecord } from "../flow/periskope.ts";
 import { PeriskopeStore, requestIdOf, type LiveRow } from "./periskope-store.ts";
+import { dateAst } from "../flow/ast-time.ts";
 
 /**
  * Owner views of WhatsApp group posts (original text next to the parse). Agents never receive
@@ -44,24 +45,8 @@ export function findPostView(store: PeriskopeStore, requestId: string, owner: bo
   return postView(post, owner, live);
 }
 
-const AST = "America/Port_of_Spain";
-
-/** Date in AST for the export, e.g. "2026-11-14 09:44 AST". */
-export function dateAst(iso: string): string {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return "";
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: AST,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(d);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")} AST`;
-}
+/** Date in AST for the export (flow/ast-time.ts, shared with the admin digest). */
+export { dateAst };
 
 const CSV_HEADER = [
   "date (AST)",

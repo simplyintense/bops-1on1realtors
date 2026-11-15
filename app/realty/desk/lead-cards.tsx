@@ -1,4 +1,4 @@
-import type { LeadCardView, LeadsView } from "@/realty/flow/automatch-leads.ts";
+import { leadCardId, type LeadCardView, type LeadsView } from "@/realty/flow/automatch-leads.ts";
 import { REASON_LABEL } from "@/realty/flow/match-status.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { Notice } from "../notice";
@@ -11,6 +11,9 @@ import { FollowUpButtons } from "./follow-up-buttons";
  * WhatsApp" link (a plain anchor, opened in the agent's own browser; nothing is sent from here), and the outcome buttons (saved to
  * Bops's own record only), with an optional reason and note once an outcome is set. A card with no outcome two hours after its
  * match is labelled Stale.
+ *
+ * Each card has an id (leadCardId), so a link to /realty/desk#<id> (the admin digest's feedback links) opens the page at that card:
+ * the browser scrolls to it natively, and scroll-margin keeps it clear of the top bar.
  */
 
 export function LeadCards({ view, showHidden, toggleHref, error }: { view: LeadsView | null; showHidden: boolean; toggleHref: string; error?: string }) {
@@ -38,7 +41,7 @@ export function LeadCards({ view, showHidden, toggleHref, error }: { view: Leads
 
 function LeadCard({ c }: { c: LeadCardView }) {
   return (
-    <li className="rt-card grid gap-3 p-4">
+    <li id={leadCardId(c.requestId, c.listingKey)} className="rt-card grid scroll-mt-24 gap-3 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rt-eyebrow">Lead · score {c.score}</span>
         {c.stale ? <span className="rt-chip" aria-label="No outcome two hours after the match">Stale</span> : null}

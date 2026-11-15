@@ -1,5 +1,5 @@
 import { ownerAllowed } from "../../lib/gate.ts";
-import { leadsView, type LeadInput, type LeadsView } from "../flow/automatch-leads.ts";
+import { leadsView, type LeadsView } from "../flow/automatch-leads.ts";
 import { runtimeEnv } from "../flow/env.ts";
 import { bandOf } from "../flow/automatch.ts";
 import { automatchRun, type AutomatchOpts, type AutomatchRow } from "./automatch.ts";
@@ -36,7 +36,7 @@ export async function staffLeads(o: LeadOptions): Promise<LeadsView> {
   store.recordMatchSeen(
     result.pairs.filter((p) => bandOf(p.score) === "strong" && p.ask.postId).map((p) => ({ requestId: p.ask.postId as string, listingKey: p.listingKey, at: now.toISOString() })),
   );
-  return leadsView(result.pairs as LeadInput[], {
+  return leadsView(result.pairs, {
     owner: ownerAllowed(o.email, env),
     agentId: agentIdOf(o.email, agents),
     statuses: store.matchStatuses(),
