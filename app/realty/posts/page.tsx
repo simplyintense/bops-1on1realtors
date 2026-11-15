@@ -7,7 +7,7 @@ import { viewer } from "../viewer";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Group posts · 1on1 Realtors staff", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "All posts · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 /**
  * Owners only: WhatsApp group posts Bops has stored, with a link to the original text next to the
@@ -22,7 +22,7 @@ export default async function PostsPage() {
   return (
     <main className="mx-auto w-full max-w-6xl px-5 py-10">
       <p className="rt-eyebrow">Owners only · listen-only</p>
-      <h1 className="mt-2 text-3xl font-semibold">Group posts</h1>
+      <h1 className="mt-2 text-3xl font-semibold">All posts</h1>
       <p className="rt-muted mt-3">
         Posts stored from the allowlisted WhatsApp group. Open a post to see the original text next to
         what Bops parsed. Agents do not see this page or the text.

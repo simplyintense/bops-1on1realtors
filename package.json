@@ -25,6 +25,7 @@
     "realty:search-sync": "node --experimental-strip-types --no-warnings realty/cli/search-sync.ts",
     "realty:learn": "node --experimental-strip-types --no-warnings realty/cli/learn.ts",
     "realty:search-export": "node --experimental-strip-types --no-warnings realty/cli/search-export.ts",
+    "realty:automatch": "node --experimental-strip-types --no-warnings realty/cli/automatch.ts",
     "realty:discover": "node --experimental-strip-types --no-warnings --env-file-if-exists=.env.local realty/cli/periskope-discover.ts",
     "realty:kind-override": "node --experimental-strip-types --no-warnings realty/cli/kind-override.ts"
   },

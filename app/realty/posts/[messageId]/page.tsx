@@ -7,7 +7,7 @@ import { viewer } from "../../viewer";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Group post · 1on1 Realtors staff", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Post · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 /**
  * Owners only: one stored post, original text next to the parsed fields and category. Agents are
@@ -42,10 +42,10 @@ export default async function PostDetailPage({ params }: { params: Promise<{ mes
       <p className="rt-eyebrow">Owners only</p>
       <p className="rt-muted mt-2">
         <Link href="/realty/posts" className="underline">
-          All group posts
+          All posts
         </Link>
       </p>
-      <h1 className="mt-2 text-3xl font-semibold">Group post</h1>
+      <h1 className="mt-2 text-3xl font-semibold">Post</h1>
       <dl className="rt-card mt-6 grid gap-3 p-4">
         {rows.map(([k, v]) => (
           <div key={k}>

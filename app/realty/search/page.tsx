@@ -4,13 +4,17 @@ import { redirect } from "next/navigation";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { requestIdOf } from "@/realty/node/periskope-store.ts";
 import { SearchInputError, searchInputFrom, withSearchStore, type SearchInput, type SearchRow, type Tab } from "@/realty/node/search-store.ts";
+import { REQUEST_LIMIT, requestCriteriaFromParams, sortFromParams, type RequestsResult } from "@/realty/flow/requests.ts";
+import { staffRequests } from "@/realty/node/requests.ts";
 import { viewer } from "../viewer";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
+import { RequestsFeed } from "./requests-feed";
+import { sourceFrom, toSearchParams, type RawParams } from "./source";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Search · 1on1 Realtors staff", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Supply & Demand · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
-type Params = Record<string, string | string[] | undefined>;
+type Params = RawParams;
 
 const TABS: { tab: Tab; label: string }[] = [
   { tab: "supply", label: "Supply" },
@@ -36,14 +40,45 @@ const snippet = (s: string | null) => {
 };
 
 /**
- * Owners only: search the WhatsApp supply, demand and needs-explanation queue. The filters are a plain GET form. Rows
- * link to the stored post (owners only). Needs-explanation rows are taught on the Teach Bops page (teachers only), the one
- * place to teach Bops. Agents never see this page.
+ * Owners only: Supply & Demand. Two sources: the WhatsApp groups (the default: the supply, demand and needs-explanation
+ * queue, with filters as a plain GET form; rows link to the stored post; needs-explanation rows are taught on the Teach Bops
+ * page, teachers only) and the online feed (?source=online: the market's co-broke buyer requests, the old Requests page).
+ * Agents never see this page.
  */
 export default async function SearchPage({ searchParams }: { searchParams: Promise<Params> }) {
-  const { owner, teacher } = await viewer();
+  const { email, owner, teacher } = await viewer();
   if (!owner) redirect("/realty/desk");
   const raw = await searchParams;
+  const source = sourceFrom(raw);
+  const sourceNav = (
+    <nav aria-label="Source" className="mt-6 flex flex-wrap gap-2">
+      <Link href={hrefWith(raw, { source: undefined, offset: undefined })} className="rt-chip" aria-pressed={source === "groups"}>
+        WhatsApp groups
+      </Link>
+      <Link href={hrefWith(raw, { source: "online", kind: undefined, offset: undefined })} className="rt-chip" aria-pressed={source === "online"}>
+        Online feed
+      </Link>
+    </nav>
+  );
+
+  if (source === "online") {
+    const params = toSearchParams(raw);
+    const c = requestCriteriaFromParams(params);
+    // Never throws out of the page: a failure is the feed's error notice.
+    const result = await staffRequests(c, { limit: REQUEST_LIMIT, email }).catch((): RequestsResult => ({ status: "error", reason: "unavailable" }));
+    return (
+      <main className="mx-auto w-full max-w-7xl px-5 py-10">
+        <p className="rt-eyebrow">Owners only · read-only</p>
+        <h1 className="mt-2 text-3xl font-semibold">Supply &amp; Demand</h1>
+        <p className="rt-muted mt-3">
+          Co-broke buyer requests from the WhatsApp and email feed, through the online market. Nothing here is sent or written. Agencies, dates,
+          areas, budgets, beds and property types are shown; buyers&apos; names and contact details are not.
+        </p>
+        {sourceNav}
+        <RequestsFeed c={c} sort={sortFromParams(params)} params={params} result={result} />
+      </main>
+    );
+  }
 
   let input: SearchInput = { kind: "supply" };
   let error: string | null = null;
@@ -64,7 +99,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   return (
     <main className="mx-auto w-full max-w-7xl px-5 py-10">
       <p className="rt-eyebrow">Owners only · read-only</p>
-      <h1 className="mt-2 text-3xl font-semibold">Search WhatsApp supply and demand</h1>
+      <h1 className="mt-2 text-3xl font-semibold">Supply &amp; Demand</h1>
       <p className="rt-muted mt-3">
         Listings and buyer or renter requests from the allowlisted groups, de-duplicated across groups. Posts too vague to
         match wait in Needs explanation. Times are AST.{" "}
@@ -73,7 +108,9 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         </a>
       </p>
 
-      <nav aria-label="Tabs" className="mt-6 flex flex-wrap gap-2">
+      {sourceNav}
+
+      <nav aria-label="Tabs" className="mt-3 flex flex-wrap gap-2">
         {TABS.map((t) => (
           <Link key={t.tab} href={hrefWith(raw, { kind: t.tab, offset: undefined })} className="rt-chip" aria-pressed={tab === t.tab}>
             {t.label}

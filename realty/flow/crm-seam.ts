@@ -20,7 +20,7 @@ export const CRM_UNREACHABLE_TEXT = "The 1on1 CRM couldn't be reached just now, 
 export type CrmListingsState = { status: "not-connected"; text: string } | { status: "ok"; listings: Listing[] };
 
 /** An agent as the desk needs one. email is lower-cased; phone is normalized (+1868…) or null when the CRM has none. */
-export type SeamAgent = { id: number; email: string | null; phone: string | null };
+export type SeamAgent = { id: number; name?: string | null; email: string | null; phone: string | null };
 
 export interface CrmSeam {
   readonly connected: boolean;
@@ -39,9 +39,9 @@ export const NOT_CONNECTED: CrmSeam = {
   },
 };
 
-export function seamAgent(a: { id: number; email: string | null; phone: string | null }): SeamAgent {
+export function seamAgent(a: { id: number; name?: string | null; email: string | null; phone: string | null }): SeamAgent {
   const email = a.email?.trim().toLowerCase() || null;
-  return { id: a.id, email, phone: a.phone ? normalizePhone(a.phone) : null };
+  return { id: a.id, name: a.name?.trim() || null, email, phone: a.phone ? normalizePhone(a.phone) : null };
 }
 
 /** The seam over a read-only CrmSource (LiveCrmSource in production). Fails closed. */

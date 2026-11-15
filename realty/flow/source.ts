@@ -17,6 +17,8 @@ export type Listing = {
   area: string;
   price: number;
   currency: Currency;
+  /** The CRM's price_ttd_equiv: the listing's price in TTD. Matching compares a TTD request on this when it's set. */
+  ttdEquiv?: number | null;
   beds: number;
   baths: number;
   agentId: number;

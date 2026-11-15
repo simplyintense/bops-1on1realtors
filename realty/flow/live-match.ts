@@ -1,7 +1,8 @@
 import { areasForMatch, developmentOf, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from "../extract.ts";
 import { knowledgeOf, nearbyByKnowledge, nearbyReason, type AreaKnowledgeIndex } from "./area-knowledge.ts";
-import { areaTier, refFor, type AreaResolver, type ToolCaller } from "./areas.ts";
+import { areaTier, refFor, type AreaRef, type AreaResolver, type ToolCaller } from "./areas.ts";
 import type { SeamAgent } from "./crm-seam.ts";
+import type { Currency } from "./engine.ts";
 import { moneyLabel } from "./market-search.ts";
 import { listingTypeOf, type Facts } from "./periskope.ts";
 import { parseMatch, type MatchItem } from "./recommendations.ts";
@@ -108,14 +109,14 @@ export const OUR_AGENCY = "1on1 Realtors";
 export const PRICE_BAND = 0.2;
 
 type Category = "land" | "commercial" | "residential";
-const categoryOfRequest = (t: string | null): Category | null => (t === "land" || t === "commercial" ? t : t ? "residential" : null);
+export const categoryOfRequest = (t: string | null): Category | null => (t === "land" || t === "commercial" ? t : t ? "residential" : null);
 /**
  * The CRM files some land and storage under "Residential", so a title that says land, a lot, storage, a warehouse or an
  * office decides when the CRM's kind says residential.
  */
 const LAND_TITLE = /\b(land|lots?|acres?)\b/i;
 const COMMERCIAL_TITLE = /\b(storage|warehouse|office|commercial|retail|shop|bond)\b/i;
-const categoryOfListing = (l: Listing): Category => {
+export const categoryOfListing = (l: Listing): Category => {
   if (l.propertyKind === "land" || l.propertyKind === "commercial") return l.propertyKind;
   if (LAND_TITLE.test(l.title)) return "land";
   if (COMMERCIAL_TITLE.test(l.title)) return "commercial";
@@ -130,6 +131,23 @@ const categoryOfListing = (l: Listing): Category => {
  * can't be checked, so it passes, as on the market. Same area first, then nearby, then the price closest to the budget. Never throws: an area that can't be resolved only matches its own name.
  */
 const gap = (price: number, budget: number) => (price ? Math.abs(price - budget) : Infinity);
+
+/**
+ * The price a listing is compared on for a request in `currency`. A TTD request compares the listing's TTD equivalent when the
+ * CRM has one, so a USD listing compares in TTD. A USD request has no USD equivalent to use (no FX rate here), so it compares
+ * the listing's own price, and only a USD listing fits it, as before.
+ */
+export function comparedPrice(l: Listing, currency: Currency | null): { price: number; currency: Currency } {
+  if ((currency ?? "TTD") === "TTD" && l.ttdEquiv) return { price: l.ttdEquiv, currency: "TTD" };
+  return { price: l.price, currency: l.currency };
+}
+
+/** A listing's price as shown: its own price and currency, plus the TTD equivalent when it's a USD listing that has one. */
+export function listingPriceLabel(l: { price: number | null; currency: string; ttdEquiv?: number | null }): string | null {
+  const own = moneyLabel(l.price || null, l.currency);
+  if (!own) return null;
+  return l.currency !== "TTD" && l.ttdEquiv && l.ttdEquiv !== l.price ? `${own} (≈ ${moneyLabel(l.ttdEquiv, "TTD")})` : own;
+}
 
 const areaTextKey = (s: string) => s.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
 const mentionsName = (hay: string, name: string) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(hay);
@@ -155,66 +173,92 @@ function gazetteerTier(requestArea: string, l: Listing): { tier: "same-area" | "
 }
 
 
-export async function matchOurListings(r: LiveRequest, listings: readonly Listing[], areas: AreaResolver, limit = LIVE_LIMIT, knowledge: AreaKnowledgeIndex | null = null): Promise<MatchItem[]> {
-  if (!r.intent || !r.area) return [];
-  const area = r.area;
+/**
+ * One of our listings against the request, on the rules that don't need the area: active, sale vs rent, the same kind of
+ * place, price within PRICE_BAND of the budget in the same currency, beds within one. A field the listing doesn't give
+ * (no price, no beds) can't be checked, so it passes. Shared by matchOurListings and automatch.ts.
+ */
+export function fitsOurListing(r: LiveRequest, l: Listing): boolean {
   const type = r.intent === "rent" ? "rent" : "sale";
   const cat = categoryOfRequest(r.propertyType);
   const top = r.priceMax ?? r.priceMin;
   const bottom = r.priceMin ?? r.priceMax;
+  const cp = comparedPrice(l, r.currency);
   const hi = top !== null ? top * (1 + PRICE_BAND) : null;
   const lo = bottom !== null ? bottom * (1 - PRICE_BAND) : null;
-  const budget = top ?? 0;
-  const fits = listings.filter(
-    (l) =>
-      l.status === "active" &&
-      l.listingType === type &&
-      (!cat || categoryOfListing(l) === cat) &&
-      (!l.price || ((hi === null && lo === null) || (l.currency === (r.currency ?? "TTD") && (hi === null || l.price <= hi) && (lo === null || l.price >= lo)))) &&
-      (r.beds === null || !l.beds || Math.abs(l.beds - r.beds) <= 1),
+  return (
+    l.status === "active" &&
+    l.listingType === type &&
+    (!cat || categoryOfListing(l) === cat) &&
+    (!cp.price || ((hi === null && lo === null) || (cp.currency === (r.currency ?? "TTD") && (hi === null || cp.price <= hi) && (lo === null || cp.price >= lo)))) &&
+    (r.beds === null || !l.beds || Math.abs(l.beds - r.beds) <= 1)
   );
-  if (!fits.length) return [];
+}
+
+/** How one of our listings' area relates to the request's: the same area, or a neighbour (by the directory, or by coordinates). */
+export type OurAreaRelation = { tier: "same-area" | "neighbour"; via?: "knowledge"; relKm?: number; relMin?: number };
+
+/** The request's area, the areas wanted (same and nearby), and each listing area's ref. Built once per request. */
+export type OurAreaContext = { area: string; wants: AreaRef[]; refs: Map<string, AreaRef>; knowledge: AreaKnowledgeIndex | null };
+
+/** The lookups for the area rules, for the listings that already fit (fitsOurListing). One lookup per distinct area. */
+export async function ourAreaContext(area: string, listings: readonly Listing[], areas: AreaResolver, knowledge: AreaKnowledgeIndex | null = null): Promise<OurAreaContext> {
   const plan = areasForMatch(area);
   const wantsSame = await Promise.all(plan.same.map((name) => refFor(areas, name)));
   const wantsNear = await Promise.all(plan.nearby.map((name) => refFor(areas, name)));
-  const wants = [...wantsSame, ...wantsNear];
-  // One lookup per distinct area, not per listing.
-  const refs = new Map<string, Awaited<ReturnType<typeof refFor>>>();
-  for (const a of new Set(fits.map((l) => l.area).filter(Boolean))) refs.set(a, await refFor(areas, a));
+  const refs = new Map<string, AreaRef>();
+  for (const a of new Set(listings.map((l) => l.area).filter(Boolean))) refs.set(a, await refFor(areas, a));
+  return { area, wants: [...wantsSame, ...wantsNear], refs, knowledge };
+}
+
+/** The listing's area relation to the request's area, or null when it is neither the same nor a nearby area. */
+export function ourAreaRelation(ctx: OurAreaContext, l: Listing): OurAreaRelation | null {
+  const { area, knowledge } = ctx;
+  // Without coordinates, Glencoe stays out of West Hills matches. With knowledge, it may be a nearby recommendation, never a very-strong alert.
+  const known = area && l.area ? nearbyByKnowledge(knowledge, area, l.area) : null;
+  const bothCoords = !!(knowledge && knowledgeOf(knowledge, area)?.coords && l.area && knowledgeOf(knowledge, l.area)?.coords);
+  if (!bothCoords && blockedWestHillsGlencoe(area, l)) return null;
+  let best: OurAreaRelation | null = gazetteerTier(area, l);
+  if (bothCoords) {
+    if (best?.tier === "same-area") {
+      /* same development or area stays exact */
+    } else if (known) {
+      best = { tier: "neighbour", via: "knowledge", relKm: known.km, relMin: known.minutes };
+    } else {
+      best = null;
+    }
+  }
+  const ref = ctx.refs.get(l.area);
+  if (!best && !bothCoords && ref) {
+    for (const want of ctx.wants) {
+      const v = areaTier(want, ref);
+      if (v.tier === "same-area") {
+        best = { tier: "same-area" };
+        break;
+      }
+      if (v.tier === "neighbour" && best?.tier !== "same-area") best = { tier: "neighbour" };
+    }
+  }
+  return best;
+}
+
+export async function matchOurListings(r: LiveRequest, listings: readonly Listing[], areas: AreaResolver, limit = LIVE_LIMIT, knowledge: AreaKnowledgeIndex | null = null): Promise<MatchItem[]> {
+  if (!r.intent || !r.area) return [];
+  const area = r.area;
+  const budget = (r.priceMax ?? r.priceMin) ?? 0;
+  const fits = listings.filter((l) => fitsOurListing(r, l));
+  if (!fits.length) return [];
+  const ctx = await ourAreaContext(area, fits, areas, knowledge);
   const ranked = fits.flatMap((l) => {
-    // Without coordinates, Glencoe stays out of West Hills matches. With knowledge, it may be a nearby recommendation, never a very-strong alert.
-    const known = r.area && l.area ? nearbyByKnowledge(knowledge, r.area, l.area) : null;
-    const bothCoords = !!(knowledge && knowledgeOf(knowledge, r.area)?.coords && l.area && knowledgeOf(knowledge, l.area)?.coords);
-    if (!bothCoords && blockedWestHillsGlencoe(area, l)) return [];
-    let best: { tier: "same-area" | "neighbour"; via?: "knowledge"; relKm?: number; relMin?: number } | null = gazetteerTier(area, l);
-    if (bothCoords) {
-      if (best?.tier === "same-area") {
-        /* same development or area stays exact */
-      } else if (known) {
-        best = { tier: "neighbour", via: "knowledge", relKm: known.km, relMin: known.minutes };
-      } else {
-        best = null;
-      }
-    }
-    const ref = refs.get(l.area);
-    if (!best && !bothCoords && ref) {
-      for (const want of wants) {
-        const v = areaTier(want, ref);
-        if (v.tier === "same-area") {
-          best = { tier: "same-area" };
-          break;
-        }
-        if (v.tier === "neighbour" && best?.tier !== "same-area") best = { tier: "neighbour" };
-      }
-    }
-    return best ? [{ l, v: best }] : [];
+    const v = ourAreaRelation(ctx, l);
+    return v ? [{ l, v }] : [];
   });
-  ranked.sort((a, b) => (a.v.tier === b.v.tier ? 0 : a.v.tier === "same-area" ? -1 : 1) || gap(a.l.price, budget) - gap(b.l.price, budget));
+  ranked.sort((a, b) => (a.v.tier === b.v.tier ? 0 : a.v.tier === "same-area" ? -1 : 1) || gap(comparedPrice(a.l, r.currency).price, budget) - gap(comparedPrice(b.l, r.currency).price, budget));
   return ranked.slice(0, limit).map(({ l, v }) => ({
     title: l.title || `${OUR_AGENCY} listing ${l.id}`,
     url: /^https?:\/\//i.test(l.url) ? l.url : null,
     area: l.area || null,
-    price: l.price ? moneyLabel(l.price, l.currency) : null,
+    price: listingPriceLabel(l),
     beds: l.beds || null,
     source: OUR_AGENCY,
     reason: v.via === "knowledge"
@@ -225,9 +269,10 @@ export async function matchOurListings(r: LiveRequest, listings: readonly Listin
 }
 
 function ourReason(r: LiveRequest, l: Listing, where: string): string {
-  const money = (n: number) => moneyLabel(n, l.currency) ?? String(n);
+  const cp = comparedPrice(l, r.currency);
+  const money = (n: number) => moneyLabel(n, cp.currency) ?? String(n);
   const budget = r.priceMax !== null ? money(r.priceMax) : r.priceMin !== null ? `from ${money(r.priceMin)}` : null;
-  const price = !l.price ? "no price listed" : budget ? `${money(l.price)} for a ${budget} budget` : money(l.price);
+  const price = !cp.price ? "no price listed" : budget ? `${money(cp.price)} for a ${budget} budget` : money(cp.price);
   return [where, price, l.beds ? `${l.beds} bed` : null, "our listing"].filter(Boolean).join(", ");
 }
 

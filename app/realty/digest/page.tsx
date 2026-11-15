@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { staffDigest } from "@/realty/node/requests.ts";
 import { Cards, portOfSpainTime } from "../desk/recommendations-panel";
@@ -28,6 +29,21 @@ export default async function RealtyDigest() {
       <p className="rt-muted mt-3">
         Buyer requests from the agents&apos; WhatsApp group since {portOfSpainTime(d.since)}, matched against other agencies&apos; listings as they arrived. Nothing here
         sends a message.
+      </p>
+
+      <p className="rt-muted mt-4 text-sm">
+        Jump to:{" "}
+        <Link href="/realty/automatch" className="rt-link">
+          1on1 CRM Automatch
+        </Link>
+        {" · "}
+        <Link href="/realty/search" className="rt-link">
+          Supply & Demand
+        </Link>
+        {" · "}
+        <Link href="/realty/posts" className="rt-link">
+          All posts
+        </Link>
       </p>
 
       <ul className="mt-6 grid gap-4 md:grid-cols-4">

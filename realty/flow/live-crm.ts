@@ -32,11 +32,24 @@ const BUNDLE_TABLES = ["properties", "property_agents", "images", "locations"];
 const PROPERTY_COLS = [
   "id", "title", "price", "currency", "listing_type", "furnished_status", "address", "city", "region",
   "property_type", "bedrooms", "bathrooms", "square_feet", "lot_size", "features", "url", "google_maps_url",
-  "neighborhood", "hoa_fees", "property_taxes", "status", "slug",
+  "neighborhood", "hoa_fees", "property_taxes", "status", "slug", "show_on_website", "price_ttd_equiv",
 ].join(",");
 
-/** The listing's page on 1on1realtors.com (the site's /property/:slug route), for rows with no url of their own. */
-export const SITE_LISTING_URL = "https://1on1realtors.com/property/";
+/** The owner's public site (simplyintense/realtyf1on1inalsite, PUBLIC_SITE_ORIGIN). */
+export const PUBLIC_SITE_ORIGIN = "https://1on1realtors.com";
+
+/**
+ * The listing's public page on the owner's site, from the raw CRM row, as the site defines it (listingIsPublic, listingPath):
+ * shown when show_on_website isn't false and the raw status is active or pending (blank counts as active). A listing that
+ * isn't public has no link (null). Read the raw status here, before statusOf.
+ */
+export function publicListingUrl(row: Row): string | null {
+  const status = (str(row.status) ?? "active").toLowerCase();
+  const isPublic = row.show_on_website !== false && (status === "active" || status === "pending");
+  if (!isPublic) return null;
+  const slug = str(row.slug);
+  return `${PUBLIC_SITE_ORIGIN}${slug ? `/property/${slug}` : `/listing/${row.id}`}`;
+}
 
 /**
  * The live read-only CRM when ONEON1_CRM_* are all set (and valid); otherwise `fallback()` (the CLI and
@@ -243,11 +256,12 @@ function toListing(r: Row, agentId: number, photoCount: number, loc: Row | undef
     area: str(r.neighborhood) ?? str(r.city) ?? str(r.region) ?? "",
     price: numOrNull(r.price) ?? 0,
     currency: currencyOf(r.currency),
+    ttdEquiv: numOrNull(r.price_ttd_equiv),
     beds: numOrNull(r.bedrooms) ?? 0,
     baths: numOrNull(r.bathrooms) ?? 0,
     agentId,
     status: statusOf(r.status),
-    url: str(r.url) ?? (str(r.slug) ? `${SITE_LISTING_URL}${encodeURIComponent(str(r.slug) as string)}` : ""),
+    url: publicListingUrl(r) ?? "",
     propertyKind,
     address: str(r.address) ?? str(loc?.address),
     directions: str(r.google_maps_url) ?? str(loc?.google_maps_url),

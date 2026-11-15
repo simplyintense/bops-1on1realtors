@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { SAMPLE_CHAT, SAMPLE_MESSAGES, sampleEnvelope } from "../fixtures/whatsapp-samples.ts";
 import { ExactAreaFallback, MemoryAreaResolver } from "../flow/areas.ts";
 import { CRM_UNREACHABLE_TEXT, liveCrmSeam, NOT_CONNECTED, toMatchListing } from "../flow/crm-seam.ts";
-import { SITE_LISTING_URL } from "../flow/live-crm.ts";
+import { PUBLIC_SITE_ORIGIN } from "../flow/live-crm.ts";
 import { liveDesk, matchOurListings, type LiveEntry, type LiveRequest } from "../flow/live-match.ts";
 import { recommendationsFor } from "../flow/recommendations.ts";
 import type { Listing } from "../flow/source.ts";
@@ -75,13 +75,13 @@ test("the CRM seam reads listings and agents with GETs only, signs in once, and 
   const l = await seam.listings();
   assert.ok(l.status === "ok");
   assert.equal(l.listings.length, 2);
-  assert.equal(l.listings.find((x) => x.id === "201")?.url, `${SITE_LISTING_URL}westmoorings-2bed-residential-for-rent-201`);
+  assert.equal(l.listings.find((x) => x.id === "201")?.url, `${PUBLIC_SITE_ORIGIN}/property/westmoorings-2bed-residential-for-rent-201`);
   assert.equal(l.listings.find((x) => x.id === "202")?.url, "https://1on1realtors.com/listing/202");
   assert.equal(l.listings.find((x) => x.id === "201")?.agentId, 7);
   assert.equal(l.listings.find((x) => x.id === "202")?.agentId, 0, "no property_agents row: no holder");
   assert.deepEqual(await seam.agents(), [
-    { id: 7, email: "dana@1on1.example", phone: "+18685550107" },
-    { id: 8, email: "eli@1on1.example", phone: null },
+    { id: 7, name: "Dana Holder", email: "dana@1on1.example", phone: "+18685550107" },
+    { id: 8, name: "Eli Nophone", email: "eli@1on1.example", phone: null },
   ]);
   assert.equal(calls.filter((c) => c.method === "POST").length, 1, "one sign-in, the session is reused");
   for (const c of calls) assert.ok(c.method === "GET" || c.url === TOKEN_URL, `${c.method} ${c.url}`);

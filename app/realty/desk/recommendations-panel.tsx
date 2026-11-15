@@ -35,7 +35,7 @@ export function RecommendationsPanel({ recs }: { recs: DeskView | null }) {
       <Block title={recs.owner ? "Market requests that fit our listings" : "Market requests that fit your listings"}>
         {recs.crmText ? <Notice tone="warn">{recs.crmText}</Notice> : null}
         {recs.listings.status === "missing" && !recs.crmText ? <Notice tone="warn">{CRM_MISSING_TEXT}</Notice> : null}
-        {recs.listings.status === "not-configured" ? <Notice tone="warn">Market search isn&apos;t set up on this server, so requests can&apos;t be checked against listings.</Notice> : null}
+        {recs.listings.status === "not-configured" ? <Notice tone="warn">Online search isn&apos;t set up on this server, so requests can&apos;t be checked against listings.</Notice> : null}
         {recs.listings.status === "error" ? <Notice tone="error">Checking requests against our listings failed. Try again in a minute.</Notice> : null}
         {recs.listings.status === "ok" ? (
           recs.listings.items.length ? (
@@ -155,7 +155,7 @@ export function portOfSpainTime(iso: string): string {
 
 function BuyerMatches({ buyers }: { buyers: Recommendations["buyers"] }) {
   if (buyers.status === "owners-only") return null;
-  if (buyers.status === "not-configured") return <Notice tone="warn">Market search isn&apos;t set up on this server, so live matches can&apos;t run.</Notice>;
+  if (buyers.status === "not-configured") return <Notice tone="warn">Online search isn&apos;t set up on this server, so live matches can&apos;t run.</Notice>;
   if (buyers.status === "error") {
     return (
       <Notice tone="error">

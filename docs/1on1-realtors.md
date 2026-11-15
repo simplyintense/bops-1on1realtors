@@ -330,10 +330,11 @@ function, a browser bundle or Node alike:
 The Next `/realty-demo` page stays the public fixture demo only. The lead flow's desk is still planned on Lovable;
 the Next staff pages are a thin landing and one read-only tool (below).
 
-**Staff desk (`/realty/desk`, staff only).** The landing page, with a shared staff nav (Desk, Market search, and
-"Back to Bops" to `/`). It's behind the login gate like every page, the public demo redirects it, and it's not indexed.
+**Staff desk (`/realty/desk`, staff only).** The landing page, with a shared staff nav (Desk, 1on1 CRM Automatch, Supply & Demand,
+All posts, Online search, Digest and Teach Bops, each shown to owners or teachers only as its gate says, and "Back to Bops" to `/`).
+`/realty/requests` redirects to Supply & Demand's online feed (`/realty/search?source=online`). It's behind the login gate like every page, the public demo redirects it, and it's not indexed.
 
-**Market search (`/realty/market`, staff only, read-only, linked from the desk).** Other agencies' listings for an
+**Online search (`/realty/market`, staff only, read-only, linked from the desk).** Other agencies' listings for an
 area, from the same market as the co-broke matches. Filters are GET query params, so the market token never reaches
 the browser:
 

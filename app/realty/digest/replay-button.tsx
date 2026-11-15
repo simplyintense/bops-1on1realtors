@@ -34,7 +34,7 @@ export function ReplayButton() {
       {result ? (
         <div className="grid gap-3">
           <p className="rt-muted text-sm">
-            Dry run. Market search {result.market === "configured" ? "is live, so these are real market matches" : "isn't set up here, so nothing was matched"}.{" "}
+            Dry run. Online search {result.market === "configured" ? "is live, so these are real market matches" : "isn't set up here, so nothing was matched"}.{" "}
             {result.crm === "configured" ? "Our own listings were read from the 1on1 CRM (read only)." : "The 1on1 CRM isn't connected here, so none of our listings were checked."} A second delivery of the first sample:
             &ldquo;{result.duplicate}&rdquo;.
           </p>
