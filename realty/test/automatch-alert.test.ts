@@ -18,6 +18,7 @@ import {
   TEST_ALERT_TO,
   ALERT_SEND_EXISTING_FLAG,
   HOT_MATCH_LINE,
+  REPLY_LINE,
   MILES_FROM_NAME,
   OFFICE_TO,
   SEND_OFF,
@@ -154,6 +155,26 @@ test("Bops is absent from the rendered subject, from and body (html and text), a
   assert.equal(a.fromName, ALERT_NAME);
 });
 
+test("the rendered subject and bodies never mention Bops or link to bop.1on1realtors.com, even when the desk base URL is production", () => {
+  const cases = [
+    buildAutoMatchAlert(ROW(), { ...BASE_OPTS, fromName: ALERT_NAME, fromEmail: "alerts@1on1realtors.com" }),
+    buildAutoMatchAlert(ROW(), { ...BASE_OPTS, baseUrl: "https://bop.1on1realtors.com" }),
+    buildTestAutoMatchAlert(NOW, { baseUrl: "https://bop.1on1realtors.com" }),
+    buildAutoMatchAlert(ROW({}, { senderPhone: "" }), { ...BASE_OPTS, baseUrl: "https://bop.1on1realtors.com" }),
+  ];
+  const forbidden = /Bops|bop\.1on1realtors\.com|\/realty\/desk|Record how it went on the Desk|view on the Desk|\blog in\b/i;
+  for (const a of cases) {
+    const rendered = `${a.from}\n${a.subject}\n${a.text}\n${a.html}`;
+    assert.doesNotMatch(a.text, /bop\.1on1realtors\.com/i);
+    assert.doesNotMatch(a.html, /bop\.1on1realtors\.com/i);
+    assert.doesNotMatch(a.text, /Bops/i);
+    assert.doesNotMatch(a.html, /Bops/i);
+    assert.doesNotMatch(rendered, forbidden);
+    assert.doesNotMatch(a.text, /Outcome:|Contacted · Viewing booked/);
+    assert.doesNotMatch(a.html, /Outcome:|Contacted<\/a>/);
+  }
+});
+
 test("each alert is CC'd to Crystal and Wendy, and BCC'd to Miles, who stays off the agent-facing headers and body", () => {
   assert.equal(ALERT_CC_DEFAULT, "admin@1on1realtors.com,wendy@1on1realtors.com");
   assert.equal(ALERT_BCC_DEFAULT, "miles@simplyintense.com");
@@ -257,15 +278,18 @@ test("the contact's direct number is a readable E.164-style line with a tel: lin
   assert.doesNotMatch(none.html, /wa\.me/);
 });
 
-test("the hot or live match line, the suggested message, the outcome labels and the Desk link are in both bodies", () => {
+test("the hot or live match line, the suggested message, and the reply-to-admin line are in both bodies, with no Desk or outcome links", () => {
   const a = buildAutoMatchAlert(ROW(), BASE_OPTS);
   assert.ok(a.text.includes(HOT_MATCH_LINE));
   assert.ok(a.html.includes(escapeHtml(HOT_MATCH_LINE)));
   assert.ok(a.text.includes(a.message));
-  assert.match(a.text, /Outcome: Contacted · Viewing booked · Not a fit · Already in touch · Closed/);
-  assert.match(a.html, />Contacted<\/a> · <a href="/);
-  assert.ok(a.text.includes(`Record how it went on the Desk: ${a.deskUrl}`));
-  assert.ok(a.html.includes(`href="${a.deskUrl}"`));
+  assert.ok(a.text.includes(REPLY_LINE));
+  assert.ok(a.html.includes(escapeHtml(REPLY_LINE)));
+  assert.equal(REPLY_LINE, "Reply to this email to let admin know how it went.");
+  assert.doesNotMatch(a.text, /Outcome:|Record how it went on the Desk|view on the Desk|\blog in\b/i);
+  assert.doesNotMatch(a.html, /Outcome:|Record how it went on the Desk|view on the Desk|\blog in\b/i);
+  assert.doesNotMatch(a.text, /bop\.1on1realtors\.com|bop\.example|\/realty\/desk/i);
+  assert.doesNotMatch(a.html, /bop\.1on1realtors\.com|bop\.example|\/realty\/desk/i);
   assert.match(a.text, /^Hi Dana,\n\nHere is a strong match for a listing you hold\.\n/);
   const miles = buildAutoMatchAlert(ROW(), { ...BASE_OPTS, asMiles: true, fromName: MILES_FROM_NAME });
   assert.match(miles.text, /Here is a strong match for a listing you hold\./);

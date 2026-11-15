@@ -5,7 +5,7 @@ import type { Env } from "./env.ts";
 import { isUsd } from "./fx.ts";
 import { phoneLabel, telHref } from "./listing-contact.ts";
 import { shortListingTitle } from "./listing-title.ts";
-import { MATCH_STATUSES, STATUS_LABEL, type StatusRow } from "./match-status.ts";
+import type { StatusRow } from "./match-status.ts";
 
 /**
  * 1on1 Auto-Match Alert: one email per strong Automatch match (75 and above), addressed to the agent who holds the listing
@@ -22,8 +22,8 @@ import { MATCH_STATUSES, STATUS_LABEL, type StatusRow } from "./match-status.ts"
  *
  * Per alert: a soft mention of when a contact brought the property up on WhatsApp (relative day and the time in AST — never
  * the group name or the original message text), the listing, the suggested message, the contact's tap-to-call number next
- * to the wa.me link (omitted when there is no usable number), the "hot or live match" line, the outcome labels, and a link
- * to the lead card on the Desk.
+ * to the wa.me link (omitted when there is no usable number), the "hot or live match" line, and a line asking the recipient
+ * to reply so admin can record how it went. The body never links to the Desk or to bop.1on1realtors.com.
  *
  * Portable: no node:*, no next, no bare process.
  */
@@ -88,7 +88,7 @@ export const SEND_OFF = "Sending Auto-Match Alert is off. This command only rend
 
 export const WA_LABEL = "WhatsApp, with the message filled in (opens in your own browser):";
 export const NO_WA = "No usable WhatsApp number on this ask, so there's no link.";
-export const DESK_LABEL = "Record how it went on the Desk:";
+export const REPLY_LINE = "Reply to this email to let admin know how it went.";
 const NO_PRICE = "no price listed";
 const NO_LINK = "no link on file";
 const NOTE_USD = "this ask was in US$; the TT$ figure is the fixed-rate equivalent.";
@@ -325,7 +325,7 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
   const usd = isUsd(r.ask.currency);
   const cc = [...(o.cc ?? parseAddressList(ALERT_CC_DEFAULT))];
   const bcc = [...(o.bcc ?? parseAddressList(ALERT_BCC_DEFAULT))];
-  const view = { toName, mentioned, listing, ask, usd, score: r.score, message, phoneText, tel, waUrl, deskUrl };
+  const view = { toName, mentioned, listing, ask, usd, score: r.score, message, phoneText, tel, waUrl };
   return {
     to,
     toName,
@@ -367,10 +367,7 @@ type RenderView = {
   phoneText: string | null;
   tel: string | null;
   waUrl: string | null;
-  deskUrl: string;
 };
-
-const outcomesLine = MATCH_STATUSES.map((s) => STATUS_LABEL[s]).join(" · ");
 
 function renderText(v: RenderView): string {
   const { hello, body } = introOf(v.toName);
@@ -391,8 +388,7 @@ function renderText(v: RenderView): string {
   out.push("");
   out.push(HOT_MATCH_LINE);
   out.push("");
-  out.push(`Outcome: ${outcomesLine}`);
-  out.push(`${DESK_LABEL} ${v.deskUrl}`);
+  out.push(REPLY_LINE);
   out.push("");
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
@@ -412,7 +408,6 @@ function renderHtml(v: RenderView): string {
       ? `<p>Call: <a href="${e(v.tel)}">${e(v.phoneText)}</a> (${e(v.tel)})</p>`
       : "";
   const wa = v.waUrl ? `<p>${e(WA_LABEL)} <a href="${e(v.waUrl)}">${e(v.waUrl)}</a></p>` : `<p>${e(NO_WA)}</p>`;
-  const outcomes = MATCH_STATUSES.map((s) => `<a href="${e(v.deskUrl)}">${e(STATUS_LABEL[s])}</a>`).join(" · ");
   return [
     "<!doctype html>",
     "<html><body>",
@@ -425,8 +420,7 @@ function renderHtml(v: RenderView): string {
     call,
     wa,
     `<p>${e(HOT_MATCH_LINE)}</p>`,
-    `<p>Outcome: ${outcomes}</p>`,
-    `<p>${e(DESK_LABEL)} <a href="${e(v.deskUrl)}">${e(v.deskUrl)}</a></p>`,
+    `<p>${e(REPLY_LINE)}</p>`,
     "</body></html>",
   ]
     .filter((line) => line !== "")
