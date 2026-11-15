@@ -5,6 +5,10 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEVELOPMENTS } from "../extract.ts";
 import { applyKnownTerms, bestGuess, parseListingType, termIn, type KnownTerm, type RecordListingType } from "../flow/knowledge.ts";
+import { ASK_FOLD_DAYS, sameDemandAsk, type AskFacts } from "../flow/ask-match.ts";
+import { USD_TO_TTD } from "../flow/fx.ts";
+import type { AreaKnowledgeIndex } from "../flow/area-knowledge.ts";
+import { withTaught, type AreaTeachFile, type TaughtAreas } from "../flow/taught-areas.ts";
 import { looksLikeEmptyListingAsk, reparsePost, type KindOverride, type PostRecord } from "../flow/periskope.ts";
 import { dateAst } from "./group-posts.ts";
 import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
@@ -31,8 +35,10 @@ export type Tab = "supply" | "demand" | "vague";
 
 export type { KnownTerm };
 
-/** Cross-posts from the same sender within this many days, with the same parsed ask, are one record. */
+/** Supply (listings) folds a cross-post from the same sender only when the parsed listing is identical, within this many days. */
 export const CROSS_POST_DAYS = 3;
+/** Demand (asks) folds the same ask (sameDemandAsk) within ASK_FOLD_DAYS (14) of the record's last sighting. */
+export const ASK_CROSS_POST_DAYS = ASK_FOLD_DAYS;
 /** Token-set similarity at or above this counts as near-identical text. */
 const NEAR_IDENTICAL = 0.9;
 const SCHEMA_VERSION = "4";
@@ -284,12 +290,22 @@ function toItem(raw: SourceRow, side: Side, terms: readonly KnownTerm[], over?: 
   };
 }
 
-/** The same parsed ask: category, place, type, sale or rent, beds and price. Nulls match nulls. */
-function sameAsk(a: Item | Rec, b: Rec): boolean {
+/** The parsed ask of a row, for the same-ask rule (ask-match.ts). */
+const askFactsOf = (x: Item | Rec): AskFacts => ({
+  category: x.category,
+  area: x.area,
+  development: x.development,
+  beds: x.beds,
+  price: x.price,
+  currency: x.currency,
+  type: x.type,
+  listingType: x.listingType,
+});
+
+/** The same parsed listing (supply): category, place, type, sale or rent, beds and price, exactly. Nulls match nulls. */
+function sameListing(a: Item | Rec, b: Rec): boolean {
   const placeOf = (x: Item | Rec) => normalizeText(x.area) || normalizeText(x.development);
   const place = placeOf(a);
-  // No place, beds or price: leave folding to near-identical text, so two underspecified
-  // but different asks (e.g. Carnival for 1 person vs 8) stay separate.
   if (!place && a.beds == null && b.beds == null && a.price == null && b.price == null) return false;
   return (
     a.category === b.category &&
@@ -301,14 +317,22 @@ function sameAsk(a: Item | Rec, b: Rec): boolean {
   );
 }
 
+/** Whether a clear item is the same as an earlier record: demand by the same-ask rule (14 days), supply by the exact listing (3 days). */
+function sameClear(it: Item, r: Rec): boolean {
+  const gap = Math.abs(Date.parse(it.sentAt) - Date.parse(r.lastSentAt));
+  if (it.tab === "demand") return sameDemandAsk(askFactsOf(it), askFactsOf(r)) && gap <= ASK_CROSS_POST_DAYS * DAY_MS;
+  return sameListing(it, r) && gap <= CROSS_POST_DAYS * DAY_MS;
+}
+
 const byTime = (a: { sentAt: string; messageId?: string }, b: { sentAt: string; messageId?: string }) =>
   a.sentAt.localeCompare(b.sentAt) || (a.messageId ?? "").localeCompare(b.messageId ?? "");
 
 /**
  * Merge cross-posts. Deterministic: items are walked oldest first. An item joins the first earlier record from the same
- * sender, the same tab and side, when the text is near-identical, or (clear items only) the ask matches and the last
- * sighting is within CROSS_POST_DAYS. The record keeps the first message's fields and collects groups, message ids,
- * first and last sentAt, and a count.
+ * sender, the same tab and side, when the text is near-identical, or (clear items only, sameClear) the same ask (demand:
+ * sameDemandAsk, within ASK_CROSS_POST_DAYS of the record's last sighting) or the identical parsed listing (supply, within
+ * CROSS_POST_DAYS). A demand record shows its newest post's fields; a supply record keeps its first. Both keep the first message
+ * id, first sentAt, groups, message ids and count.
  */
 function dedupe(items: Item[]): Rec[] {
   const recs: Rec[] = [];
@@ -320,10 +344,27 @@ function dedupe(items: Item[]): Rec[] {
         r.tab === it.tab &&
         r.side === it.side &&
         (nearIdentical(it.originalText, r.originalText) ||
-          (it.tab !== "vague" && sameAsk(it, r) && Math.abs(Date.parse(it.sentAt) - Date.parse(r.lastSentAt)) <= CROSS_POST_DAYS * DAY_MS)),
+          (it.tab !== "vague" && sameClear(it, r))),
     );
     if (hit) {
       hit.timesSeen++;
+      if (it.tab === "demand" && it.sentAt >= hit.lastSentAt) {
+        // An ask shows its newest post's fields (the record's own id, first sighting and groups stay).
+        Object.assign(hit, {
+          area: it.area,
+          development: it.development,
+          price: it.price,
+          currency: it.currency,
+          beds: it.beds,
+          baths: it.baths,
+          type: it.type,
+          listingType: it.listingType,
+          intent: it.intent,
+          propertyClass: it.propertyClass,
+          notes: it.notes,
+          originalText: it.originalText,
+        });
+      }
       if (it.sentAt > hit.lastSentAt) hit.lastSentAt = it.sentAt;
       if (it.sentAt < hit.firstSentAt) hit.firstSentAt = it.sentAt;
       if (it.groupName && !hit.groups.includes(it.groupName)) hit.groups.push(it.groupName);
@@ -474,6 +515,32 @@ function ensureSchema(db: DatabaseSync): void {
       taught_at TEXT,
       UNIQUE (kind, term)
     );
+    CREATE TABLE IF NOT EXISTS area_places (
+      name TEXT PRIMARY KEY,
+      market TEXT,
+      lat REAL,
+      lon REAL,
+      note TEXT,
+      taught_by TEXT NOT NULL,
+      taught_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS area_aliases (
+      alias TEXT PRIMARY KEY,
+      canonical TEXT NOT NULL,
+      taught_by TEXT NOT NULL,
+      taught_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS area_relations (
+      a TEXT NOT NULL,
+      b TEXT NOT NULL,
+      nearby INTEGER NOT NULL,
+      minutes REAL,
+      km REAL,
+      note TEXT,
+      taught_by TEXT NOT NULL,
+      taught_at TEXT NOT NULL,
+      PRIMARY KEY (a, b)
+    );
     CREATE TABLE IF NOT EXISTS explanations (
       message_id TEXT PRIMARY KEY,
       explanation TEXT NOT NULL,
@@ -536,6 +603,75 @@ export class SearchStore {
 
   private count(table: string): number {
     return Number(this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n ?? 0);
+  }
+
+  /** The taught areas (places, aliases, nearby pairs) for the matcher. Never read by the term parser: these tables are separate. */
+  taughtAreas(): TaughtAreas {
+    const places = this.db.prepare("SELECT name, market, lat, lon, note FROM area_places ORDER BY name").all().map((r) => ({
+      name: String(r.name),
+      market: str(r.market),
+      lat: typeof r.lat === "number" ? r.lat : null,
+      lon: typeof r.lon === "number" ? r.lon : null,
+      note: str(r.note),
+    }));
+    const aliases = this.db.prepare("SELECT alias, canonical FROM area_aliases").all().map((r) => ({ alias: String(r.alias), canonical: String(r.canonical) }));
+    const relations = this.db.prepare("SELECT a, b, nearby, minutes, km, note FROM area_relations").all().map((r) => ({
+      a: String(r.a),
+      b: String(r.b),
+      nearby: Number(r.nearby) === 1,
+      minutes: typeof r.minutes === "number" ? r.minutes : null,
+      km: typeof r.km === "number" ? r.km : null,
+      note: str(r.note),
+    }));
+    return { places, aliases, relations };
+  }
+
+  /**
+   * Writes a parsed teaching file (parseAreaTeachFile) into the area tables, stamped with who taught it. Idempotent: the same
+   * rows are updated in place. Returns the rows written.
+   */
+  teachAreas(file: AreaTeachFile, by: string, at = new Date().toISOString()): { places: number; aliases: number; pairs: number; nearby: number } {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const place = this.db.prepare(
+        `INSERT INTO area_places (name, market, lat, lon, note, taught_by, taught_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET market = excluded.market, lat = excluded.lat, lon = excluded.lon, note = excluded.note, taught_by = excluded.taught_by, taught_at = excluded.taught_at`,
+      );
+      for (const p of file.places) place.run(p.name, p.market, p.lat, p.lon, p.note, by, at);
+      const alias = this.db.prepare(
+        `INSERT INTO area_aliases (alias, canonical, taught_by, taught_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical, taught_by = excluded.taught_by, taught_at = excluded.taught_at`,
+      );
+      for (const a of file.aliases) alias.run(a.alias, a.canonical, by, at);
+      const pair = this.db.prepare(
+        `INSERT INTO area_relations (a, b, nearby, minutes, km, note, taught_by, taught_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(a, b) DO UPDATE SET nearby = excluded.nearby, minutes = excluded.minutes, km = excluded.km, note = excluded.note, taught_by = excluded.taught_by, taught_at = excluded.taught_at`,
+      );
+      for (const r of file.relations) pair.run(r.a, r.b, r.nearby ? 1 : 0, r.minutes, r.km, r.note, by, at);
+      this.db.exec("COMMIT");
+      return { places: file.places.length, aliases: file.aliases.length, pairs: file.relations.length, nearby: file.relations.filter((r) => r.nearby).length };
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  /** Removes exactly the rows taught by `by` from the area tables. Returns how many rows each table lost. */
+  undoAreaTeach(by: string): { places: number; aliases: number; pairs: number } {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const n = (sql: string) => Number(this.db.prepare(sql).run(by).changes);
+      const out = {
+        places: n("DELETE FROM area_places WHERE taught_by = ?"),
+        aliases: n("DELETE FROM area_aliases WHERE taught_by = ?"),
+        pairs: n("DELETE FROM area_relations WHERE taught_by = ?"),
+      };
+      this.db.exec("COMMIT");
+      return out;
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
   }
 
   /** Every taught or seeded term, longest first. Read by the parser, the sync and the matcher. */
@@ -817,8 +953,10 @@ export class SearchStore {
     if (q) add(`id IN (SELECT record_id FROM search_text WHERE search_text MATCH ? AND tab = ?)`, q, kind);
     if (hasText(input.area)) add(`(area LIKE ? ESCAPE '\\' OR development LIKE ? ESCAPE '\\')`, likeOf(input.area!), likeOf(input.area!));
     if (hasText(input.development)) add(`(development LIKE ? ESCAPE '\\' OR area LIKE ? ESCAPE '\\')`, likeOf(input.development!), likeOf(input.development!));
-    if (input.minPrice != null) add("price >= ?", input.minPrice);
-    if (input.maxPrice != null) add("price <= ?", input.maxPrice);
+    // Price filters are TT$: a US$ record is found by its TTD equivalent (fx.ts), and shows its own price.
+    const ttdPrice = "(CASE WHEN UPPER(currency) = 'USD' THEN price * ? ELSE price END)";
+    if (input.minPrice != null) add(`${ttdPrice} >= ?`, USD_TO_TTD, input.minPrice);
+    if (input.maxPrice != null) add(`${ttdPrice} <= ?`, USD_TO_TTD, input.maxPrice);
     if (input.beds != null) add("beds = ?", input.beds);
     if (hasText(input.type)) add("lower(type) = lower(?)", input.type!.trim());
     if (input.listingType) add("listing_type = ?", input.listingType);
@@ -950,6 +1088,25 @@ export function taughtTermsFrom(root: string): KnownTerm[] {
   } finally {
     store.close();
   }
+}
+
+/** The taught areas in a store's root, for the matcher. Null when there is no database yet (nothing is taught). */
+export function taughtAreasFrom(root: string): TaughtAreas | null {
+  if (!existsSync(join(root, SEARCH_DB))) return null;
+  const store = SearchStore.open(root);
+  try {
+    return store.taughtAreas();
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * The area index the matcher reads for a store root: the volume's area knowledge with the taught places (their coordinates) and
+ * the taught pairs on it. Never creates the database, and never syncs it.
+ */
+export function matchingKnowledgeFrom(root: string): AreaKnowledgeIndex | null {
+  return withTaught(resolveAreaKnowledge(join(dirname(root), "area-knowledge.json")), taughtAreasFrom(root));
 }
 
 /** Reads the search filters from a URL or a Next searchParams object. Throws SearchInputError on a bad value. */

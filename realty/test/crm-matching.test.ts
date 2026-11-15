@@ -130,8 +130,8 @@ test("our listings match by the co-broke rules: rent vs sale, same or nearby are
   const band = async (r: Partial<LiveRequest>) => (await matchOurListings({ ...RENT, ...r }, listings, AREAS)).map((m) => m.price);
   assert.deepEqual(await band({ priceMax: null, priceMin: 9000 }), ["TT$8,500", "TT$7,500", "TT$10,500"]);
   assert.deepEqual(await band({ priceMin: 2000, priceMax: 9000 }), ["TT$8,500", "TT$7,500", "TT$1,800", "TT$10,500"]);
-  // No budget: price can't be checked, so the five closest by area, cheapest first.
-  assert.deepEqual(await band({ priceMin: null, priceMax: null }), ["TT$1,800", "US$2,000", "TT$7,500", "TT$8,500", "TT$11,000"]);
+  // No budget: price can't be checked, so the five closest by area, cheapest first in TT$. US$2,000 is TT$13,560 at the fixed rate.
+  assert.deepEqual(await band({ priceMin: null, priceMax: null }), ["TT$1,800", "TT$7,500", "TT$8,500", "TT$11,000", "US$2,000 ≈ TT$13,560"]);
 });
 
 function world(ours: { listings: () => Promise<Listing[]> } | null) {

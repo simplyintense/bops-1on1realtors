@@ -8,9 +8,9 @@ import {
   discoveryDue,
   ensureOwnerWaiver,
   FIRST_BACKFILL_DAYS,
-  pollGroups,
   type AddedGroup,
 } from "./periskope-discover.ts";
+import { pollGroups } from "./periskope-groups.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 import { syncFromJsonl, type SyncResult } from "./search-store.ts";

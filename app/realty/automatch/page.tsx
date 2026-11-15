@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { moneyLabel } from "@/realty/flow/market-search.ts";
+import { askBudgetLabel } from "@/realty/flow/automatch.ts";
 import { listingPriceLabel } from "@/realty/flow/live-match.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { staffAutomatch, type AutomatchRow } from "@/realty/node/automatch.ts";
@@ -94,7 +94,7 @@ function PairCard({ r }: { r: AutomatchRow }) {
         <p className="rt-eyebrow">Asked · {a.listingType === "rent" ? "for rent" : "for sale"}</p>
         <p className="mt-1 font-medium">{askLine}</p>
         <p className="rt-muted text-sm">
-          {a.budget != null ? moneyLabel(a.budget, a.currency) : "No budget given"} · last seen {dateAst(a.lastSeenAt)}
+          {a.budget != null ? askBudgetLabel(a.budget, a.currency) : "No budget given"} · last seen {dateAst(a.lastSeenAt)}
         </p>
         <p className="rt-muted text-sm">
           From {a.senderName ?? "unnamed"} · {a.senderPhone}
@@ -122,6 +122,7 @@ function PairCard({ r }: { r: AutomatchRow }) {
       <div className="md:text-right">
         <p className="text-3xl font-semibold">{r.score}</p>
         <p className="rt-muted text-xs">{r.band === "strong" ? "75 and above" : "50 to 74"}</p>
+        <p className="rt-muted text-xs">{r.posts === 1 ? "1 post" : `${r.posts} posts`}</p>
       </div>
       <p className="rt-muted text-sm md:col-span-3">{r.reason}</p>
     </li>

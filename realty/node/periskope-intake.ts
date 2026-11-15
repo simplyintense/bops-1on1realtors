@@ -38,8 +38,8 @@ import { sharedCrmSource } from "./crm-shared.ts";
 import { GATE_COOKIE, gateConfig, ownerAllowed, publicDemo, readSession, teachAllowed } from "../../lib/gate.ts";
 import { appendJsonl } from "./jsonl.ts";
 import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
-import { taughtTermsFrom } from "./search-store.ts";
-import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
+import { pollGroups } from "./periskope-groups.ts";
+import { matchingKnowledgeFrom, taughtTermsFrom } from "./search-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 
 /**
@@ -152,7 +152,7 @@ async function oursFor(request: LiveRequest, c: Ctx) {
   } catch {
     return [];
   }
-  return matchOurListings(request, listings, oursAreas(c), undefined, resolveAreaKnowledge(join(dirname(c.root), "area-knowledge.json"))).catch(() => []);
+  return matchOurListings(request, listings, oursAreas(c), undefined, matchingKnowledgeFrom(c.root)).catch(() => []);
 }
 
 /** Very strong CRM matches only (same development or area, exact beds, in-band). Never a neighbour. */
@@ -239,6 +239,8 @@ async function ingest(text: string, c: Ctx): Promise<Reply> {
     consentOf: (chatId) => c.store.consent(chatId),
     seen: (id) => c.store.isSeen(id),
     terms: taughtTermsFrom(c.root),
+    // The same groups the poller watches (pinned plus roster, minus deny), so the webhook accepts what the poll reads.
+    watched: pollGroups(c.root, c.env).map((g) => g.chatId),
   });
   if (d.action === "ignore" && d.reason === "already seen") await refillPost(c, payload);
   return act(d, c);

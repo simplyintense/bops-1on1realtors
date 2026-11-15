@@ -8,6 +8,8 @@
  * until Miles confirms.
  */
 
+import type { TaughtAreas } from "./taught-areas.ts";
+
 export const KNOWLEDGE_SOURCE = "OpenStreetMap Nominatim (https://nominatim.openstreetmap.org) for coordinates and named points of interest (schools, malls and supermarkets, highways, hospitals, airports); drive times estimated at 35 km/h from great-circle distance unless an OSRM duration is stored.";
 
 export type Coords = { lat: number; lon: number };
@@ -38,6 +40,8 @@ export type AreaKnowledgeIndex = {
   source: string;
   builtAt: string;
   places: AreaKnowledge[];
+  /** The owner's taught areas (taught-areas.ts), when the store has them: they decide nearby where both places are taught. */
+  taught?: TaughtAreas;
 };
 
 export function knowledgeOf(index: AreaKnowledgeIndex | null | undefined, name: string | null | undefined): AreaKnowledge | null {

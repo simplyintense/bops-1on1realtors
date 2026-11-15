@@ -1,4 +1,4 @@
-import { moneyLabel } from "../flow/market-search.ts";
+import { askBudgetLabel } from "../flow/automatch.ts";
 import { listingPriceLabel } from "../flow/live-match.ts";
 import { dateAst } from "../node/group-posts.ts";
 import { loadAutomatch, type AutomatchRow } from "../node/automatch.ts";
@@ -14,10 +14,11 @@ import { searchRoot } from "./search-args.ts";
  */
 
 const beds = (n: number | null) => (n == null ? "beds not given" : `${n} bed${n === 1 ? "" : "s"}`);
+const posts = (n: number) => `${n} post${n === 1 ? "" : "s"}`;
 
 function askLine(r: AutomatchRow): string {
   const a = r.ask;
-  const budget = a.budget != null ? moneyLabel(a.budget, a.currency) : "no budget";
+  const budget = a.budget != null ? askBudgetLabel(a.budget, a.currency) : "no budget";
   return [a.area, beds(a.beds), budget, a.type ?? "type not given", a.listingType === "rent" ? "rent" : "sale", `last seen ${dateAst(a.lastSeenAt)}`].join(" · ");
 }
 
@@ -33,15 +34,15 @@ async function main(): Promise<void> {
   console.log(`Demand considered: ${result.demand} (asks with a place and sale or rent: ${result.asks})`);
   console.log(`Active CRM listings: ${result.listings}`);
   if (result.crmText) console.log(`CRM: ${result.crmText}`);
-  console.log(`Pairs 75 and above: ${result.strong}`);
-  console.log(`Pairs 50 to 74: ${result.fair}`);
+  console.log(`Pairs 75 and above: ${result.strong} (pairs before dedupe ${result.dedupe.strong.before} / after dedupe ${result.dedupe.strong.after})`);
+  console.log(`Pairs 50 to 74: ${result.fair} (pairs before dedupe ${result.dedupe.fair.before} / after dedupe ${result.dedupe.fair.after})`);
   if (!result.pairs.length) {
     console.log("No pairs at 50 and above.");
     return;
   }
   console.log("Top 5:");
   result.pairs.slice(0, 5).forEach((r, i) => {
-    console.log(`${i + 1}. ${r.score}  ask: ${askLine(r)}`);
+    console.log(`${i + 1}. ${r.score}  ${posts(r.posts)}  ask: ${askLine(r)}`);
     console.log(`     listing: ${listingLine(r)}`);
     if (r.listing.url) console.log(`     link: ${r.listing.url}`);
     console.log(`     why: ${r.reason}`);

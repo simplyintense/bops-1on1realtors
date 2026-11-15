@@ -12,16 +12,8 @@ import { periskopeRoot } from "./periskope-root.ts";
 export const AREA_REGISTERED_AGENTS_CHAT_ID = "18686789715-1444916451@g.us";
 export const AREA_REGISTERED_AGENTS_NAME = "AREA Registered Agents";
 
-/** The listen-only groups Miles allowlisted (pinned in code). Auto-discovered groups are added on top: periskope-discover.ts. */
-export const INTAKE_GROUPS = [
-  { chatId: "18686789715-1444916451@g.us", chatName: "AREA Registered Agents" },
-  { chatId: "120363139007270954@g.us", chatName: "R. E. SEARCHES ONLY" },
-  { chatId: "18686209603-1626217638@g.us", chatName: "🇹🇹🏡 Anything Real Estate❤️" },
-  { chatId: "18686894126-1467511703@g.us", chatName: "REAL ESTATE AGENTS OF T&T" },
-  { chatId: "18683898353-1597076235@g.us", chatName: "Top Notch Realtors" },
-  { chatId: "18687143939-1555072973@g.us", chatName: "T&T Realty Co Broke Group" },
-  { chatId: "120363421375699959@g.us", chatName: "Co-Broke 🤝" },
-] as const;
+/** The pinned groups live in periskope-groups.ts (the one list the poller and the webhook share). */
+export { INTAKE_GROUPS } from "./periskope-groups.ts";
 
 const API = "https://api.periskope.app";
 

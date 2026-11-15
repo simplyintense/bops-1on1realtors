@@ -1,6 +1,10 @@
 import type { AreaKnowledgeIndex } from "./area-knowledge.ts";
 import type { AreaResolver } from "./areas.ts";
-import { categoryOfListing, categoryOfRequest, comparedPrice, fitsOurListing, ourAreaContext, ourAreaRelation, PRICE_BAND, type LiveRequest } from "./live-match.ts";
+import { sameDemandAsk, type AskFacts } from "./ask-match.ts";
+import { isUsd, moneyWithTtd, shortMoney, ttdValue } from "./fx.ts";
+import { moneyLabel } from "./market-search.ts";
+import { categoryOfListing, categoryOfRequest, fitsOurListing, listingTtd, ourAreaContext, ourAreaRelation, PRICE_BAND, type LiveRequest } from "./live-match.ts";
+import { nearbyDriveLabel } from "./taught-areas.ts";
 import type { Listing } from "./source.ts";
 
 /**
@@ -8,13 +12,16 @@ import type { Listing } from "./source.ts";
  * scored 0–100. Read only: nothing here sends, writes or calls anything.
  *
  * Eligibility is the live matching rules, not a copy of them: fitsOurListing and the area tiers from live-match.ts. So every
- * pair here is one matchOurListings would also give. The score is this file's:
+ * pair here is one matchOurListings would also give. Money is compared in TTD at the fixed rate (fx.ts). The score is this file's:
  *   price 35    the listing at or under the budget is full; linear down to 0 at 20% over (PRICE_BAND); a missing price or budget is 0
  *   area 30     same area 30, nearby 15
  *   beds 20     exact 20, one off 10, missing 0
  *   type 10     sale/rent agrees (5; eligibility makes it agree) + kind of place agrees (5; no type asked is 5)
  *   recency 5   the ask was seen within 3 days: 5, linear to 0 at 30 days
  * The parts add up to at most 100 and the score is their rounded sum. Bands: 75+ strong, 50–74 fair, below 50 not shown.
+ *
+ * One sender's near-identical asks (sameDemandAsk) that hit the same listing are one row: the best score stands (tie: the newer
+ * ask), and the posts add up (foldSameSenderPairs).
  *
  * Portable: no node:*, no next, no bare process.
  */
@@ -28,7 +35,10 @@ const DAY_MS = 86_400_000;
 const RECENT_FULL_DAYS = 3;
 const RECENT_ZERO_DAYS = 30;
 
-/** A demand record as the scorer reads it: one ask, and when it was last seen (ISO). */
+/**
+ * A demand record as the scorer reads it: one ask, and when it was last seen (ISO). `sender` is the poster's number (used only to
+ * fold one sender's near-identical asks) and `posts` how many posts the record folds (the store's count), both optional.
+ */
 export type AutomatchAsk = {
   id: string;
   area: string;
@@ -40,6 +50,8 @@ export type AutomatchAsk = {
   type: string | null;
   listingType: "sale" | "rent";
   lastSeenAt: string;
+  sender?: string;
+  posts?: number;
 };
 
 export type AreaRelation = "same" | "nearby";
@@ -47,40 +59,44 @@ export type ScoreParts = { price: number; area: number; beds: number; saleRent: 
 export type Scored = { score: number; reason: string; parts: ScoreParts };
 export type Band = "strong" | "fair";
 export type AutomatchPair = Scored & { ask: AutomatchAsk; listing: Listing; areaRelation: AreaRelation };
-
-/** Money the way the desk reads it in a reason: TT$1.75m, TT$8,500, US$2,000. */
-function money(n: number, currency: string): string {
-  const sym = currency.toUpperCase() === "USD" ? "US$" : "TT$";
-  if (n >= 1_000_000) return `${sym}${Math.round((n / 1_000_000) * 100) / 100}m`;
-  return `${sym}${n.toLocaleString("en-US")}`;
-}
+/** One row after folding: the best pair of one sender's near-identical asks on a listing, and the posts they add up to. */
+export type AutomatchGroup = AutomatchPair & { posts: number };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/** The budget as a row shows it: TT$ as it is; a USD ask as "asked in US$ (US$650k ≈ TT$4.41m)". */
+export function askBudgetLabel(budget: number, currency: string): string {
+  return isUsd(currency) ? `asked in US$ (${moneyWithTtd(budget, "USD")})` : (moneyLabel(budget, "TTD") ?? String(budget));
+}
+
 /**
  * One ask against one listing: the score (an integer 0–100), its parts, and the one-line reason. `areaRelation` is the
- * listing's area against the ask's (null when it isn't checked: no points for area then). Pure.
+ * listing's area against the ask's (null when it isn't checked: no points for area then). `driveMinutes` is the taught drive
+ * time to a nearby listing's area, when there is one. Pure.
  */
-export function scorePair(ask: Omit<AutomatchAsk, "id">, l: Listing, o: { areaRelation: AreaRelation | null; now: Date }): Scored {
+export function scorePair(ask: Omit<AutomatchAsk, "id">, l: Listing, o: { areaRelation: AreaRelation | null; now: Date; driveMinutes?: number | null }): Scored {
   const cur = ask.currency;
   const askCategory = categoryOfRequest(ask.type);
 
-  // The listing's price in the ask's currency (its TTD equivalent for a TTD ask), as live matching compares it. A price
-  // that's only in another currency (a USD listing with no TTD equivalent, for a TTD ask) has nothing to compare, so 0.
-  const cmp = comparedPrice(l, cur);
-  const lp = cmp.currency === cur ? cmp.price : 0;
+  // Both prices in TTD (fx.ts), so a USD ask and a TTD listing compare, and the other way round.
+  const lp = listingTtd(l);
+  const shownListing = isUsd(l.currency) ? moneyWithTtd(l.price, "USD", l.ttdEquiv) : shortMoney(l.price, "TTD");
+  const shownBudget = ask.budget ? (isUsd(cur) ? moneyWithTtd(ask.budget, "USD") : shortMoney(ask.budget, "TTD")) : "";
   let price: { points: number; text: string };
   if (!ask.budget) price = { points: 0, text: "no budget given" };
-  else if (!lp) price = { points: 0, text: l.price ? `no ${cur === "USD" ? "US$" : "TT$"} price to compare` : "no price listed" };
-  else if (lp <= ask.budget) price = { points: WEIGHT.price, text: `${money(lp, cur)} within ${money(ask.budget, cur)} budget` };
+  else if (!lp) price = { points: 0, text: "no price listed" };
   else {
-    const over = (lp - ask.budget) / ask.budget;
-    price = { points: WEIGHT.price * Math.max(0, 1 - over / PRICE_BAND), text: `${money(lp, cur)}, ${Math.round(over * 100)}% over the ${money(ask.budget, cur)} budget` };
+    const budgetTtd = ttdValue(ask.budget, cur);
+    if (lp <= budgetTtd) price = { points: WEIGHT.price, text: `${shownListing} within ${shownBudget} budget` };
+    else {
+      const over = (lp - budgetTtd) / budgetTtd;
+      price = { points: WEIGHT.price * Math.max(0, 1 - over / PRICE_BAND), text: `${shownListing}, ${Math.round(over * 100)}% over the ${shownBudget} budget` };
+    }
   }
 
   let area: { points: number; text: string };
   if (o.areaRelation === "same") area = { points: WEIGHT.area, text: `Same area (${ask.area})` };
-  else if (o.areaRelation === "nearby") area = { points: WEIGHT.area / 2, text: `Nearby (${l.area || "a neighbour"})` };
+  else if (o.areaRelation === "nearby") area = { points: WEIGHT.area / 2, text: nearbyDriveLabel(l.area || "a neighbour", o.driveMinutes ?? null) };
   else area = { points: 0, text: "area not checked" };
 
   let beds: { points: number; text: string };
@@ -125,27 +141,62 @@ function requestOf(a: AutomatchAsk): LiveRequest {
   return { intent: a.listingType === "rent" ? "rent" : "buy", area: a.area, beds: a.beds, propertyType: a.type, priceMin: null, priceMax: a.budget, currency: a.currency, monthly: false };
 }
 
+/** An ask as the duplicate rule reads it (sameDemandAsk, ask-match.ts). */
+export function askFactsOf(a: AutomatchAsk): AskFacts {
+  return { area: a.area, development: null, beds: a.beds, price: a.budget, currency: a.currency, type: a.type, listingType: a.listingType };
+}
+
 /**
  * Every eligible pair, best first (score, then the newer ask, then the listing title). Eligibility and the area tiers are
  * live-match.ts's, so an ask never pairs with a listing of the other kind (sale vs rent), and the same listings come back
- * as matchOurListings would give. An ask with no area is never matched. Area lookups are once per distinct area.
+ * as matchOurListings would give. An ask with no area is never matched. One pair per ask and listing: a listing that is
+ * repeated in the CRM's list is counted once. Area lookups are once per distinct area.
  */
 export async function automatchPairs(asks: readonly AutomatchAsk[], listings: readonly Listing[], areas: AreaResolver, now: Date, knowledge: AreaKnowledgeIndex | null = null): Promise<AutomatchPair[]> {
   const out: AutomatchPair[] = [];
+  const onceById = [...new Map(listings.map((l) => [l.id, l] as const)).values()];
+  const seenAsk = new Set<string>();
   for (const ask of asks) {
-    if (!ask.area) continue;
+    if (!ask.area || seenAsk.has(ask.id)) continue;
+    seenAsk.add(ask.id);
     const r = requestOf(ask);
-    const fits = listings.filter((l) => fitsOurListing(r, l));
+    const fits = onceById.filter((l) => fitsOurListing(r, l));
     if (!fits.length) continue;
     const ctx = await ourAreaContext(ask.area, fits, areas, knowledge);
     for (const l of fits) {
       const rel = ourAreaRelation(ctx, l);
       if (!rel) continue;
       const areaRelation: AreaRelation = rel.tier === "same-area" ? "same" : "nearby";
-      out.push({ ...scorePair(ask, l, { areaRelation, now }), ask, listing: l, areaRelation });
+      const driveMinutes = rel.via === "taught" ? (rel.relMin ?? null) : null;
+      out.push({ ...scorePair(ask, l, { areaRelation, now, driveMinutes }), ask, listing: l, areaRelation });
     }
   }
   return out.sort((a, b) => b.score - a.score || Date.parse(b.ask.lastSeenAt) - Date.parse(a.ask.lastSeenAt) || a.listing.title.localeCompare(b.listing.title));
+}
+
+/**
+ * Folds one sender's near-identical asks that hit the same listing into one row. Input is best first (automatchPairs order), so the
+ * first pair of a group is the best score and, on a tie, the newer ask; its posts are the sum of the group's posts. Asks with no
+ * sender are never folded.
+ */
+export function foldSameSenderPairs(pairs: readonly AutomatchPair[]): AutomatchGroup[] {
+  const out: AutomatchGroup[] = [];
+  for (const p of pairs) {
+    const posts = p.ask.posts ?? 1;
+    const hit = p.ask.sender
+      ? out.find((g) => g.listing.id === p.listing.id && g.ask.sender === p.ask.sender && sameDemandAsk(askFactsOf(g.ask), askFactsOf(p.ask)))
+      : undefined;
+    if (hit) hit.posts += posts;
+    else out.push({ ...p, posts });
+  }
+  return out;
+}
+
+/** Pairs in each band before and after folding one sender's near-identical asks (the CLI prints both). */
+export function dedupeCounts(pairs: readonly AutomatchPair[]): { strong: { before: number; after: number }; fair: { before: number; after: number } } {
+  const before = bandCounts(pairs);
+  const after = bandCounts(foldSameSenderPairs(pairs));
+  return { strong: { before: before.strong, after: after.strong }, fair: { before: before.fair, after: after.fair } };
 }
 
 /** A stored demand record as the matcher reads it (SearchRow has all of these). */
@@ -160,6 +211,8 @@ export type DemandRow = {
   listingType: string | null;
   lastSentAt: string;
   status?: string | null;
+  senderPhone?: string | null;
+  timesSeen?: number | null;
 };
 
 /** Parked and ignored asks are left out of Automatch (the owner set them aside). */
@@ -176,5 +229,16 @@ export function askOf(d: DemandRow): AutomatchAsk | null {
   const area = (d.area || d.development || "").trim();
   const listingType = d.listingType === "rent" ? "rent" : d.listingType === "sale" ? "sale" : null;
   if (!area || !listingType) return null;
-  return { id: d.id, area, beds: d.beds, budget: d.price, currency: d.currency?.toUpperCase() === "USD" ? "USD" : "TTD", type: d.type, listingType, lastSeenAt: d.lastSentAt };
+  return {
+    id: d.id,
+    area,
+    beds: d.beds,
+    budget: d.price,
+    currency: d.currency?.toUpperCase() === "USD" ? "USD" : "TTD",
+    type: d.type,
+    listingType,
+    lastSeenAt: d.lastSentAt,
+    ...(d.senderPhone ? { sender: d.senderPhone } : {}),
+    ...(d.timesSeen != null ? { posts: d.timesSeen } : {}),
+  };
 }

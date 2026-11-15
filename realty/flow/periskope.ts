@@ -22,8 +22,9 @@ import { propertyKindFromCrm } from "./taxonomy.ts";
  * staff have recorded a posted notice or the owner has waived the notice (noticeWaivedAt), and the
  * record is still active (consentAllows). An opted-out sender is dropped before
  * the body is read. Deny by default: a message passes the allowlist only from a group named in
- * PERISKOPE_ALLOWED_GROUPS or whose chat id is in PERISKOPE_ALLOWED_CHAT_IDS (allowlistCheck); anything
- * else is dropped before consent, classification or storage.
+ * PERISKOPE_ALLOWED_GROUPS, whose chat id is in PERISKOPE_ALLOWED_CHAT_IDS, or that the poller watches
+ * (the pinned and roster groups, realty/node/periskope-groups.ts), and never from a chat in
+ * PERISKOPE_DENY_CHAT_IDS (allowlistCheck); anything else is dropped before consent, classification or storage.
  *
  * Market-ingest (Builder, HOSTING.md on tt-market-search): POST one item at a time. Listing and request
  * items do not carry a consent field; the group is allowlisted separately with kind=group. The adapter
@@ -109,7 +110,7 @@ export type MarketAliasItem = { kind: "alias"; alias: string; canonical: string 
 
 export type MarketIngestItem = MarketSourceItem | MarketOptOutItem | MarketGroupItem | MarketAliasItem;
 
-export type DropReason = "empty-allowlist" | "dm" | "other-group" | "no-name";
+export type DropReason = "empty-allowlist" | "dm" | "denied" | "other-group" | "no-name";
 
 export type Decision =
   | { action: "ignore"; reason: string }
@@ -263,16 +264,27 @@ export function allowlistFromEnv(env: Env = runtimeEnv()): { names: string[]; ch
   return { names: list(env.PERISKOPE_ALLOWED_GROUPS), chatIds: list(env.PERISKOPE_ALLOWED_CHAT_IDS) };
 }
 
+/** PERISKOPE_DENY_CHAT_IDS: exact `@g.us` chat ids, `|`-separated. A denied chat is never accepted or polled, even if listed elsewhere. */
+export function denyChatIdsFromEnv(env: Env = runtimeEnv()): string[] {
+  return (env.PERISKOPE_DENY_CHAT_IDS ?? "")
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /**
  * Deny by default. Null if the message may go on; else why it is dropped. A direct message is always
- * dropped. A group passes if its chat id is listed, or if its name is listed exactly. With names only and
- * no name in the payload, it can't be confirmed, so it is dropped.
+ * dropped. A denied chat id is dropped even when it is listed elsewhere (deny always wins). A group passes
+ * if its chat id is in the env allowlist, or is in `watched` (the groups the poller watches: pinned plus
+ * roster, see realty/node/periskope-groups.ts), or if its name is listed exactly. With names only and no
+ * name in the payload, it can't be confirmed, so it is dropped.
  */
-export function allowlistCheck(chatId: string, chatName: string | null, env: Env = runtimeEnv()): DropReason | null {
+export function allowlistCheck(chatId: string, chatName: string | null, env: Env = runtimeEnv(), watched: readonly string[] = []): DropReason | null {
   const { names, chatIds } = allowlistFromEnv(env);
-  if (!names.length && !chatIds.length) return "empty-allowlist";
+  if (!names.length && !chatIds.length && !watched.length) return "empty-allowlist";
   if (!isGroupChat(chatId)) return "dm";
-  if (chatIds.includes(chatId)) return null;
+  if (denyChatIdsFromEnv(env).includes(chatId)) return "denied";
+  if (chatIds.includes(chatId) || watched.includes(chatId)) return null;
   if (!names.length) return "other-group";
   if (!chatName) return "no-name";
   return names.includes(chatName) ? null : "other-group";
@@ -546,6 +558,8 @@ export function decide(input: {
   seen: (messageId: string) => boolean;
   /** Taught terms (the knowledge store). Empty: the built-in gazetteer only. */
   terms?: readonly KnownTerm[];
+  /** The chat ids the poller watches (pinned plus roster, minus deny): accepted like the env allowlist. */
+  watched?: readonly string[];
 }): Decision {
   const env = input.env ?? runtimeEnv();
   const e = envelopeOf(input.payload);
@@ -554,7 +568,7 @@ export function decide(input: {
   const m = parseMessage(e.data);
   if (!m) return { action: "ignore", reason: "message fields missing or wrong" };
   if (m.fromMe) return { action: "ignore", reason: "sent by us" };
-  const dropped = allowlistCheck(m.chatId, m.chatName, env);
+  const dropped = allowlistCheck(m.chatId, m.chatName, env, input.watched);
   if (dropped) return { action: "drop", reason: dropped };
   const phone = phoneOf(m.sender);
   if (!phone) return { action: "ignore", reason: "no usable sender number" };

@@ -144,21 +144,56 @@ test("the same listing posted in two groups is one record with groups, message i
   assert.equal(r.originalText, "Three bed house in Maraval, asking 2.5m", "the record keeps the first message's text");
 });
 
-test("same sender and same parsed ask within 3 days merge; beyond 3 days they do not", () => {
-  const sameAsk = { originalText: "a totally different wording of the same house" };
+test("same sender and same parsed ask (demand) merge while each sighting is within 14 days of the last; a gap over 14 days stands alone", () => {
+  const ASK = { set: "demand", category: "buyer_request" };
+  const sameAsk = { ...ASK, originalText: "a totally different wording of the same house" };
+  const root = world({
+    demand: [
+      post({ ...ASK, messageId: "ask-1", sentAt: "2026-11-02T12:00:00.000Z" }),
+      post({ ...sameAsk, messageId: "ask-2", sentAt: "2026-11-04T12:00:00.000Z" }),
+      post({ ...sameAsk, messageId: "ask-3", sentAt: "2026-11-12T12:00:00.000Z" }),
+      // Different wording, so only the ask rule (and its 14-day window) can fold it.
+      post({ ...ASK, messageId: "ask-4", sentAt: "2026-12-10T12:00:00.000Z", originalText: "yet another wording of the house" }),
+    ],
+  });
+  syncFromJsonl(root);
+  const rows = rowsOf(root, "demand");
+  assert.equal(rows.length, 2, "ask-1 to ask-3 fold (8 days apart is inside 14); ask-4 is 28 days after ask-3 and stands alone");
+  const merged = rows.find((r) => r.messageIds.length === 3);
+  assert.ok(merged);
+  assert.deepEqual(merged.messageIds, ["ask-1", "ask-2", "ask-3"]);
+  assert.equal(merged.timesSeen, 3);
+  assert.equal(merged.lastSentAt, "2026-11-12T12:00:00.000Z");
+});
+
+test("a budget within 10% in TT$ is the same ask (demand); a US$ budget compares at the fixed rate; beyond 10% is not", () => {
+  const ASK = { set: "demand", category: "buyer_request" };
+  const root = world({
+    demand: [
+      post({ ...ASK, messageId: "b-1", sentAt: "2026-11-02T12:00:00.000Z", originalText: "first wording" }),
+      post({ ...ASK, messageId: "b-2", sentAt: "2026-11-03T12:00:00.000Z", price: 2_600_000, originalText: "second wording" }),
+      post({ ...ASK, messageId: "b-3", sentAt: "2026-11-04T12:00:00.000Z", price: 3_200_000, originalText: "third wording" }),
+      post({ ...ASK, messageId: "b-4", sentAt: "2026-11-05T12:00:00.000Z", price: 368_732, currency: "USD", originalText: "fourth wording" }),
+    ],
+  });
+  syncFromJsonl(root);
+  const folded = rowsOf(root, "demand").map((r) => r.messageIds);
+  // Each post is compared with the record's newest post. 2.6m is 4% over 2.5m; 3.2m is past 10% of it; US$368,732 is TT$2.5m at 6.78.
+  assert.deepEqual(folded.find((m) => m.includes("b-1")), ["b-1", "b-2", "b-4"]);
+  assert.deepEqual(folded.find((m) => m.includes("b-3")), ["b-3"]);
+});
+
+test("two supply posts from one sender, 5% apart in price in the same area, stay two records (supply folds only the identical listing)", () => {
   const root = world({
     supply: [
-      post({ messageId: "ask-1", sentAt: "2026-11-02T12:00:00.000Z" }),
-      post({ messageId: "ask-2", sentAt: "2026-11-04T12:00:00.000Z", ...sameAsk }),
-      post({ messageId: "ask-3", sentAt: "2026-11-12T12:00:00.000Z", ...sameAsk }),
+      post({ messageId: "s-1", sentAt: "2026-11-02T12:00:00.000Z", price: 2_500_000, originalText: "Three bed house in Maraval, 2.5m" }),
+      post({ messageId: "s-2", sentAt: "2026-11-03T12:00:00.000Z", price: 2_625_000, originalText: "Lovely three bedroom home, Maraval, 2.625m" }),
     ],
   });
   syncFromJsonl(root);
   const rows = rowsOf(root, "supply");
-  assert.equal(rows.length, 2, "ask-1 and ask-2 merge; ask-3 is 8 days after ask-2 and stands alone");
-  const merged = rows.find((r) => r.messageIds.length === 2);
-  assert.ok(merged);
-  assert.deepEqual(merged.messageIds, ["ask-1", "ask-2"]);
+  assert.equal(rows.length, 2, "5% apart is not the identical listing: two units, two records");
+  assert.deepEqual(rows.map((r) => r.messageIds[0]).sort(), ["s-1", "s-2"]);
 });
 
 test("a different sender or a different ask does not merge", () => {
@@ -483,4 +518,22 @@ test("a database from before the explanation columns is migrated in place, keepi
   const counts = syncFromJsonl(root);
   assert.equal(counts.rebuilt, true);
   assert.equal(rowsOf(root, "vague")[0]?.explanation, "an old note", "the note is still on the queue item after the migration");
+});
+
+test("a TT$ price range also finds a US$ record by its TTD equivalent (fixed rate), and the record keeps its own price", () => {
+  const root = world({
+    supply: [
+      post({ messageId: "usd-1", area: "Maraval", price: 368_732, currency: "USD", beds: 3, originalText: "US$368,732 house in Maraval" }),
+      post({ messageId: "ttd-1", area: "Woodbrook", price: 2_500_000, currency: "TTD", beds: 3, senderPhone: OTHER, originalText: "TT$2.5m house in Woodbrook" }),
+      post({ messageId: "usd-2", area: "Carenage", price: 500_000, currency: "USD", beds: 3, senderPhone: "+18685550103", originalText: "US$500,000 house in Carenage" }),
+    ],
+  });
+  syncFromJsonl(root);
+  const ids = (q: Parameters<SearchStore["search"]>[0]) =>
+    withSearchStore(root, (s) => s.search({ kind: "supply", limit: 500, ...q })).rows.map((r) => r.messageIds[0]).sort();
+  assert.deepEqual(ids({ minPrice: 2_400_000, maxPrice: 2_600_000 }), ["ttd-1", "usd-1"], "US$368,732 is TT$2.5m at 6.78");
+  const usd = withSearchStore(root, (s) => s.search({ kind: "supply", limit: 500, minPrice: 2_400_000, maxPrice: 2_600_000 })).rows.find((r) => r.messageIds[0] === "usd-1");
+  assert.equal(usd?.price, 368_732, "the record shows its own price");
+  assert.equal(usd?.currency, "USD");
+  assert.deepEqual(ids({ minPrice: 3_000_000 }), ["usd-2"], "US$500,000 is TT$3.39m, so it's in a range from TT$3m");
 });

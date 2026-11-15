@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { scorePair } from "../flow/automatch.ts";
 import { PUBLIC_SITE_ORIGIN, publicListingUrl } from "../flow/live-crm.ts";
-import { comparedPrice, fitsOurListing, listingPriceLabel, type LiveRequest } from "../flow/live-match.ts";
+import { askBudgetLabel, scorePair } from "../flow/automatch.ts";
+import { USD_TO_TTD, moneyWithTtd, shortMoney, ttdValue } from "../flow/fx.ts";
+import { fitsOurListing, listingPriceLabel, listingTtd, type LiveRequest } from "../flow/live-match.ts";
 import { crmSeamFromEnv } from "../node/crm-shared.ts";
 import type { Listing } from "../flow/source.ts";
 
@@ -98,7 +99,7 @@ test("the CRM listings carry the public link (or none) and the TTD equivalent", 
   assert.equal(by("301").ttdEquiv, null, "no price_ttd_equiv: null");
 });
 
-/* ---- price: a TTD request compares the TTD equivalent ---- */
+/* ---- price: everything is compared in TTD at the fixed rate (fx.ts) ---- */
 
 const LISTING = (over: Partial<Listing>): Listing => ({
   id: "1", title: "A listing", listingType: "sale", area: "Westmoorings", price: 250000, currency: "USD", beds: 3, baths: 2, agentId: 7, status: "active", url: "", ttdEquiv: 1700000, ...over,
@@ -106,17 +107,37 @@ const LISTING = (over: Partial<Listing>): Listing => ({
 const SALE_TTD: LiveRequest = { intent: "buy", area: "Westmoorings", beds: 3, propertyType: "house", priceMin: null, priceMax: 1800000, currency: "TTD", monthly: false };
 const SALE_USD: LiveRequest = { ...SALE_TTD, priceMax: 260000, currency: "USD" };
 
-test("a TTD request fits a USD listing on its TTD equivalent (price_ttd_equiv), and not without one", () => {
-  assert.equal(fitsOurListing(SALE_TTD, LISTING({})), true, "TT$1.7m fits a TT$1.8m budget");
-  assert.equal(fitsOurListing(SALE_TTD, LISTING({ ttdEquiv: null })), false, "no equivalent: a USD price can't be compared to a TTD budget");
-  assert.equal(fitsOurListing(SALE_TTD, LISTING({ ttdEquiv: 2600000 })), false, "TT$2.6m is past the 20% band of TT$1.8m");
-  assert.deepEqual(comparedPrice(LISTING({}), "TTD"), { price: 1700000, currency: "TTD" });
+test("the fixed rate is one labelled constant, and money converts at it", () => {
+  assert.equal(USD_TO_TTD, 6.78);
+  assert.equal(ttdValue(250000, "USD"), 1695000);
+  assert.equal(ttdValue(1700000, "TTD"), 1700000);
+  assert.equal(shortMoney(1700000, "TTD"), "TT$1.7m");
+  assert.equal(shortMoney(260000, "USD"), "US$260k");
+  assert.equal(moneyWithTtd(500000, "USD"), "US$500k ≈ TT$3.39m");
+  assert.equal(moneyWithTtd(500000, "USD", 3_400_000), "US$500k ≈ TT$3.4m", "the CRM's TTD equivalent wins when it has one");
 });
 
-test("a USD request still compares the listing's own USD price", () => {
+test("a TTD request fits a USD listing on its TTD equivalent (price_ttd_equiv), or on the fixed rate without one", () => {
+  assert.equal(fitsOurListing(SALE_TTD, LISTING({})), true, "TT$1.7m fits a TT$1.8m budget");
+  assert.equal(fitsOurListing(SALE_TTD, LISTING({ ttdEquiv: null })), true, "no equivalent: US$250,000 at 6.78 is TT$1.695m, which fits");
+  assert.equal(fitsOurListing(SALE_TTD, LISTING({ ttdEquiv: 2600000 })), false, "TT$2.6m is past the 20% band of TT$1.8m");
+  assert.equal(listingTtd(LISTING({})), 1700000);
+  assert.equal(listingTtd(LISTING({ ttdEquiv: null })), 1695000);
+});
+
+test("a USD request fits a TTD listing too: the budget converts to TTD", () => {
   assert.equal(fitsOurListing(SALE_USD, LISTING({})), true, "US$250,000 fits a US$260,000 budget");
-  assert.equal(fitsOurListing(SALE_USD, LISTING({ currency: "TTD", price: 1700000, ttdEquiv: 1700000 })), false, "a TTD listing isn't matched to a USD budget (no FX here)");
-  assert.deepEqual(comparedPrice(LISTING({}), "USD"), { price: 250000, currency: "USD" });
+  assert.equal(fitsOurListing(SALE_USD, LISTING({ currency: "TTD", price: 1700000, ttdEquiv: 1700000 })), true, "TT$1.7m fits US$260,000 (TT$1.76m)");
+  assert.equal(fitsOurListing(SALE_USD, LISTING({ currency: "TTD", price: 3500000, ttdEquiv: 3500000 })), false, "TT$3.5m is past the band of US$260,000");
+});
+
+test("automatch scores a USD ask in TTD, and the reason and the budget keep the original currency", () => {
+  const ask = { area: "Westmoorings", beds: 3, budget: 260000, currency: "USD" as const, type: "house", listingType: "sale" as const, lastSeenAt: NOW.toISOString() };
+  const s = scorePair(ask, LISTING({}), { areaRelation: "same", now: NOW });
+  assert.equal(s.parts.price, 35, "US$250,000 is TT$1.7m, within US$260,000 (TT$1.76m)");
+  assert.match(s.reason, /US\$250k ≈ TT\$1\.7m within US\$260k ≈ TT\$1\.76m budget/);
+  assert.equal(askBudgetLabel(260000, "USD"), "asked in US$ (US$260k ≈ TT$1.76m)");
+  assert.equal(askBudgetLabel(1800000, "TTD"), "TT$1,800,000");
 });
 
 test("automatch scores a TTD ask on the TTD equivalent, and the reason says so", () => {
@@ -126,12 +147,12 @@ test("automatch scores a TTD ask on the TTD equivalent, and the reason says so",
   assert.match(s.reason, /TT\$1\.7m within TT\$1\.8m budget/);
   const dear = scorePair(ask, LISTING({ ttdEquiv: 1900000 }), { areaRelation: "same", now: NOW });
   assert.ok(dear.parts.price > 0 && dear.parts.price < 35, "a little over the budget on the TTD equivalent");
-  assert.equal(scorePair(ask, LISTING({ ttdEquiv: null }), { areaRelation: "same", now: NOW }).parts.price, 0, "no equivalent: no price points");
+  assert.equal(scorePair(ask, LISTING({ price: 0 }), { areaRelation: "same", now: NOW }).parts.price, 0, "no price, no price points");
 });
 
-test("the price shown keeps the original price and currency, with the TTD equivalent when it differs", () => {
-  assert.equal(listingPriceLabel(LISTING({})), "US$250,000 (≈ TT$1,700,000)");
-  assert.equal(listingPriceLabel(LISTING({ ttdEquiv: null })), "US$250,000");
+test("the price shown keeps the original price and currency, with the TTD equivalent for a US$ listing", () => {
+  assert.equal(listingPriceLabel(LISTING({})), "US$250k ≈ TT$1.7m");
+  assert.equal(listingPriceLabel(LISTING({ ttdEquiv: null })), "US$250k ≈ TT$1.7m", "the fixed rate when the CRM has no equivalent");
   assert.equal(listingPriceLabel(LISTING({ currency: "TTD", price: 1700000, ttdEquiv: 1700000 })), "TT$1,700,000");
   assert.equal(listingPriceLabel(LISTING({ price: 0 })), null, "no price, no label");
 });

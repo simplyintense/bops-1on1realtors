@@ -2,8 +2,9 @@ import { areasForMatch, developmentOf, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from 
 import { knowledgeOf, nearbyByKnowledge, nearbyReason, type AreaKnowledgeIndex } from "./area-knowledge.ts";
 import { areaTier, refFor, type AreaRef, type AreaResolver, type ToolCaller } from "./areas.ts";
 import type { SeamAgent } from "./crm-seam.ts";
-import type { Currency } from "./engine.ts";
+import { isUsd, moneyWithTtd, ttdValue } from "./fx.ts";
 import { moneyLabel } from "./market-search.ts";
+import { nearbyDriveLabel, taughtVerdict, type TaughtVerdict } from "./taught-areas.ts";
 import { listingTypeOf, type Facts } from "./periskope.ts";
 import { parseMatch, type MatchItem } from "./recommendations.ts";
 import { followUpsOf, isHidden, listingKey, type FollowUp, type StatusRow } from "./match-status.ts";
@@ -131,22 +132,22 @@ export const categoryOfListing = (l: Listing): Category => {
  * can't be checked, so it passes, as on the market. Same area first, then nearby, then the price closest to the budget. Never throws: an area that can't be resolved only matches its own name.
  */
 const gap = (price: number, budget: number) => (price ? Math.abs(price - budget) : Infinity);
+/** The request's budget in TTD (its top figure, or its only one), 0 when it gives none. */
+const budgetTtdOf = (r: LiveRequest) => ttdValue((r.priceMax ?? r.priceMin) ?? 0, r.currency);
 
 /**
- * The price a listing is compared on for a request in `currency`. A TTD request compares the listing's TTD equivalent when the
- * CRM has one, so a USD listing compares in TTD. A USD request has no USD equivalent to use (no FX rate here), so it compares
- * the listing's own price, and only a USD listing fits it, as before.
+ * A listing's price in TTD, the one currency every comparison uses (fx.ts). A USD listing uses the CRM's TTD equivalent when it
+ * has one, else the price at USD_TO_TTD. 0 when the listing gives no price.
  */
-export function comparedPrice(l: Listing, currency: Currency | null): { price: number; currency: Currency } {
-  if ((currency ?? "TTD") === "TTD" && l.ttdEquiv) return { price: l.ttdEquiv, currency: "TTD" };
-  return { price: l.price, currency: l.currency };
+export function listingTtd(l: Pick<Listing, "price" | "currency" | "ttdEquiv">): number {
+  if (!l.price) return 0;
+  return isUsd(l.currency) ? l.ttdEquiv || ttdValue(l.price, l.currency) : l.price;
 }
 
-/** A listing's price as shown: its own price and currency, plus the TTD equivalent when it's a USD listing that has one. */
+/** A listing's price as shown: TT$ as it is; a USD listing as "US$500k ≈ TT$3.39m" (the CRM's TTD equivalent when it has one). */
 export function listingPriceLabel(l: { price: number | null; currency: string; ttdEquiv?: number | null }): string | null {
-  const own = moneyLabel(l.price || null, l.currency);
-  if (!own) return null;
-  return l.currency !== "TTD" && l.ttdEquiv && l.ttdEquiv !== l.price ? `${own} (≈ ${moneyLabel(l.ttdEquiv, "TTD")})` : own;
+  if (!l.price) return null;
+  return isUsd(l.currency) ? moneyWithTtd(l.price, l.currency, l.ttdEquiv) : moneyLabel(l.price, "TTD");
 }
 
 const areaTextKey = (s: string) => s.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
@@ -183,20 +184,20 @@ export function fitsOurListing(r: LiveRequest, l: Listing): boolean {
   const cat = categoryOfRequest(r.propertyType);
   const top = r.priceMax ?? r.priceMin;
   const bottom = r.priceMin ?? r.priceMax;
-  const cp = comparedPrice(l, r.currency);
-  const hi = top !== null ? top * (1 + PRICE_BAND) : null;
-  const lo = bottom !== null ? bottom * (1 - PRICE_BAND) : null;
+  const cp = listingTtd(l);
+  const hi = top !== null ? ttdValue(top, r.currency) * (1 + PRICE_BAND) : null;
+  const lo = bottom !== null ? ttdValue(bottom, r.currency) * (1 - PRICE_BAND) : null;
   return (
     l.status === "active" &&
     l.listingType === type &&
     (!cat || categoryOfListing(l) === cat) &&
-    (!cp.price || ((hi === null && lo === null) || (cp.currency === (r.currency ?? "TTD") && (hi === null || cp.price <= hi) && (lo === null || cp.price >= lo)))) &&
+    (!cp || ((hi === null || cp <= hi) && (lo === null || cp >= lo))) &&
     (r.beds === null || !l.beds || Math.abs(l.beds - r.beds) <= 1)
   );
 }
 
-/** How one of our listings' area relates to the request's: the same area, or a neighbour (by the directory, or by coordinates). */
-export type OurAreaRelation = { tier: "same-area" | "neighbour"; via?: "knowledge"; relKm?: number; relMin?: number };
+/** How one of our listings' area relates to the request's: the same area, or a neighbour (taught, by the directory, or by coordinates). */
+export type OurAreaRelation = { tier: "same-area" | "neighbour"; via?: "knowledge" | "taught"; relKm?: number; relMin?: number };
 
 /** The request's area, the areas wanted (same and nearby), and each listing area's ref. Built once per request. */
 export type OurAreaContext = { area: string; wants: AreaRef[]; refs: Map<string, AreaRef>; knowledge: AreaKnowledgeIndex | null };
@@ -211,9 +212,27 @@ export async function ourAreaContext(area: string, listings: readonly Listing[],
   return { area, wants: [...wantsSame, ...wantsNear], refs, knowledge };
 }
 
+/** The request's development named by the listing (its area, title or an alias): the same development stays the same area. */
+function developmentNamed(requestArea: string, l: Listing): boolean {
+  const d = developmentOf(requestArea);
+  if (!d) return false;
+  const hay = `${l.area ?? ""} ${l.title ?? ""}`;
+  return areaTextKey(l.area ?? "") === areaTextKey(d.name) || mentionsName(hay, d.name) || d.aliases.some((a) => mentionsName(hay, a));
+}
+
+/** Both areas taught: the taught pair decides. A development named by the listing stays the same area, as before. */
+function taughtRelation(area: string, l: Listing, v: TaughtVerdict): OurAreaRelation | null {
+  if (v.tier === "same") return { tier: "same-area" };
+  if (developmentNamed(area, l)) return { tier: "same-area" };
+  if (v.tier === "nearby") return { tier: "neighbour", via: "taught", relKm: v.km ?? undefined, relMin: v.minutes ?? undefined };
+  return null;
+}
+
 /** The listing's area relation to the request's area, or null when it is neither the same nor a nearby area. */
 export function ourAreaRelation(ctx: OurAreaContext, l: Listing): OurAreaRelation | null {
   const { area, knowledge } = ctx;
+  const taught = area && l.area ? taughtVerdict(knowledge?.taught, area, l.area) : null;
+  if (taught) return taughtRelation(area, l, taught);
   // Without coordinates, Glencoe stays out of West Hills matches. With knowledge, it may be a nearby recommendation, never a very-strong alert.
   const known = area && l.area ? nearbyByKnowledge(knowledge, area, l.area) : null;
   const bothCoords = !!(knowledge && knowledgeOf(knowledge, area)?.coords && l.area && knowledgeOf(knowledge, l.area)?.coords);
@@ -245,7 +264,7 @@ export function ourAreaRelation(ctx: OurAreaContext, l: Listing): OurAreaRelatio
 export async function matchOurListings(r: LiveRequest, listings: readonly Listing[], areas: AreaResolver, limit = LIVE_LIMIT, knowledge: AreaKnowledgeIndex | null = null): Promise<MatchItem[]> {
   if (!r.intent || !r.area) return [];
   const area = r.area;
-  const budget = (r.priceMax ?? r.priceMin) ?? 0;
+  const budget = budgetTtdOf(r);
   const fits = listings.filter((l) => fitsOurListing(r, l));
   if (!fits.length) return [];
   const ctx = await ourAreaContext(area, fits, areas, knowledge);
@@ -253,7 +272,7 @@ export async function matchOurListings(r: LiveRequest, listings: readonly Listin
     const v = ourAreaRelation(ctx, l);
     return v ? [{ l, v }] : [];
   });
-  ranked.sort((a, b) => (a.v.tier === b.v.tier ? 0 : a.v.tier === "same-area" ? -1 : 1) || gap(comparedPrice(a.l, r.currency).price, budget) - gap(comparedPrice(b.l, r.currency).price, budget));
+  ranked.sort((a, b) => (a.v.tier === b.v.tier ? 0 : a.v.tier === "same-area" ? -1 : 1) || gap(listingTtd(a.l), budget) - gap(listingTtd(b.l), budget));
   return ranked.slice(0, limit).map(({ l, v }) => ({
     title: l.title || `${OUR_AGENCY} listing ${l.id}`,
     url: /^https?:\/\//i.test(l.url) ? l.url : null,
@@ -261,18 +280,21 @@ export async function matchOurListings(r: LiveRequest, listings: readonly Listin
     price: listingPriceLabel(l),
     beds: l.beds || null,
     source: OUR_AGENCY,
-    reason: v.via === "knowledge"
-      ? nearbyReason(l.area || "", r.area || "", v.relMin != null ? { name: l.area || "", km: v.relKm ?? 0, minutes: v.relMin } : null, true)
-      : ourReason(r, l, v.tier === "same-area" ? `in ${l.area}` : `${l.area}, near ${r.area}`),
+    reason:
+      v.via === "taught"
+        ? ourReason(r, l, nearbyDriveLabel(l.area || "", v.relMin))
+        : v.via === "knowledge"
+          ? nearbyReason(l.area || "", r.area || "", v.relMin != null ? { name: l.area || "", km: v.relKm ?? 0, minutes: v.relMin } : null, true)
+          : ourReason(r, l, v.tier === "same-area" ? `in ${l.area}` : `${l.area}, near ${r.area}`),
     holder: l.agentId > 0 ? l.agentId : null,
   }));
 }
 
 function ourReason(r: LiveRequest, l: Listing, where: string): string {
-  const cp = comparedPrice(l, r.currency);
-  const money = (n: number) => moneyLabel(n, cp.currency) ?? String(n);
-  const budget = r.priceMax !== null ? money(r.priceMax) : r.priceMin !== null ? `from ${money(r.priceMin)}` : null;
-  const price = !cp.price ? "no price listed" : budget ? `${money(cp.price)} for a ${budget} budget` : money(cp.price);
+  const money = (n: number, c: string) => moneyLabel(n, c) ?? String(n);
+  const budget = r.priceMax !== null ? money(r.priceMax, r.currency ?? "TTD") : r.priceMin !== null ? `from ${money(r.priceMin, r.currency ?? "TTD")}` : null;
+  const shown = listingPriceLabel(l);
+  const price = !shown ? "no price listed" : budget ? `${shown} for a ${budget} budget` : shown;
   return [where, price, l.beds ? `${l.beds} bed` : null, "our listing"].filter(Boolean).join(", ");
 }
 

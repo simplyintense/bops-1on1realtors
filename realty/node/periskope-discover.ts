@@ -1,9 +1,10 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnv, type Env } from "../flow/env.ts";
-import type { ConsentPatch } from "../flow/periskope.ts";
+import { denyChatIdsFromEnv, type ConsentPatch } from "../flow/periskope.ts";
 import { appendJsonl } from "./jsonl.ts";
-import { getJson, INTAKE_GROUPS } from "./periskope-backfill.ts";
+import { getJson } from "./periskope-backfill.ts";
+import { INTAKE_GROUPS, INTERNAL_NAME, loadRoster, rosterPath, type RosterRow } from "./periskope-groups.ts";
 import { setConsent, type IntakeOptions } from "./periskope-intake.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 
@@ -81,16 +82,6 @@ const REAL_ESTATE: RegExp[] = [
   /\bAREA\b/,
 ];
 
-/** The brokerage's own staff chats. Matched against the group name. */
-const INTERNAL_NAME: RegExp[] = [/1\s*on\s*1/i, /1on1/i];
-
-export function denyChatIds(env: Env = {}): string[] {
-  return (env.PERISKOPE_DENY_CHAT_IDS ?? "")
-    .split("|")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
@@ -98,7 +89,7 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 export function discoveryVerdict(chat: ApiChat, env: Env = {}): Verdict {
   const chatId = str(chat.chat_id);
   if (!chatId || !chatId.endsWith("@g.us")) return { include: false, reason: "not_group" };
-  if (denyChatIds(env).includes(chatId)) return { include: false, reason: "denied_chat" };
+  if (denyChatIdsFromEnv(env).includes(chatId)) return { include: false, reason: "denied_chat" };
   const name = str(chat.chat_name) ?? "";
   if (INTERNAL_NAME.some((re) => re.test(name))) return { include: false, reason: "denied_name" };
   if (!REAL_ESTATE.some((re) => re.test(name))) return { include: false, reason: "not_real_estate" };
@@ -138,44 +129,15 @@ export async function listGroupChats(args: { apiKey: string; phoneId?: string; f
 
 /* ---------------- roster file ---------------- */
 
-export type RosterRow = { chatId: string; chatName: string; memberCount: number | null; addedAt: string; source: "pinned" | "auto" };
+export { loadRoster, type RosterRow } from "./periskope-groups.ts";
 
-const rosterPath = (root: string) => join(root, "groups.json");
 const addedPath = (root: string) => join(root, "groups-added.jsonl");
-
-export function loadRoster(root: string): RosterRow[] {
-  try {
-    const v = JSON.parse(readFileSync(rosterPath(root), "utf8")) as unknown;
-    if (!Array.isArray(v)) return [];
-    return v.filter(
-      (r): r is RosterRow =>
-        !!r && typeof r === "object" && typeof (r as RosterRow).chatId === "string" && typeof (r as RosterRow).chatName === "string" && ((r as RosterRow).source === "pinned" || (r as RosterRow).source === "auto"),
-    );
-  } catch {
-    return [];
-  }
-}
 
 function saveRoster(root: string, rows: RosterRow[]): void {
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const tmp = `${rosterPath(root)}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(rows, null, 2)}\n`, { mode: 0o600 });
   renameSync(tmp, rosterPath(root));
-}
-
-/** The groups the poll reads: pinned ones from code, plus auto ones from the roster. A denied chat id is never polled. */
-export type PollGroup = { chatId: string; chatName: string; source: "pinned" | "auto" };
-
-export function pollGroups(root: string, env: Env = runtimeEnv()): PollGroup[] {
-  const out = new Map<string, PollGroup>();
-  for (const g of INTAKE_GROUPS) out.set(g.chatId, { chatId: g.chatId, chatName: g.chatName, source: "pinned" });
-  for (const r of loadRoster(root)) {
-    if (r.source !== "auto" || out.has(r.chatId)) continue;
-    if (INTERNAL_NAME.some((re) => re.test(r.chatName))) continue;
-    out.set(r.chatId, { chatId: r.chatId, chatName: r.chatName, source: "auto" });
-  }
-  const deny = new Set(denyChatIds(env));
-  return [...out.values()].filter((g) => !deny.has(g.chatId));
 }
 
 /* ---------------- consent ---------------- */
