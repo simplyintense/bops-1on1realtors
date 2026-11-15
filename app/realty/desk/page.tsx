@@ -3,6 +3,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { staffRecommendations } from "@/realty/node/requests.ts";
 import { staffLeads } from "@/realty/node/automatch-leads.ts";
+import { periskopeRoot } from "@/realty/node/periskope-root.ts";
+import { readWebhookStatus, webhookStatusLabel } from "@/realty/node/webhook-status.ts";
 import { viewer } from "../viewer";
 import { LeadCards } from "./lead-cards";
 import { RecommendationsPanel } from "./recommendations-panel";
@@ -32,6 +34,7 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
       <p className="rt-eyebrow">Staff only</p>
       <h1 className="mt-2 text-3xl font-semibold">1on1 Realtors staff desk</h1>
       <p className="rt-muted mt-3">Tools for the 1on1 Realtors team. Nothing on these pages sends a message or writes to the CRM.</p>
+      <p className="rt-muted mt-1 text-sm">{webhookStatusLabel(readWebhookStatus(periskopeRoot()))}</p>
 
       <ul className={`mt-8 grid gap-4 ${owner ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
         <Tile href="/realty/market" title="Online search" cta="Search online">

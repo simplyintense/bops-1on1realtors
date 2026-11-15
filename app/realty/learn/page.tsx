@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { withSearchStore } from "@/realty/node/search-store.ts";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
+import { listOpenQuestions } from "@/realty/node/open-questions.ts";
 import { viewer } from "../viewer";
+import { QuestionForm } from "./question-form";
 import { TeachForm } from "./teach-form";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +20,7 @@ export default async function LearnPage() {
   const { teacher } = await viewer();
   if (!teacher) notFound();
   const { queue, past } = withSearchStore(periskopeRoot(), (store) => ({ queue: store.openQueue(200), past: store.taught(100) }));
+  const questions = listOpenQuestions(periskopeRoot());
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
@@ -28,8 +31,30 @@ export default async function LearnPage() {
         word the same way in every post from now on. Times are AST.
       </p>
 
-      <h2 className="mt-10 text-xl font-semibold">Open ({queue.total})</h2>
-      {queue.rows.length === 0 ? <p className="rt-muted mt-3">Nothing waiting. Bops has no open questions.</p> : null}
+      <h2 className="mt-10 text-xl font-semibold">Open questions</h2>
+      <p className="rt-muted mt-2 text-sm">
+        Policy questions for the owner, not posts. An answer is recorded here and changes nothing in matching.
+      </p>
+      <ol className="mt-4 grid gap-4">
+        {questions.map((q) => (
+          <li key={q.id} className="rt-card grid gap-2 p-4">
+            <p className="text-sm">{q.question}</p>
+            {q.answer ? (
+              <p className="text-sm">
+                <span className="rt-muted">
+                  Answer ({q.answeredBy ?? "teacher"}{q.answeredAt ? `, ${dateAst(q.answeredAt)}` : ""}):
+                </span>{" "}
+                {q.answer}
+              </p>
+            ) : (
+              <QuestionForm id={q.id} />
+            )}
+          </li>
+        ))}
+      </ol>
+
+      <h2 className="mt-12 text-xl font-semibold">Open ({queue.total})</h2>
+      {queue.rows.length === 0 ? <p className="rt-muted mt-3">Nothing waiting. No posts need an explanation.</p> : null}
       <ol className="mt-4 grid gap-4">
         {queue.rows.map((r) => (
           <li key={r.id} className="rt-card grid gap-2 p-4">

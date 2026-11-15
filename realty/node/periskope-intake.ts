@@ -41,6 +41,7 @@ import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type 
 import { pollGroups } from "./periskope-groups.ts";
 import { matchingKnowledgeFrom, taughtTermsFrom } from "./search-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
+import { recordWebhookAccepted, type WebhookOutcome } from "./webhook-status.ts";
 
 /**
  * The Periskope WhatsApp intake, Node side: the signature check, the webhook's ingest, opt-outs, group
@@ -221,10 +222,14 @@ export async function handleWebhook(raw: Uint8Array, signature: string | null, o
   if (!key) return reply(503, { error: "PERISKOPE_SIGNING_KEY isn't set" });
   if (!signatureOk(raw, signature, key)) return reply(401, { error: "bad signature" });
   const text = new TextDecoder().decode(raw);
-  return exclusive(() => ingest(text, context(o)));
+  return exclusive(() => ingest(text, context(o), true));
 }
 
-async function ingest(text: string, c: Ctx): Promise<Reply> {
+/**
+ * One payload through the pipeline. `webhook` is true only on the signed webhook path: that path alone logs the accepted
+ * delivery and counts it in webhook-status.json (see noteWebhook). The poll and backfill (ingestEvent) never do.
+ */
+async function ingest(text: string, c: Ctx, webhook = false): Promise<Reply> {
   let payload: unknown;
   try {
     payload = JSON.parse(text);
@@ -243,7 +248,40 @@ async function ingest(text: string, c: Ctx): Promise<Reply> {
     watched: pollGroups(c.root, c.env).map((g) => g.chatId),
   });
   if (d.action === "ignore" && d.reason === "already seen") await refillPost(c, payload);
-  return act(d, c);
+  const r = await act(d, c);
+  if (webhook) noteWebhook(c, payload, d);
+  return r;
+}
+
+/**
+ * Logs and counts a signed webhook delivery after it has been handled. Accepted: a stored message (buyer request,
+ * co-broke listing, other) as outcome=added, or one already seen as outcome=duplicate. Signed but not message.created
+ * (ignored): logged only, not counted, so a Periskope event-name mismatch shows up in the logs. Drops, opt-outs and
+ * other ignores are not logged here. The log line carries no message text, phone or chat id.
+ */
+function noteWebhook(c: Ctx, payload: unknown, d: Decision): void {
+  const e = envelopeOf(payload);
+  const eventType = e && SAFE_EVENT.test(e.eventType) ? e.eventType : "unknown";
+  let outcome: WebhookOutcome;
+  if (d.action === "buyer_request" || d.action === "cobroke_listing" || d.action === "other") outcome = "added";
+  else if (d.action === "ignore" && d.reason === "already seen") outcome = "duplicate";
+  else {
+    // The reason is decide()'s "<event> isn't handled", rebuilt from the sanitised token so no raw payload text reaches the log.
+    if (d.action === "ignore" && e && e.eventType !== "message.created") console.info(`periskope: webhook ignored event=${eventType} reason=${eventType} isn't handled`);
+    return;
+  }
+  const group = logGroupName(parseMessage(e?.data)?.chatName ?? null);
+  console.info(`periskope: webhook accepted event=${eventType} group=${group ?? "unnamed"} outcome=${outcome}`);
+  recordWebhookAccepted(c.root, { at: c.now.toISOString(), eventType, groupName: group, outcome });
+}
+
+/** Event types we log as-is: a short token, so a stray value can't add a line or a long string to the log. */
+const SAFE_EVENT = /^[A-Za-z0-9_.:-]{1,60}$/;
+
+/** The group's name for the log and the status: one line, trimmed, at most 80 characters. */
+function logGroupName(name: string | null): string | null {
+  const one = name?.replace(/\s+/g, " ").trim() ?? "";
+  return one ? one.slice(0, 80) : null;
 }
 
 /**

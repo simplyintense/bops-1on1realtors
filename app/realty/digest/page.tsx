@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { staffDigest } from "@/realty/node/requests.ts";
+import { periskopeRoot } from "@/realty/node/periskope-root.ts";
+import { readWebhookStatus, webhookStatusLabel } from "@/realty/node/webhook-status.ts";
 import { Cards, portOfSpainTime } from "../desk/recommendations-panel";
 import { Notice } from "../notice";
 import { viewer } from "../viewer";
@@ -45,6 +47,7 @@ export default async function RealtyDigest() {
           All posts
         </Link>
       </p>
+      <p className="rt-muted mt-1 text-sm">{webhookStatusLabel(readWebhookStatus(periskopeRoot()))}</p>
 
       <ul className="mt-6 grid gap-4 md:grid-cols-4">
         <Stat label="Requests" value={d.requests} />
