@@ -134,7 +134,7 @@ test("a USD request fits a TTD listing too: the budget converts to TTD", () => {
 test("automatch scores a USD ask in TTD, and the reason and the budget keep the original currency", () => {
   const ask = { area: "Westmoorings", beds: 3, budget: 260000, currency: "USD" as const, type: "house", listingType: "sale" as const, lastSeenAt: NOW.toISOString() };
   const s = scorePair(ask, LISTING({}), { areaRelation: "same", now: NOW });
-  assert.equal(s.parts.price, 35, "US$250,000 is TT$1.7m, within US$260,000 (TT$1.76m)");
+  assert.equal(s.parts.price, 25, "US$250,000 is TT$1.7m, within US$260,000 (TT$1.76m)");
   assert.match(s.reason, /US\$250k ≈ TT\$1\.7m within US\$260k ≈ TT\$1\.76m budget/);
   assert.equal(askBudgetLabel(260000, "USD"), "asked in US$ (US$260k ≈ TT$1.76m)");
   assert.equal(askBudgetLabel(1800000, "TTD"), "TT$1,800,000");
@@ -143,10 +143,10 @@ test("automatch scores a USD ask in TTD, and the reason and the budget keep the 
 test("automatch scores a TTD ask on the TTD equivalent, and the reason says so", () => {
   const ask = { area: "Westmoorings", beds: 3, budget: 1800000, currency: "TTD" as const, type: "house", listingType: "sale" as const, lastSeenAt: NOW.toISOString() };
   const s = scorePair(ask, LISTING({}), { areaRelation: "same", now: NOW });
-  assert.equal(s.parts.price, 35, "within the budget on the TTD equivalent");
+  assert.equal(s.parts.price, 25, "within the budget on the TTD equivalent");
   assert.match(s.reason, /TT\$1\.7m within TT\$1\.8m budget/);
   const dear = scorePair(ask, LISTING({ ttdEquiv: 1900000 }), { areaRelation: "same", now: NOW });
-  assert.ok(dear.parts.price > 0 && dear.parts.price < 35, "a little over the budget on the TTD equivalent");
+  assert.ok(dear.parts.price > 0 && dear.parts.price < 25, "a little over the budget on the TTD equivalent");
   assert.equal(scorePair(ask, LISTING({ price: 0 }), { areaRelation: "same", now: NOW }).parts.price, 0, "no price, no price points");
 });
 

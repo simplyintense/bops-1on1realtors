@@ -77,7 +77,7 @@ test("one sender's near-identical asks on one listing are one row: the best scor
 
 test("a better-scoring ask stands even when it is older; asks without a sender are never folded", async () => {
   const asks = [
-    ASK({ id: "good", budget: 8500, lastSeenAt: ago(9), posts: 1 }),
+    ASK({ id: "good", budget: 8500, lastSeenAt: ago(3), posts: 1 }),
     ASK({ id: "dear", budget: 8000, lastSeenAt: ago(1), posts: 1 }), // within 10%, so the same ask, but 6% over the listing: a lower score
     ASK({ id: "anon-1", sender: undefined, lastSeenAt: ago(1) }),
     ASK({ id: "anon-2", sender: undefined, lastSeenAt: ago(1) }),
@@ -112,7 +112,7 @@ test("the same score through the price band still gives the same parts: a USD as
   const same = sameDemandAsk(askFactsForTest(usd), askFactsForTest(ttd));
   assert.equal(same, true);
   const s = scorePair(usd, LISTING({}), { areaRelation: "same", now: NOW });
-  assert.equal(s.parts.price, 35, "TT$8,500 is within US$1,300 (TT$8,814)");
+  assert.equal(s.parts.price, 25, "TT$8,500 is within US$1,300 (TT$8,814)");
 });
 
 test("askOf keeps the sender and the post count, and leaves them out when the record has none", () => {

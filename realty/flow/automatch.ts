@@ -13,11 +13,11 @@ import type { Listing } from "./source.ts";
  *
  * Eligibility is the live matching rules, not a copy of them: fitsOurListing and the area tiers from live-match.ts. So every
  * pair here is one matchOurListings would also give. Money is compared in TTD at the fixed rate (fx.ts). The score is this file's:
- *   price 35    the listing at or under the budget is full; linear down to 0 at 20% over (PRICE_BAND); a missing price or budget is 0
+ *   price 25    the listing at or under the budget is full; linear down to 0 at 20% over (PRICE_BAND); a missing price or budget is 0
  *   area 30     same area 30, nearby 15
  *   beds 20     exact 20, one off 10, missing 0
  *   type 10     sale/rent agrees (5; eligibility makes it agree) + kind of place agrees (5; no type asked is 5)
- *   recency 5   the ask was seen within 3 days: 5, linear to 0 at 30 days
+ *   recency 15  the ask's posted date (first seen, else last seen): full today, halving every 7 days (7.5 at a week, under 1 by 30 days)
  * The parts add up to at most 100 and the score is their rounded sum. Bands: 75+ strong, 50–74 fair, below 50 not shown.
  *
  * One sender's near-identical asks (sameDemandAsk) that hit the same listing are one row: the best score stands (tie: the newer
@@ -29,14 +29,14 @@ import type { Listing } from "./source.ts";
 export const STRONG = 75;
 export const FAIR = 50;
 
-const WEIGHT = { price: 35, area: 30, beds: 20, saleRent: 5, kind: 5, recency: 5 } as const;
+const WEIGHT = { price: 25, area: 30, beds: 20, saleRent: 5, kind: 5, recency: 15 } as const;
 const DAY_MS = 86_400_000;
-/** Recency: full within this many days, zero from RECENT_ZERO_DAYS on, linear between. */
-const RECENT_FULL_DAYS = 3;
-const RECENT_ZERO_DAYS = 30;
+/** Recency: full today, halving every RECENCY_HALF_LIFE_DAYS (no hard zero: the decay just runs on). */
+const RECENCY_HALF_LIFE_DAYS = 7;
 
 /**
- * A demand record as the scorer reads it: one ask, and when it was last seen (ISO). `sender` is the poster's number (used only to
+ * A demand record as the scorer reads it: one ask, and when it was last seen (ISO). `postedAt` is when the ask was first seen
+ * (ISO), when the record has it: recency is measured from that, else from lastSeenAt. `sender` is the poster's number (used only to
  * fold one sender's near-identical asks) and `posts` how many posts the record folds (the store's count), both optional.
  */
 export type AutomatchAsk = {
@@ -50,6 +50,7 @@ export type AutomatchAsk = {
   type: string | null;
   listingType: "sale" | "rent";
   lastSeenAt: string;
+  postedAt?: string;
   sender?: string;
   posts?: number;
 };
@@ -108,13 +109,13 @@ export function scorePair(ask: Omit<AutomatchAsk, "id">, l: Listing, o: { areaRe
   const saleRent = ask.listingType === l.listingType ? WEIGHT.saleRent : 0;
   const kind = !askCategory || categoryOfListing(l) === askCategory ? WEIGHT.kind : 0;
 
-  const seen = Date.parse(ask.lastSeenAt);
+  const posted = ask.postedAt ? Date.parse(ask.postedAt) : Number.NaN;
+  const seen = Number.isFinite(posted) ? posted : Date.parse(ask.lastSeenAt);
   let recency: { points: number; text: string };
   if (!Number.isFinite(seen)) recency = { points: 0, text: "posted date unknown" };
   else {
     const days = Math.max(0, (o.now.getTime() - seen) / DAY_MS);
-    const points = days <= RECENT_FULL_DAYS ? WEIGHT.recency : days >= RECENT_ZERO_DAYS ? 0 : (WEIGHT.recency * (RECENT_ZERO_DAYS - days)) / (RECENT_ZERO_DAYS - RECENT_FULL_DAYS);
-    recency = { points, text: days < 1 ? "posted today" : `posted ${plural(Math.floor(days), "day")} ago` };
+    recency = { points: WEIGHT.recency * 0.5 ** (days / RECENCY_HALF_LIFE_DAYS), text: days < 1 ? "posted today" : `posted ${plural(Math.floor(days), "day")} ago` };
   }
 
   const parts: ScoreParts = { price: price.points, area: area.points, beds: beds.points, saleRent, kind, recency: recency.points };
@@ -219,6 +220,8 @@ export type DemandRow = {
   type: string | null;
   listingType: string | null;
   lastSentAt: string;
+  /** When the ask was first seen (ISO): the posted date recency is measured from. */
+  firstSentAt?: string | null;
   status?: string | null;
   senderPhone?: string | null;
   timesSeen?: number | null;
@@ -247,6 +250,7 @@ export function askOf(d: DemandRow): AutomatchAsk | null {
     type: d.type,
     listingType,
     lastSeenAt: d.lastSentAt,
+    ...(d.firstSentAt ? { postedAt: d.firstSentAt } : {}),
     ...(d.senderPhone ? { sender: d.senderPhone } : {}),
     ...(d.timesSeen != null ? { posts: d.timesSeen } : {}),
   };
