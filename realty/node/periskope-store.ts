@@ -6,6 +6,7 @@ import { developmentNameOf, foldPrice, priceKey, setOf, unknownPlaceHints, type 
 import { applyRecordOverride, type GroupConsent, type Kind, type KindOverride, type MarketIngestItem, type PostRecord } from "../flow/periskope.ts";
 import { applyStatus, type StatusChange, type StatusRow } from "../flow/match-status.ts";
 import type { MatchSeenRow } from "../flow/automatch-leads.ts";
+import type { AlertSentRow } from "../flow/automatch-alert.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
 
@@ -68,6 +69,7 @@ const FILES = {
   live: "live-matches.jsonl",
   matchStatus: "match-status.jsonl",
   matchSeen: "match-seen.jsonl",
+  automatchAlertSent: "automatch-alert-sent.jsonl",
   posts: "posts.jsonl",
   supply: "supply.jsonl",
   demand: "demand.jsonl",
@@ -430,6 +432,7 @@ export class PeriskopeStore {
     const ids = new Set([...this.live().map((r) => r.requestId), ...this.posts().map((p) => requestIdOf(p.messageId))]);
     this.removeWhere<StatusRow>("matchStatus", (r) => !ids.has(r.requestId));
     this.removeWhere<MatchSeenRow>("matchSeen", (r) => !ids.has(r.requestId));
+    this.removeWhere<AlertSentRow>("automatchAlertSent", (r) => !ids.has(r.requestId));
   }
 
   /* ---- first seen per pair (Automatch: when Bops first saw a pair, for the stale rule); Bops's own record ---- */
@@ -447,6 +450,26 @@ export class PeriskopeStore {
       if (known.has(key)) continue;
       known.add(key);
       this.add("matchSeen", r);
+      added += 1;
+    }
+    return added;
+  }
+
+  /* ---- Auto-Match Alert sent keys (each strong pair is emailed at most once) ---- */
+
+  automatchAlertSentRows(): AlertSentRow[] {
+    return this.rows<AlertSentRow>("automatchAlertSent");
+  }
+
+  /** Records keys not yet stored (the first kind stands). Returns how many were added. */
+  recordAutomatchAlertSent(rows: readonly AlertSentRow[]): number {
+    const known = new Set(this.automatchAlertSentRows().map((r) => `${r.requestId}|${r.listingKey}`));
+    let added = 0;
+    for (const r of rows) {
+      const key = `${r.requestId}|${r.listingKey}`;
+      if (known.has(key)) continue;
+      known.add(key);
+      this.add("automatchAlertSent", r);
       added += 1;
     }
     return added;

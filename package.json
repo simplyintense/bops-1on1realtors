@@ -30,6 +30,7 @@
     "realty:kind-override": "node --experimental-strip-types --no-warnings realty/cli/kind-override.ts",
     "realty:area-teach": "node --experimental-strip-types --no-warnings realty/cli/area-teach.ts",
     "realty:admin-digest": "node --experimental-strip-types --no-warnings realty/cli/admin-digest.ts",
+    "realty:automatch-alert": "node --experimental-strip-types --no-warnings --env-file-if-exists=.env.local realty/cli/automatch-alert.ts",
     "realty:media-backfill": "node --experimental-strip-types --no-warnings --env-file-if-exists=.env.local realty/cli/media-backfill.ts"
   },
   "dependencies": {

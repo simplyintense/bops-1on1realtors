@@ -11,6 +11,7 @@ export const STAFF_PAGES = [
   { href: "/realty/posts", label: "All posts", ownerOnly: true, teacherOnly: false },
   { href: "/realty/market", label: "Online search", ownerOnly: false, teacherOnly: false },
   { href: "/realty/digest", label: "Digest", ownerOnly: true, teacherOnly: false },
+  { href: "/realty/alerts", label: "Auto-Match Alert", ownerOnly: true, teacherOnly: false },
   { href: "/realty/learn", label: "Teach Bops", ownerOnly: false, teacherOnly: true },
   { href: "/", label: "Bops home", ownerOnly: false, teacherOnly: false },
 ] as const;

@@ -1,4 +1,5 @@
 import { leadCardId, type LeadCardView, type LeadsView } from "@/realty/flow/automatch-leads.ts";
+import { phoneLabel, telHref } from "@/realty/flow/listing-contact.ts";
 import { REASON_LABEL } from "@/realty/flow/match-status.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { Notice } from "../notice";
@@ -76,13 +77,20 @@ function LeadCard({ c }: { c: LeadCardView }) {
       <div>
         <p className="rt-eyebrow">Suggested opening message</p>
         <p className="mt-1 whitespace-pre-line text-sm">{c.message}</p>
-        {c.waUrl ? (
-          <a href={c.waUrl} target="_blank" rel="noopener" className="rt-link mt-2 inline-block text-sm">
-            Open in WhatsApp
-          </a>
-        ) : (
-          <p className="rt-muted mt-2 text-sm">No usable WhatsApp number on this ask, so there&apos;s no link.</p>
-        )}
+        <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          {telHref(c.sender.phone) && phoneLabel(c.sender.phone) ? (
+            <a href={telHref(c.sender.phone) ?? undefined} className="rt-link">
+              Call {phoneLabel(c.sender.phone)}
+            </a>
+          ) : null}
+          {c.waUrl ? (
+            <a href={c.waUrl} target="_blank" rel="noopener" className="rt-link">
+              Open in WhatsApp
+            </a>
+          ) : (
+            <span className="rt-muted">No usable WhatsApp number on this ask, so there&apos;s no link.</span>
+          )}
+        </p>
       </div>
 
       <FollowUpButtons requestId={c.requestId} listingKey={c.listingKey} current={c.follow} feedback note={c.follow ? `${c.follow.by ?? "Signed in"} · ${dateAst(c.follow.at)}` : null} />

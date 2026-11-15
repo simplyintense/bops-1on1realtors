@@ -19,12 +19,13 @@ test("the full nav for an owner who teaches: the new order and labels, with Requ
     "All posts",
     "Online search",
     "Digest",
+    "Auto-Match Alert",
     "Teach Bops",
     "Bops home",
   ]);
   assert.deepEqual(
     visibleStaffPages({ owner: true, teacher: true }).map((p) => p.href),
-    ["/realty/desk", "/realty/automatch", "/realty/search", "/realty/posts", "/realty/market", "/realty/digest", "/realty/learn", "/"],
+    ["/realty/desk", "/realty/automatch", "/realty/search", "/realty/posts", "/realty/market", "/realty/digest", "/realty/alerts", "/realty/learn", "/"],
   );
   assert.ok(!ENTRIES.some((p) => p.label === "Requests" || p.href === "/realty/requests"), "the Requests entry is removed");
 });
@@ -46,13 +47,13 @@ test("Bops home is at / and listed for every signed-in viewer, whatever their ow
 });
 
 test("an owner who doesn't teach sees no Teach Bops; a teacher who isn't an owner sees no owner pages", () => {
-  assert.deepEqual(labels({ owner: true, teacher: false }), ["Desk", "1on1 CRM Automatch", "Supply & Demand", "All posts", "Online search", "Digest", "Bops home"]);
+  assert.deepEqual(labels({ owner: true, teacher: false }), ["Desk", "1on1 CRM Automatch", "Supply & Demand", "All posts", "Online search", "Digest", "Auto-Match Alert", "Bops home"]);
   assert.deepEqual(labels({ owner: false, teacher: true }), ["Desk", "Online search", "Teach Bops", "Bops home"]);
 });
 
 test("gating flags on the entries match the labels: owner pages are owner-only, Teach Bops is teacher-only, the rest open", () => {
   const byLabel = Object.fromEntries(STAFF_PAGES.map((p) => [p.label, p]));
-  for (const label of ["1on1 CRM Automatch", "Supply & Demand", "All posts", "Digest"]) assert.equal(byLabel[label].ownerOnly, true, label);
+  for (const label of ["1on1 CRM Automatch", "Supply & Demand", "All posts", "Digest", "Auto-Match Alert"]) assert.equal(byLabel[label].ownerOnly, true, label);
   assert.equal(byLabel["Teach Bops"].teacherOnly, true);
   for (const label of ["Desk", "Online search"]) {
     assert.equal(byLabel[label].ownerOnly, false, label);

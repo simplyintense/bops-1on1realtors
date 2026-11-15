@@ -7,6 +7,7 @@ import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "..
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
+import { syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
 import { aliasesOf } from "../flow/knowledge.ts";
 import { CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
 import { liveRequestOf, matchOnArrival, matchOurListings, type LiveRequest } from "../flow/live-match.ts";
@@ -224,7 +225,9 @@ export async function handleWebhook(raw: Uint8Array, signature: string | null, o
   if (!key) return reply(503, { error: "PERISKOPE_SIGNING_KEY isn't set" });
   if (!signatureOk(raw, signature, key)) return reply(401, { error: "bad signature" });
   const text = new TextDecoder().decode(raw);
-  return exclusive(() => ingest(text, context(o), true));
+  const result = await exclusive(() => ingest(text, context(o), true));
+  await syncAutoMatchAlertsSafely({ env, root: context(o).root, now: context(o).now });
+  return result;
 }
 
 /**
@@ -290,8 +293,11 @@ function logGroupName(name: string | null): string | null {
  * Ingest a trusted event (already authenticated, e.g. a backfill from the Periskope read API). Same
  * pipeline as the webhook after the signature check. Does not call Periskope, and never sends.
  */
-export function ingestEvent(payload: unknown, o: IntakeOptions = {}): Promise<Reply> {
-  return exclusive(() => ingest(JSON.stringify(payload), context(o)));
+export async function ingestEvent(payload: unknown, o: IntakeOptions = {}): Promise<Reply> {
+  const c = context(o);
+  const result = await exclusive(() => ingest(JSON.stringify(payload), c));
+  await syncAutoMatchAlertsSafely({ env: c.env, root: c.root, now: c.now });
+  return result;
 }
 
 /** Store the structured post. For listing posts only, also try to save photos under root/media. Idempotent: a second call only fills missing text or photos. */
