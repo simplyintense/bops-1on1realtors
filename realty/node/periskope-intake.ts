@@ -39,6 +39,8 @@ import { GATE_COOKIE, gateConfig, ownerAllowed, publicDemo, readSession, teachAl
 import { appendJsonl } from "./jsonl.ts";
 import { PeriskopeStore, type LeadRow, type LiveRow, type MarketOutboxRow, type SeenRow } from "./periskope-store.ts";
 import { pollGroups } from "./periskope-groups.ts";
+import { saveListingPhotos, sweepMedia } from "./listing-media.ts";
+import { isListingCategory } from "../flow/listing-photos.ts";
 import { matchingKnowledgeFrom, taughtTermsFrom } from "./search-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 import { recordWebhookAccepted, type WebhookOutcome } from "./webhook-status.ts";
@@ -295,11 +297,11 @@ export function ingestEvent(payload: unknown, o: IntakeOptions = {}): Promise<Re
 /** Store the structured post. For listing posts only, also try to save photos under root/media. Idempotent: a second call only fills missing text or photos. */
 async function keepPost(c: Ctx, post: PostRecord): Promise<void> {
   const existing = c.store.post(post.messageId);
-  const listing = post.category === "listing_for_sale" || post.category === "listing_for_rent" || post.category === "cobroke";
+  const listing = isListingCategory(post.category);
   const needPhotos = listing && (!(existing?.mediaFiles && existing.mediaFiles.length)) && (post.mediaUrls?.length ?? 0) > 0;
-  const urls = needPhotos ? (post.mediaUrls ?? []) : [];
-  const saved = urls.length ? await saveListingPhotos(c.root, post.messageId, urls, c.fetch) : { files: existing?.mediaFiles ?? [] };
-  const row = listing ? { ...post, mediaUrls: post.mediaUrls ?? existing?.mediaUrls, mediaFiles: saved.files.length ? saved.files : existing?.mediaFiles } : { ...post, mediaUrls: undefined, mediaFiles: undefined };
+  const saved = needPhotos ? await saveListingPhotos(c.root, post.mediaUrls ?? [], c.fetch) : null;
+  const photos = saved?.files.length ? { mediaFiles: saved.files, mediaHashes: saved.hashes } : { mediaFiles: existing?.mediaFiles, mediaHashes: existing?.mediaHashes };
+  const row = listing ? { ...post, mediaUrls: post.mediaUrls ?? existing?.mediaUrls, ...photos } : { ...post, mediaUrls: undefined, mediaFiles: undefined, mediaHashes: undefined };
   c.store.upsertPost(row);
 }
 
@@ -316,41 +318,6 @@ async function refillPost(c: Ctx, payload: unknown): Promise<void> {
   const sentAt = m.sentAt ?? c.now.toISOString();
   const post = postRecordOf({ message: m, phone, interpretation: interpret(m.body, taughtTermsFrom(c.root)), sentAt });
   await keepPost(c, post);
-}
-
-/** Listing photos only: write each URL under root/media/<hash>/, 0700/0600. Failures leave the URL on the post. */
-export async function saveListingPhotos(root: string, messageId: string, urls: string[], fetcher: typeof fetch = fetch): Promise<{ files: string[] }> {
-  const dirName = createHash("sha256").update(messageId).digest("hex").slice(0, 24);
-  const dir = join(root, "media", dirName);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const files: string[] = [];
-  for (const [i, url] of urls.entries()) {
-    try {
-      const r = await fetcher(url, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(15000) });
-      if (!r.ok) continue;
-      const buf = Buffer.from(await r.arrayBuffer());
-      if (!buf.length) continue;
-      const ext = extOf(r.headers.get("content-type") ?? "", url);
-      const name = `${String(i + 1).padStart(2, "0")}${ext}`;
-      writeFileSync(join(dir, name), buf, { mode: 0o600 });
-      files.push(`media/${dirName}/${name}`);
-    } catch {
-      // A failed download is not a failed ingest; the URL stays on the post.
-    }
-  }
-  return { files };
-}
-
-function extOf(ct: string, url: string): string {
-  const t = ct.toLowerCase();
-  if (t.includes("png")) return ".png";
-  if (t.includes("webp")) return ".webp";
-  if (t.includes("gif")) return ".gif";
-  if (t.includes("jpeg") || t.includes("jpg")) return ".jpg";
-  const m = /\.(jpe?g|png|webp|gif)(?:\?|$)/i.exec(url);
-  if (!m) return ".bin";
-  const ext = m[1].toLowerCase();
-  return ext === "jpeg" ? ".jpg" : `.${ext}`;
 }
 
 
@@ -563,6 +530,7 @@ export function purgeExpiredPeriskope(store: PeriskopeStore, now: Date, env: Env
     const days = listing ? listingDays : requestDays;
     return Date.parse(r.sentAt) < now.getTime() - days * 86_400_000 || messageIds.has(r.messageId) || liveDue.has(r.messageId) || seenDue.has(r.messageId);
   });
+  sweepMedia(store, now);
   return { leads, market: marketN, seen: seenN, leadIds: [...leadIds] };
 }
 

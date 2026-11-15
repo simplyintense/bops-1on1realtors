@@ -13,6 +13,8 @@ import {
 import { pollGroups } from "./periskope-groups.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
+import { exclusive } from "./periskope-intake.ts";
+import { sweepMedia } from "./listing-media.ts";
 import { syncFromJsonl, type SyncResult } from "./search-store.ts";
 
 /**
@@ -228,6 +230,11 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
   }
   cursor.lastRunAt = iso(at);
   saveCursor(root, cursor);
+  // The poller is the only scheduled loop on the hosted app, so it also runs the 180-day listing-photo sweep.
+  // Never fail the poll for it.
+  try {
+    await exclusive(() => sweepMedia(new PeriskopeStore(root), at));
+  } catch {}
   return { at: iso(at), ok: true, groups, fetched, added, alertsAdded, groupsAdded, discovery, searchSync: searchSyncSafely(root) };
 }
 

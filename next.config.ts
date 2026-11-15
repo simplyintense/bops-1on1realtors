@@ -16,11 +16,11 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   // Loaded by Node, not bundled: the AgentMail SDK lazily imports optional payment packages
   // (@x402/fetch, mppx) that aren't installed, which the bundler can't resolve.
-  serverExternalPackages: ["agentmail"],
+  serverExternalPackages: ["agentmail", "sharp"],
   // The Mac app ships this server prebuilt (.next/standalone, started by desktop/main.cjs).
   output: onVercel ? undefined : "standalone",
-  // Images are served as they are: resizing them on a local server isn't worth shipping sharp and
-  // libvips (about 18 MB) in the app. next/image still renders, with the original file.
+  // Listing photos are re-encoded by sharp (realty/node/listing-media.ts), so it ships with the server. next/image
+  // optimisation stays off: images render as they are.
   images: { unoptimized: true },
   // The page cache stays in memory. The Mac app runs this server from inside its signed bundle, and
   // with the default (true) Next writes rendered pages to .next/server/route-cache there: one added
@@ -29,10 +29,13 @@ const nextConfig: NextConfig = {
   // Files the server reads or runs by path at runtime, which the build's tracing can't see:
   // the scripts it copies onto bots' computers (vm/), the browser tools it hands Codex
   // (lib/server/local.ts, sessions.ts), the page recorder it injects (lib/server/mirror.ts) and
-  // AgentMail, which is loaded by Node at runtime (serverExternalPackages) with its one dependency.
+  // AgentMail, which is loaded by Node at runtime (serverExternalPackages) with its one dependency, and sharp with
+  // libvips, which re-encodes the listing photos.
   outputFileTracingIncludes: {
     "/*": [
       "./vm/**/*",
+      "./node_modules/sharp/**",
+      "./node_modules/@img/**",
       "./node_modules/agentmail/**/*",
       "./node_modules/ws/**/*",
       "./node_modules/@playwright/mcp/**/*",
@@ -65,9 +68,6 @@ const nextConfig: NextConfig = {
       "./types/**",
       "./vendor/**",
       "./node_modules/app-builder-lib/**",
-      // Only next/image's optimizer loads these, and images are unoptimized (above).
-      "./node_modules/sharp/**",
-      "./node_modules/@img/**",
       "./*.md",
       "./*.ts",
       "./*.mjs",
@@ -75,8 +75,6 @@ const nextConfig: NextConfig = {
       "./package-lock.json",
       "./tsconfig.json",
     ],
-    // The server's own trace (next-server, not a route's) is where next/image's optimizer pulls them in.
-    "next-server": ["./node_modules/sharp/**", "./node_modules/@img/**"],
   },
 };
 

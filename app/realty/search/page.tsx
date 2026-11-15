@@ -2,13 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { dateAst } from "@/realty/node/group-posts.ts";
-import { requestIdOf } from "@/realty/node/periskope-store.ts";
+import { PeriskopeStore, requestIdOf } from "@/realty/node/periskope-store.ts";
+import { photoIndex, type PhotoIndex } from "@/realty/node/listing-media.ts";
 import { SearchInputError, searchInputFrom, withSearchStore, type SearchInput, type SearchRow, type Tab } from "@/realty/node/search-store.ts";
 import { REQUEST_LIMIT, requestCriteriaFromParams, sortFromParams, type RequestsResult } from "@/realty/flow/requests.ts";
 import { staffRequests } from "@/realty/node/requests.ts";
 import { viewer } from "../viewer";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 import { RequestsFeed } from "./requests-feed";
+import { Notice } from "../notice";
+import { PhotoThumbs } from "../photo-thumbs";
 import { sourceFrom, toSearchParams, type RawParams } from "./source";
 
 export const dynamic = "force-dynamic";
@@ -90,6 +93,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   }
   const tab = input.kind ?? "supply";
   const result = error ? null : withSearchStore(periskopeRoot(), (store) => store.search(input));
+  const photos = photoIndex(new PeriskopeStore(periskopeRoot()));
   const val = (k: string) => {
     const v = raw[k];
     return Array.isArray(v) ? v[0] ?? "" : v ?? "";
@@ -148,6 +152,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
       </form>
 
       {error ? <p className="rt-notice rt-notice-error mt-6">{error}</p> : null}
+      {photos.overCap ? <Notice tone="warn">Listing photo storage is full (2 GB). New photos are not saved until older ones are removed.</Notice> : null}
 
       {result ? (
         <>
@@ -174,7 +179,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
               </thead>
               <tbody>
                 {result.rows.map((r) => (
-                  <ResultRows key={r.id} r={r} tab={tab} teacher={teacher} />
+                  <ResultRows key={r.id} r={r} tab={tab} teacher={teacher} photos={photos} />
                 ))}
               </tbody>
             </table>
@@ -191,9 +196,11 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   );
 }
 
-function ResultRows({ r, tab, teacher }: { r: SearchRow; tab: Tab; teacher: boolean }) {
+function ResultRows({ r, tab, teacher, photos }: { r: SearchRow; tab: Tab; teacher: boolean; photos: PhotoIndex }) {
   const place = [r.area, r.development].filter(Boolean).join(" / ");
   const post = r.messageIds[0] ? `/realty/posts/${requestIdOf(r.messageIds[0])}` : null;
+  const hashes = [...new Set(r.messageIds.flatMap((m) => photos.photos.get(m) ?? []))].slice(0, 3);
+  const sameAs = r.messageIds.flatMap((m) => photos.links.get(m) ?? []).find((m) => !r.messageIds.includes(m));
   return (
     <>
       <tr className="rt-row align-top">
@@ -215,6 +222,12 @@ function ResultRows({ r, tab, teacher }: { r: SearchRow; tab: Tab; teacher: bool
           ) : (
             snippet(r.originalText)
           )}
+          <PhotoThumbs hashes={hashes} />
+          {sameAs ? (
+            <Link href={`/realty/posts/${requestIdOf(sameAs)}`} className="rt-link block pt-1 text-xs">
+              Same photos as another post
+            </Link>
+          ) : null}
         </td>
       </tr>
       {tab === "vague" ? (

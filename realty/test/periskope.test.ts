@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -28,6 +28,7 @@ import {
 import { handleWebhook, optOutSender, purgeExpiredPeriskope, setConsent, tickFlow, senderHashOf } from "../node/periskope-intake.ts";
 import { loadFixtureCrm } from "../node/jsonl.ts";
 import { PeriskopeStore } from "../node/periskope-store.ts";
+import sharp from "sharp";
 
 const KEY = "test-signing-key";
 const CHAT = "120363000000000000@g.us";
@@ -70,7 +71,7 @@ const okConsent = (over: Partial<GroupConsent> = {}): GroupConsent => ({
   ...over,
 });
 
-function world(env: Record<string, string | undefined> = {}, fetchReplies: { status?: number; body?: unknown; error?: Error }[] = []) {
+function world(env: Record<string, string | undefined> = {}, fetchReplies: { status?: number; body?: unknown; error?: Error; bytes?: Buffer; type?: string }[] = []) {
   const root = mkdtempSync(join(tmpdir(), "periskope-"));
   const calls: { url: string; headers: Record<string, string>; body: unknown }[] = [];
   const fetcher: typeof fetch = async (url, init) => {
@@ -82,6 +83,7 @@ function world(env: Record<string, string | undefined> = {}, fetchReplies: { sta
     calls.push({ url: String(url), headers, body: init?.body ? JSON.parse(String(init.body)) : null });
     const next = fetchReplies.shift() ?? { status: 200, body: { id: 1, deduped: false } };
     if (next.error) throw next.error;
+    if (next.bytes) return new Response(new Uint8Array(next.bytes), { status: next.status ?? 200, headers: { "content-type": next.type ?? "application/octet-stream" } });
     return new Response(JSON.stringify(next.body ?? {}), { status: next.status ?? 200, headers: { "content-type": "application/json" } });
   };
   const baseEnv = { PERISKOPE_SIGNING_KEY: KEY, PERISKOPE_ALLOWED_GROUPS: GROUP, ...env };
@@ -94,6 +96,9 @@ function world(env: Record<string, string | undefined> = {}, fetchReplies: { sta
   };
   return { root, calls, opts, store: () => new PeriskopeStore(root), post: (payload: unknown, sig?: string | null) => handleWebhook(Buffer.from(JSON.stringify(payload)), sig === undefined ? sign(JSON.stringify(payload)) : sig, opts) };
 }
+
+/** A small real JPEG, so the photo path decodes and re-encodes it. */
+const jpeg = () => sharp({ create: { width: 64, height: 48, channels: 3, background: "#8a6a3c" } }).jpeg().toBuffer();
 
 async function withConsent(w: ReturnType<typeof world>, over: Partial<GroupConsent> = {}) {
   return setConsent({ ...okConsent(over), ...over, chatId: over.chatId ?? CHAT }, w.opts);
@@ -568,8 +573,8 @@ test("noticeWaivedBy is rejected when it is a phone number", () => {
   if (!bad.ok) assert.match(bad.error, /phone/);
 });
 
-test("a captioned listing image is stored with photos and original text; a non-listing image is not given photos", async () => {
-  const w = world();
+test("a captioned listing image is stored as a compressed photo with its hash and original text; a non-listing image is not given photos", async () => {
+  const w = world({}, [{ bytes: await jpeg(), type: "image/jpeg" }]);
   await withConsent(w);
   const listed = await w.post(envelope({}, {
     body: LISTING_TEXT,
@@ -587,7 +592,11 @@ test("a captioned listing image is stored with photos and original text; a non-l
   assert.equal(post?.originalText, LISTING_TEXT);
   assert.equal(post?.senderName, "Agent Ann");
   assert.deepEqual(post?.mediaUrls, ["https://example.com/listing.jpg"]);
-  assert.ok(post?.mediaFiles && post.mediaFiles.length === 1);
+  assert.equal(post?.mediaFiles?.length, 1);
+  assert.match(post?.mediaFiles?.[0] ?? "", /^media\/[0-9a-f]{2}\/[0-9a-f]{64}\.webp$/);
+  assert.ok(existsSync(join(w.root, post?.mediaFiles?.[0] ?? "")));
+  assert.equal(post?.mediaHashes?.length, 1);
+  assert.match(post?.mediaHashes?.[0] ?? "", /^[0-9a-f]{16}$/);
   assert.equal(post?.sentAt, "2026-11-10T14:00:00.000Z");
 
   const other = await w.post(envelope({}, {
@@ -602,6 +611,31 @@ test("a captioned listing image is stored with photos and original text; a non-l
   assert.equal(otherPost?.category, "other");
   assert.equal(otherPost?.originalText, OTHER_TEXT);
   assert.equal(otherPost?.mediaUrls, undefined);
+  assert.equal(otherPost?.mediaFiles, undefined);
+  assert.equal(w.calls.filter((c) => c.url.includes("chat.jpg")).length, 0, "a non-listing image is not downloaded");
+});
+
+test("a listing video is not saved, and neither is a download sent as octet-stream", async () => {
+  const video = world({}, [{ bytes: Buffer.from("0000001866747970", "hex"), type: "video/mp4" }]);
+  await withConsent(video);
+  await video.post(envelope({}, { body: LISTING_TEXT, message_id: "m-video", message_type: "video", has_media: true, media: { path: "https://example.com/clip.mp4", mimetype: "video/mp4" } }));
+  assert.equal(video.store().post("m-video")?.mediaFiles, undefined);
+  assert.deepEqual(video.store().post("m-video")?.mediaUrls, ["https://example.com/clip.mp4"]);
+
+  const blob = world({}, [{ bytes: Buffer.from("not an image"), type: "application/octet-stream" }]);
+  await withConsent(blob);
+  await blob.post(envelope({}, { body: LISTING_TEXT, message_id: "m-blob", message_type: "image", has_media: true, media: { path: "https://example.com/file.bin" } }));
+  assert.equal(blob.store().post("m-blob")?.mediaFiles, undefined);
+});
+
+test("a listing photo is downloaded once: a second delivery of the same post does not fetch it again", async () => {
+  const w = world({}, [{ bytes: await jpeg(), type: "image/jpeg" }]);
+  await withConsent(w);
+  const listing = envelope({}, { body: LISTING_TEXT, message_id: "m-once", message_type: "image", has_media: true, media: { path: "https://example.com/once.jpg", mimetype: "image/jpeg" } });
+  await w.post(listing);
+  await w.post(listing);
+  assert.equal(w.calls.filter((c) => c.url.includes("once.jpg")).length, 1);
+  assert.equal(w.store().post("m-once")?.mediaFiles?.length, 1);
 });
 
 test("a second delivery of an already-seen post refills missing original text and does not duplicate", async () => {

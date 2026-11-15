@@ -177,6 +177,7 @@ export class PeriskopeStore {
     if (!existing.senderName && row.senderName) patch.senderName = row.senderName;
     if (!existing.groupName && row.groupName) patch.groupName = row.groupName;
     if ((!existing.mediaFiles || !existing.mediaFiles.length) && row.mediaFiles?.length) patch.mediaFiles = row.mediaFiles;
+    if ((!existing.mediaHashes || !existing.mediaHashes.length) && row.mediaHashes?.length) patch.mediaHashes = row.mediaHashes;
     if ((!existing.mediaUrls || !existing.mediaUrls.length) && row.mediaUrls?.length) patch.mediaUrls = row.mediaUrls;
     if (!Object.keys(patch).length) {
       this.observe(existing, false);
@@ -246,6 +247,20 @@ export class PeriskopeStore {
     all[i] = next;
     this.replace("posts", all);
     return next;
+  }
+
+  /** Several posts' patches in one rewrite. Rewrites only if a patch changes a post. */
+  patchPosts(patches: Map<string, Partial<PostRecord>>): void {
+    if (!patches.size) return;
+    const all = this.posts();
+    let changed = false;
+    for (const [i, row] of all.entries()) {
+      const patch = patches.get(row.messageId);
+      if (!patch) continue;
+      all[i] = { ...row, ...patch };
+      changed = true;
+    }
+    if (changed) this.replace("posts", all);
   }
 
   /**

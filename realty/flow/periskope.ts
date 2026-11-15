@@ -148,7 +148,10 @@ export type PostRecord = {
   /** Canonical development name when the area is a named development. */
   development?: string | null;
   mediaUrls?: string[];
+  /** Stored photos for a listing, relative to the periskope root (media/<aa>/<sha256>.webp); see listing-photos.ts. */
   mediaFiles?: string[];
+  /** The dHash of each stored photo, in the same order as mediaFiles. */
+  mediaHashes?: string[];
 };
 
 type Obj = Record<string, unknown>;

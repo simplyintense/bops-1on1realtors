@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { dateAst, findPostView } from "@/realty/node/group-posts.ts";
-import { PeriskopeStore } from "@/realty/node/periskope-store.ts";
+import { PeriskopeStore, requestIdOf } from "@/realty/node/periskope-store.ts";
+import { photoIndex } from "@/realty/node/listing-media.ts";
 import { viewer } from "../../viewer";
+import { PhotoThumbs } from "../../photo-thumbs";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +22,9 @@ export default async function PostDetailPage({ params }: { params: Promise<{ mes
   const store = new PeriskopeStore(periskopeRoot());
   const post = findPostView(store, messageId, true);
   if (!post) notFound();
+  const photos = photoIndex(store);
+  const hashes = photos.photos.get(post.messageId) ?? [];
+  const sameAs = photos.links.get(post.messageId) ?? [];
 
   const rows: [string, string][] = [
     ["Date", dateAst(post.sentAt)],
@@ -54,6 +59,19 @@ export default async function PostDetailPage({ params }: { params: Promise<{ mes
           </div>
         ))}
       </dl>
+      {hashes.length || sameAs.length ? (
+        <section className="rt-card mt-6 p-4">
+          <h2 className="text-lg font-semibold">Photos</h2>
+          <PhotoThumbs hashes={hashes} />
+          {sameAs.map((id) => (
+            <p key={id} className="mt-3 text-sm">
+              <Link href={`/realty/posts/${requestIdOf(id)}`} className="rt-link">
+                Same photos as another post
+              </Link>
+            </p>
+          ))}
+        </section>
+      ) : null}
       <section className="rt-card mt-6 p-4">
         <h2 className="text-lg font-semibold">Original text</h2>
         <p className="mt-3 whitespace-pre-wrap">{post.originalText || "—"}</p>

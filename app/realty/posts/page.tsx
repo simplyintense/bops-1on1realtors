@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { dateAst, listPostViews } from "@/realty/node/group-posts.ts";
 import { PeriskopeStore } from "@/realty/node/periskope-store.ts";
 import { viewer } from "../viewer";
+import { PhotoThumbs } from "../photo-thumbs";
+import { contentHashOf } from "@/realty/flow/listing-photos.ts";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +42,7 @@ export default async function PostsPage() {
                 {p.senderName || p.firm ? <span className="rt-muted"> · {p.senderName || p.firm}</span> : null}
                 {p.matchCount ? <span className="rt-muted"> · {p.matchCount} match{p.matchCount === 1 ? "" : "es"}</span> : null}
               </Link>
+              <PhotoThumbs hashes={(p.mediaFiles ?? []).flatMap((f) => contentHashOf(f) ?? []).slice(0, 2)} />
             </li>
           ))}
         </ul>
