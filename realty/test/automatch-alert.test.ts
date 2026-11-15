@@ -5,6 +5,8 @@ import { test } from "node:test";
 import {
   ALERT_ALLOWLIST_FLAG,
   ALERT_AS_MILES_FLAG,
+  ALERT_BCC_DEFAULT,
+  ALERT_BCC_FLAG,
   ALERT_CC_DEFAULT,
   ALERT_CC_FLAG,
   ALERT_ENABLED_FLAG,
@@ -18,6 +20,7 @@ import {
   SEND_OFF,
   alertAllowlist,
   alertAttribution,
+  alertBcc,
   alertCc,
   alertKey,
   alertPriceText,
@@ -118,16 +121,26 @@ test("Bops is absent from the rendered subject, from and body (html and text), a
   assert.equal(a.fromName, ALERT_NAME);
 });
 
-test("each alert is CC'd to Crystal, Wendy and Miles by default, and AUTOMATCH_ALERT_CC can override the list", () => {
-  assert.equal(ALERT_CC_DEFAULT, "admin@1on1realtors.com,wendy@1on1realtors.com,miles@simplyintense.com");
-  assert.deepEqual(alertCc({}), ["admin@1on1realtors.com", "wendy@1on1realtors.com", "miles@simplyintense.com"]);
-  assert.deepEqual(parseAddressList(" Dana@1on1.example, dana@1on1.example, ,WENDY@1on1realtors.com "), ["dana@1on1.example", "wendy@1on1realtors.com"]);
+test("each alert is CC'd to Crystal and Wendy, and BCC'd to Miles, who stays off the agent-facing headers and body", () => {
+  assert.equal(ALERT_CC_DEFAULT, "admin@1on1realtors.com,wendy@1on1realtors.com");
+  assert.equal(ALERT_BCC_DEFAULT, "miles@simplyintense.com");
+  assert.deepEqual(alertCc({}), ["admin@1on1realtors.com", "wendy@1on1realtors.com"]);
+  assert.deepEqual(alertBcc({}), ["miles@simplyintense.com"]);
   const a = buildAutoMatchAlert(ROW(), BASE_OPTS);
-  assert.deepEqual(a.cc, ["admin@1on1realtors.com", "wendy@1on1realtors.com", "miles@simplyintense.com"]);
-  assert.doesNotMatch(a.text, /admin@1on1realtors\.com|wendy@1on1realtors\.com|miles@simplyintense\.com/, "addresses stay in the CC header, not the body");
+  assert.deepEqual(a.cc, ["admin@1on1realtors.com", "wendy@1on1realtors.com"]);
+  assert.deepEqual(a.bcc, ["miles@simplyintense.com"]);
+  const visible = [a.from, a.to, a.cc.join(", "), a.subject, a.text, a.html].join("\n");
+  assert.doesNotMatch(visible, /miles@simplyintense\.com|Bcc:|BCC:/i, "the BCC address and a Bcc header stay off what the agent sees");
+  assert.doesNotMatch(a.text, /admin@1on1realtors\.com|wendy@1on1realtors\.com/, "CC addresses stay in the header, not the body");
   assert.doesNotMatch(a.html, /admin@1on1realtors\.com|wendy@1on1realtors\.com|miles@simplyintense\.com/);
-  const custom = buildAutoMatchAlert(ROW(), { ...BASE_OPTS, cc: alertCc({ [ALERT_CC_FLAG]: "miles@simplyintense.com" }) });
-  assert.deepEqual(custom.cc, ["miles@simplyintense.com"]);
+  const custom = buildAutoMatchAlert(ROW(), {
+    ...BASE_OPTS,
+    cc: alertCc({ [ALERT_CC_FLAG]: "wendy@1on1realtors.com" }),
+    bcc: alertBcc({ [ALERT_BCC_FLAG]: "owner@1on1.example" }),
+  });
+  assert.deepEqual(custom.cc, ["wendy@1on1realtors.com"]);
+  assert.deepEqual(custom.bcc, ["owner@1on1.example"]);
+  assert.doesNotMatch([custom.from, custom.subject, custom.text, custom.html].join("\n"), /owner@1on1\.example/);
 });
 
 test("the subject names the type, beds, area and price, and leaves out unknown parts", () => {

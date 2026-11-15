@@ -6,7 +6,7 @@ import { searchRoot } from "./search-args.ts";
 
 /**
  * Auto-Match Alert in the terminal: a PREVIEW of one email per strong match (75 and above), addressed to the holding
- * agent, CC Crystal, Wendy and Miles. Read only of the CRM. It may record suppressed keys so a later flag flip does not
+ * agent, CC Crystal and Wendy, BCC Miles (the BCC is not printed in this preview). Read only of the CRM. It may record suppressed keys so a later flag flip does not
  * bulk-send. It never sends mail.
  *   npm run realty:automatch-alert                         prints the plain-text previews to stdout
  *   npm run realty:automatch-alert -- --txt PATH           writes the first plain-text preview (or all, joined) to PATH

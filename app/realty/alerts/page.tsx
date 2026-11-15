@@ -7,7 +7,7 @@ import { viewer } from "../viewer";
 
 /**
  * Owners' Auto-Match Alert preview: one email per strong match (75 and above) as it would go to the holding agent, with
- * Crystal, Wendy and Miles on CC. Owners only. Renders only; nothing is sent from this page.
+ * Crystal and Wendy on CC. A BCC is set and is not shown in the preview below, which is the message the agent would see. Owners only. Renders only; nothing is sent from this page.
  */
 
 export const dynamic = "force-dynamic";

@@ -16,7 +16,9 @@ import { MATCH_STATUSES, STATUS_LABEL, type StatusRow } from "./match-status.ts"
  *
  * User-facing name: "1on1 Auto-Match Alert". The word "Bops" must never appear in the from name, the subject, the body or
  * the footer (it may appear in internal module names only). The default sender is "1on1 Auto-Match Alert". The body never
- * names Miles. Each alert is CC'd to AUTOMATCH_ALERT_CC (default Crystal, Wendy and Miles).
+ * names Miles. Each alert is CC'd to AUTOMATCH_ALERT_CC (default Crystal and Wendy) and BCC'd to AUTOMATCH_ALERT_BCC
+ * (default Miles). The BCC list is for the transport only: it must not appear in the From, To, Cc, Subject, or body
+ * that agents see.
  *
  * Per alert: a soft mention of when a contact brought the property up on WhatsApp (relative day and the time in AST — never
  * the group name or the original message text), the listing, the suggested message, the contact's tap-to-call number next
@@ -38,10 +40,15 @@ export const ALERT_SEND_EXISTING_FLAG = "AUTOMATCH_ALERT_SEND_EXISTING";
 /** Optional allowlist of agent emails; empty or unset means every agent with a strong match. */
 export const ALERT_ALLOWLIST_FLAG = "AUTOMATCH_ALERT_ALLOWLIST";
 
-/** Comma-separated CC list. Unset uses ALERT_CC_DEFAULT (Crystal, Wendy and Miles). */
+/** Comma-separated CC list. Unset uses ALERT_CC_DEFAULT (Crystal and Wendy). */
 export const ALERT_CC_FLAG = "AUTOMATCH_ALERT_CC";
 
-export const ALERT_CC_DEFAULT = "admin@1on1realtors.com,wendy@1on1realtors.com,miles@simplyintense.com";
+export const ALERT_CC_DEFAULT = "admin@1on1realtors.com,wendy@1on1realtors.com";
+
+/** Comma-separated BCC list. Unset uses ALERT_BCC_DEFAULT (Miles). Not shown in the agent-facing headers or body. */
+export const ALERT_BCC_FLAG = "AUTOMATCH_ALERT_BCC";
+
+export const ALERT_BCC_DEFAULT = "miles@simplyintense.com";
 
 /** Optional From display name; unset, the default is ALERT_NAME. */
 export const ALERT_FROM_NAME_FLAG = "AUTOMATCH_ALERT_FROM_NAME";
@@ -89,8 +96,10 @@ export type AutoMatchAlert = {
   fromEmail: string | null;
   /** "Name" or "Name <email>". */
   from: string;
-  /** CC addresses (Crystal, Wendy and Miles by default). */
+  /** CC addresses (Crystal and Wendy by default). Visible to the agent. */
   cc: string[];
+  /** BCC addresses (Miles by default). For the transport only; never rendered in the agent-facing headers or body. */
+  bcc: string[];
   subject: string;
   text: string;
   html: string;
@@ -116,6 +125,7 @@ export type AlertBuildOpts = {
   asMiles?: boolean;
   officeEmail?: string;
   cc?: readonly string[];
+  bcc?: readonly string[];
   allowlist?: readonly string[];
 };
 
@@ -155,11 +165,20 @@ export function flagOn(value: string | undefined): boolean {
   return ["1", "true"].includes((value ?? "").trim().toLowerCase());
 }
 
-/** CC addresses: AUTOMATCH_ALERT_CC, or the default (Crystal, Wendy and Miles) when unset. */
+function listOrDefault(env: Env, flag: string, fallback: string): string[] {
+  return Object.prototype.hasOwnProperty.call(env, flag) && (env[flag] ?? "").trim() !== ""
+    ? parseAddressList(env[flag])
+    : parseAddressList(fallback);
+}
+
+/** CC addresses: AUTOMATCH_ALERT_CC, or the default (Crystal and Wendy) when unset. */
 export function alertCc(env: Env = {}): string[] {
-  return Object.prototype.hasOwnProperty.call(env, ALERT_CC_FLAG) && (env[ALERT_CC_FLAG] ?? "").trim() !== ""
-    ? parseAddressList(env[ALERT_CC_FLAG])
-    : parseAddressList(ALERT_CC_DEFAULT);
+  return listOrDefault(env, ALERT_CC_FLAG, ALERT_CC_DEFAULT);
+}
+
+/** BCC addresses: AUTOMATCH_ALERT_BCC, or Miles when unset. Never shown in the agent-facing message. */
+export function alertBcc(env: Env = {}): string[] {
+  return listOrDefault(env, ALERT_BCC_FLAG, ALERT_BCC_DEFAULT);
 }
 
 /** Agent-email allowlist; empty means every agent with a strong match. */
@@ -265,6 +284,7 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
   const ask = askLine(r.ask);
   const usd = isUsd(r.ask.currency);
   const cc = [...(o.cc ?? parseAddressList(ALERT_CC_DEFAULT))];
+  const bcc = [...(o.bcc ?? parseAddressList(ALERT_BCC_DEFAULT))];
   const view = { toName, mentioned, listing, ask, usd, score: r.score, message, phoneText, tel, waUrl, deskUrl };
   return {
     to,
@@ -273,6 +293,7 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
     fromEmail,
     from: fromLine(fromName, fromEmail),
     cc,
+    bcc,
     subject,
     text: renderText(view),
     html: renderHtml(view),
@@ -462,6 +483,7 @@ export function alertOptsFromEnv(env: Env, now: Date, extra: { statuses: readonl
     asMiles: attr.asMiles,
     officeEmail: officeEmail(env),
     cc: alertCc(env),
+    bcc: alertBcc(env),
     allowlist: alertAllowlist(env),
   };
 }
