@@ -3,15 +3,14 @@ import { ownerAllowed } from "../../lib/gate.ts";
 import { CachedAreaResolver, type AreaResolver } from "../flow/areas.ts";
 import { askOf, automatchPairs, bandOf, dedupeCounts, FAIR, foldSameSenderPairs, type AutomatchAsk, type AutomatchGroup, type Band } from "../flow/automatch.ts";
 import { CRM_UNREACHABLE_TEXT, type CrmListingsState, type CrmSeam, type SeamAgent } from "../flow/crm-seam.ts";
-import { listingKey } from "../flow/match-status.ts";
+import { learnFromFeedback, ourListingKey, listingFingerprint } from "../flow/agent-feedback.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import { aliasesOf } from "../flow/knowledge.ts";
-import { OUR_AGENCY } from "../flow/live-match.ts";
 import { crmSeamFromEnv } from "./crm-shared.ts";
 import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
 import { withTaught } from "../flow/taught-areas.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
-import { requestIdOf } from "./periskope-store.ts";
+import { PeriskopeStore, requestIdOf } from "./periskope-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 import { withSearchStore, type SearchRow } from "./search-store.ts";
 import type { KnownTerm } from "../flow/knowledge.ts";
@@ -51,6 +50,8 @@ export type AutomatchRow = {
     agentName: string | null;
     /** The holding agent's CRM id; null when unassigned (the office's). */
     agentId: number | null;
+    /** The listing's fingerprint (agent-feedback.ts listingFingerprint): its id, price, beds and type, as the feedback check reads it. */
+    fingerprint: string;
   };
   /** The listing's match key (match-status.ts listingKey), the same rule a live match's listing uses. */
   listingKey: string;
@@ -110,9 +111,15 @@ export async function automatchRun(o: AutomatchOpts = {}): Promise<{ result: Aut
   const areas = o.areas ?? areasOf(root, env, o.fetcher, taught);
   const knowledge = withTaught(resolveAreaKnowledge(join(dirname(root), "area-knowledge.json")), areaTaught);
   const scored = await automatchPairs(asks, active, areas, o.now ?? new Date(), knowledge);
+  // The agents' feedback (flow/agent-feedback.ts) changes what's matched, before the folding and the bands.
+  const postIdOf = (askId: string) => {
+    const m = byId.get(askId)?.messageIds[0];
+    return m ? requestIdOf(m) : null;
+  };
+  const learned = learnFromFeedback(scored, new PeriskopeStore(root).matchStatuses(), postIdOf);
   const names = new Map<number, string>(agents.flatMap((a) => (a.name ? [[a.id, a.name] as const] : [])));
-  const groups = foldSameSenderPairs(scored);
-  const dedupe = dedupeCounts(scored);
+  const groups = foldSameSenderPairs(learned);
+  const dedupe = dedupeCounts(learned);
   const pairs = groups.filter((p) => p.score >= FAIR).map((p) => rowOf(p, byId.get(p.ask.id), names));
   return { result: { demand: usable.length, asks: asks.length, listings: active.length, crmText: null, strong: dedupe.strong.after, fair: dedupe.fair.after, dedupe, pairs }, agents };
 }
@@ -152,8 +159,9 @@ function rowOf(p: AutomatchGroup, d: SearchRow | undefined, names: Map<number, s
       beds: p.listing.beds || null,
       agentName: holder == null ? null : (names.get(holder) ?? `agent #${holder}`),
       agentId: holder,
+      fingerprint: listingFingerprint(p.listing),
     },
-    listingKey: listingKey({ url: /^https?:\/\//i.test(p.listing.url) ? p.listing.url : null, title: p.listing.title || `${OUR_AGENCY} listing ${p.listing.id}`, source: OUR_AGENCY }),
+    listingKey: ourListingKey(p.listing),
   };
 }
 

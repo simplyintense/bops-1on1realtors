@@ -118,12 +118,21 @@ export function scorePair(ask: Omit<AutomatchAsk, "id">, l: Listing, o: { areaRe
   }
 
   const parts: ScoreParts = { price: price.points, area: area.points, beds: beds.points, saleRent, kind, recency: recency.points };
-  const total = Object.values(parts).reduce((a, b) => a + b, 0);
   return {
-    score: Math.min(100, Math.max(0, Math.round(total))),
+    score: totalScore(parts),
     reason: [area.text, beds.text, price.text, recency.text].join(", "),
     parts,
   };
+}
+
+/** A row's score from its parts: their sum, rounded and kept to 0–100. */
+export function totalScore(parts: ScoreParts): number {
+  return Math.min(100, Math.max(0, Math.round(Object.values(parts).reduce((a, b) => a + b, 0))));
+}
+
+/** The pairs' order: best score first, then the newer ask, then the listing's title. */
+export function sortPairs<T extends AutomatchPair>(pairs: T[]): T[] {
+  return pairs.sort((a, b) => b.score - a.score || Date.parse(b.ask.lastSeenAt) - Date.parse(a.ask.lastSeenAt) || a.listing.title.localeCompare(b.listing.title));
 }
 
 /** The band a score falls in, or null below FAIR (never shown). */
@@ -171,7 +180,7 @@ export async function automatchPairs(asks: readonly AutomatchAsk[], listings: re
       out.push({ ...scorePair(ask, l, { areaRelation, now, driveMinutes }), ask, listing: l, areaRelation });
     }
   }
-  return out.sort((a, b) => b.score - a.score || Date.parse(b.ask.lastSeenAt) - Date.parse(a.ask.lastSeenAt) || a.listing.title.localeCompare(b.listing.title));
+  return sortPairs(out);
 }
 
 /**

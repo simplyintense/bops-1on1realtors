@@ -4,6 +4,8 @@ import { dateAst } from "@/realty/node/group-posts.ts";
 import { withSearchStore } from "@/realty/node/search-store.ts";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 import { listOpenQuestions } from "@/realty/node/open-questions.ts";
+import { PeriskopeStore } from "@/realty/node/periskope-store.ts";
+import { agentFeedbackSummary } from "@/realty/flow/agent-feedback.ts";
 import { viewer } from "../viewer";
 import { QuestionForm } from "./question-form";
 import { TeachForm } from "./teach-form";
@@ -14,13 +16,15 @@ export const metadata: Metadata = { title: "Teach Bops · 1on1 Realtors staff", 
 /**
  * Teachers only (BOPS_TEACH_EMAILS). Anyone else gets a 404, not a hint that the page exists. Lists the needs-explanation
  * queue, newest first, with each post's exact text and Bops's best guess. An answer teaches Bops (saved to the shared
- * knowledge, so it applies to future posts too) and reports what changed. Below: the past answers.
+ * knowledge, so it applies to future posts too) and reports what changed. Below: the past answers. For owners only (the
+ * owners' pages' rule, ownerAllowed): "What agents told us", the reasons agents gave for their outcomes on the lead cards.
  */
 export default async function LearnPage() {
-  const { teacher } = await viewer();
+  const { teacher, owner } = await viewer();
   if (!teacher) notFound();
   const { queue, past } = withSearchStore(periskopeRoot(), (store) => ({ queue: store.openQueue(200), past: store.taught(100) }));
   const questions = listOpenQuestions(periskopeRoot());
+  const told = owner ? agentFeedbackSummary(new PeriskopeStore(periskopeRoot()).matchStatuses()) : null;
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
@@ -102,6 +106,43 @@ export default async function LearnPage() {
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {told ? (
+        <section>
+          <h2 className="mt-12 text-xl font-semibold">What agents told us</h2>
+          <p className="rt-muted mt-2 text-sm">
+            Why agents gave an outcome on a lead card. Owners only. The reasons that matter are already learned: a listing that&apos;s
+            unavailable or a client who isn&apos;t interested is dropped from that match, and a wrong area lowers the nearby pairs of
+            those two areas. The rest are recorded for now. Times are AST.
+          </p>
+          {told.total === 0 ? <p className="rt-muted mt-3">No reasons yet.</p> : null}
+          {told.reasons.length ? (
+            <ul className="mt-3 flex flex-wrap gap-2 text-sm">
+              {told.reasons.map((r) => (
+                <li key={r.reason} className="rt-chip">
+                  {r.label}: {r.count}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {told.recent.length ? (
+            <ol className="mt-4 grid gap-2">
+              {told.recent.map((l, i) => (
+                <li key={`${l.at}-${i}`} className="rt-card grid gap-1 p-3 text-sm">
+                  <p>
+                    <span className="font-medium">{l.outcome}</span>
+                    {l.reason ? ` · ${l.reason}` : ""} · {l.title}
+                  </p>
+                  {l.note ? <p className="whitespace-pre-wrap">{l.note}</p> : null}
+                  <p className="rt-muted text-xs">
+                    {l.who ?? "Signed in"} · {dateAst(l.at)}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </section>
       ) : null}
     </main>
   );

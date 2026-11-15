@@ -1,4 +1,5 @@
 import type { LeadCardView, LeadsView } from "@/realty/flow/automatch-leads.ts";
+import { REASON_LABEL } from "@/realty/flow/match-status.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { Notice } from "../notice";
 import { FollowUpButtons } from "./follow-up-buttons";
@@ -8,7 +9,8 @@ import { FollowUpButtons } from "./follow-up-buttons";
  * the desk (an agent's own listings, or every card for an owner) and /realty/automatch. Each card carries the ask, who asked (name,
  * firm and number as the store has them), why it fits, the 1on1 listing, a suggested opening message from Miles, an "Open in
  * WhatsApp" link (a plain anchor, opened in the agent's own browser; nothing is sent from here), and the outcome buttons (saved to
- * Bops's own record only). A card with no outcome two hours after its match is labelled Stale.
+ * Bops's own record only), with an optional reason and note once an outcome is set. A card with no outcome two hours after its
+ * match is labelled Stale.
  */
 
 export function LeadCards({ view, showHidden, toggleHref, error }: { view: LeadsView | null; showHidden: boolean; toggleHref: string; error?: string }) {
@@ -80,7 +82,14 @@ function LeadCard({ c }: { c: LeadCardView }) {
         )}
       </div>
 
-      <FollowUpButtons requestId={c.requestId} listingKey={c.listingKey} current={c.follow} note={c.follow ? `${c.follow.by ?? "Signed in"} · ${dateAst(c.follow.at)}` : null} />
+      <FollowUpButtons requestId={c.requestId} listingKey={c.listingKey} current={c.follow} feedback note={c.follow ? `${c.follow.by ?? "Signed in"} · ${dateAst(c.follow.at)}` : null} />
+      {c.follow?.reason || c.follow?.note ? (
+        <p className="rt-muted text-xs">
+          {c.follow.reason ? `Reason: ${REASON_LABEL[c.follow.reason]}` : ""}
+          {c.follow.reason && c.follow.note ? " · " : ""}
+          {c.follow.note ?? ""}
+        </p>
+      ) : null}
     </li>
   );
 }

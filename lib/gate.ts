@@ -96,9 +96,16 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/intake/periskope",
 ]);
 
-/** A redirect target that stays on this site. */
+/** Where staff land after sign-in: the desk (the Bops chat app at / is one click away in the nav). */
+export const HOME_AFTER_SIGN_IN = "/realty/desk";
+
+/**
+ * A redirect target that stays on this site. Empty, invalid or off-site targets, the API's own paths, and the site root (a
+ * sign-in from / lands on the desk too) all go to the desk, HOME_AFTER_SIGN_IN. Anything else on the site is kept as it is.
+ */
 export function safeNext(next: string | null | undefined): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\") || next.startsWith("/api/gate/")) return "/";
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\") || next.startsWith("/api/gate/")) return HOME_AFTER_SIGN_IN;
+  if (next === "/") return HOME_AFTER_SIGN_IN;
   return next;
 }
 

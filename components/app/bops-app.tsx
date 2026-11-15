@@ -999,7 +999,7 @@ function Bops({ state }: { state: AppState | null }) {
       <TooltipLayer />
       {/* A shared workspace's chats aren't the user's own: nothing of them is said as what they're looking at. */}
       <ViewReporter chatId={state.shared ? "" : chat.id} threadId={state.shared ? null : (thread?.id ?? null)} />
-      <div className="flex h-screen flex-col overflow-clip bg-white font-sans text-ink antialiased">
+      <div className="flex h-full flex-col overflow-clip bg-white font-sans text-ink antialiased">
         <TitleBar
           bare={!!pageBot || !!settings}
           columns={columns}

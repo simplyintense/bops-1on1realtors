@@ -1,8 +1,8 @@
 import { runtimeEnv, type Env } from "../flow/env.ts";
-import { listingKey, parseStatusPost } from "../flow/match-status.ts";
+import { listingKey, parseStatusPost, type FeedbackContext } from "../flow/match-status.ts";
 import { exclusive, staffAccess, staffEmail, type Reply } from "./periskope-intake.ts";
 import { leadAccess } from "./automatch-leads.ts";
-import type { AutomatchOpts } from "./automatch.ts";
+import type { AutomatchOpts, AutomatchRow } from "./automatch.ts";
 import { defaultIntakeRoot } from "./requests.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 
@@ -12,8 +12,10 @@ import { PeriskopeStore } from "./periskope-store.ts";
  * sends, never writes to the CRM and never calls out. The pair must be on the desk now: a live request with that listing as one
  * of its matches, as before. Or it's an Automatch lead (a strong row, realty/node/automatch-leads.ts), and then only an owner or
  * the agent who holds that listing may set its outcome (403 otherwise). So a status can't be keyed to anything nobody may see.
- * Writes are idempotent (realty/flow/match-status.ts).
- *   POST { requestId, listingKey, status }  → 200 { requestId, listingKey, status, changed }
+ * Writes are idempotent (realty/flow/match-status.ts). An outcome may carry a reason and a note (the agents' feedback,
+ * agent-feedback.ts). For an Automatch lead the route also keeps what the pair was (its areas and the listing's fingerprint), so
+ * the learning rules can apply later; that's read from the same lead lookup, never from the CRM write path.
+ *   POST { requestId, listingKey, status, reason?, note? }  → 200 { requestId, listingKey, status, changed, … }
  *                                            400 bad body · 403 a lead that isn't yours · 404 not on the desk · 401/403/503 from staffAccess
  */
 
@@ -37,17 +39,26 @@ export async function setMatchFollowUp(request: Request, o: FollowOptions = {}):
   const root = o.root ?? defaultIntakeRoot();
   const live = new PeriskopeStore(root).live().find((r) => r.requestId === post.requestId);
   const onDesk = !!live && [...live.matches, ...(live.ours ?? [])].some((m) => listingKey(m) === post.listingKey);
+  // The lead (an Automatch strong row) is needed to refuse a pair that isn't on the desk, and to keep what the pair was when a
+  // reason is given (only then does the learning rules read it).
+  const withReason = post.status !== null && post.reason !== undefined;
+  let lead: { row: AutomatchRow; allowed: boolean } | null = null;
   if (!onDesk) {
-    const lead = await leadAccess(post.requestId, post.listingKey, { ...o, env, root, email: by, now: o.now?.() });
+    lead = await leadAccess(post.requestId, post.listingKey, { ...o, env, root, email: by, now: o.now?.() });
     if (!lead) {
       return live
         ? { status: 404, body: { error: "That listing isn't a match for this request." } }
         : { status: 404, body: { error: "That request isn't on the desk." } };
     }
     if (!lead.allowed) return { status: 403, body: { error: "That listing isn't yours." } };
+  } else if (withReason) {
+    // Best effort: the outcome saves even if the lead can't be read (it's only what the learning rules need).
+    lead = await leadAccess(post.requestId, post.listingKey, { ...o, env, root, email: by, now: o.now?.() }).catch(() => null);
   }
+  const context: FeedbackContext | null =
+    withReason && lead ? { title: lead.row.listing.title, askArea: lead.row.ask.area || null, listingArea: lead.row.listing.area, fingerprint: lead.row.listing.fingerprint } : null;
   return exclusive((): Reply => {
-    const { changed } = new PeriskopeStore(root).setMatchStatus({ ...post, by, at });
+    const { changed } = new PeriskopeStore(root).setMatchStatus({ ...post, by, at, context });
     return { status: 200, body: { ...post, changed } };
   });
 }

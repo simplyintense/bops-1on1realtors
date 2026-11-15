@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { LiveMatchStatus, LiveRequest } from "../flow/live-match.ts";
 import { developmentNameOf, foldPrice, priceKey, setOf, unknownPlaceHints, type PriceRangeRow, type StrongAlert, type UnknownPlace } from "../flow/observe.ts";
 import { applyRecordOverride, type GroupConsent, type Kind, type KindOverride, type MarketIngestItem, type PostRecord } from "../flow/periskope.ts";
-import { applyStatus, type MatchStatus, type StatusRow } from "../flow/match-status.ts";
+import { applyStatus, type StatusChange, type StatusRow } from "../flow/match-status.ts";
 import type { MatchSeenRow } from "../flow/automatch-leads.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
@@ -400,8 +400,8 @@ export class PeriskopeStore {
     return this.rows<StatusRow>("matchStatus");
   }
 
-  /** Sets (or with null, clears) one status. The same status again writes nothing. */
-  setMatchStatus(c: { requestId: string; listingKey: string; status: MatchStatus | null; by: string | null; at: string }): { changed: boolean } {
+  /** Sets (or with null, clears) one status and its feedback. The same status, reason and note again writes nothing. */
+  setMatchStatus(c: StatusChange): { changed: boolean } {
     const next = applyStatus(this.matchStatuses(), c);
     if (next.changed) this.replace("matchStatus", next.rows);
     return { changed: next.changed };

@@ -5,9 +5,9 @@ import { usePathname } from "next/navigation";
 import { visibleStaffPages } from "./staff-pages";
 
 /**
- * The staff pages' shared nav, in the realty layout's header. The page being shown is marked from the path. The entries
- * (staff-pages.ts) are listed only for the viewer's owner and teacher flags (the layout reads both on the server).
- * The Bops chat app is at /, so "Back to Bops" goes there.
+ * The staff pages' one top nav: in the realty layout's header, and in the header of the Bops chat app at / for a signed-in staff
+ * member. The page being shown is marked from the path. The entries (staff-pages.ts) are listed only for the viewer's owner and
+ * teacher flags (read on the server). "Bops home" (/) is one of them, not a one-off link.
  */
 export function StaffNav({ owner, teacher }: { owner: boolean; teacher: boolean }) {
   const pathname = usePathname();
@@ -21,9 +21,6 @@ export function StaffNav({ owner, teacher }: { owner: boolean; teacher: boolean 
           </Link>
         );
       })}
-      <Link href="/" className="rt-back">
-        Back to Bops
-      </Link>
     </nav>
   );
 }

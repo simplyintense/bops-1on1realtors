@@ -223,3 +223,84 @@ test("purge takes a request's statuses with it, as it takes the request", () => 
   assert.equal(store.live().length, 0);
   assert.deepEqual(store.matchStatuses(), []);
 });
+
+/* ---------------- Feedback: a reason and a note on an outcome ---------------- */
+
+test("an outcome can carry a reason and a note: stored with who and when; the same reason and note again changes nothing", () => {
+  const rows: StatusRow[] = [];
+  const first = applyStatus(rows, { requestId: "r", listingKey: "k", status: "not-a-fit", by: AGENT, at: "t1", reason: "over-budget", note: "Wants a lower budget" });
+  assert.deepEqual(first.rows, [{ requestId: "r", listingKey: "k", status: "not-a-fit", by: AGENT, at: "t1", reason: "over-budget", note: "Wants a lower budget" }]);
+  const again = applyStatus(first.rows, { requestId: "r", listingKey: "k", status: "not-a-fit", by: OWNER, at: "t2", reason: "over-budget", note: "Wants a lower budget" });
+  assert.equal(again.changed, false, "same outcome, reason and note: nothing changes");
+  assert.deepEqual(again.rows, first.rows, "the first setter and time stay");
+  const newNote = applyStatus(first.rows, { requestId: "r", listingKey: "k", status: "not-a-fit", by: OWNER, at: "t3", reason: "over-budget", note: "Now asks for a lower budget" });
+  assert.equal(newNote.changed, true, "a new note updates the feedback");
+  assert.equal(newNote.rows[0].by, OWNER);
+  assert.equal(newNote.rows[0].note, "Now asks for a lower budget");
+  const newReason = applyStatus(newNote.rows, { requestId: "r", listingKey: "k", status: "not-a-fit", by: AGENT, at: "t4", reason: "other" });
+  assert.equal(newReason.changed, true, "a new reason updates it, and a missing note clears the old one");
+  assert.deepEqual(newReason.rows, [{ requestId: "r", listingKey: "k", status: "not-a-fit", by: AGENT, at: "t4", reason: "other" }]);
+});
+
+test("a plain outcome with no reason stores exactly as before: no reason or note keys, and the same status again is idempotent", () => {
+  const one = applyStatus([], { requestId: "r", listingKey: "k", status: "contacted", by: AGENT, at: "t1", reason: null, note: null });
+  assert.deepEqual(one.rows, [{ requestId: "r", listingKey: "k", status: "contacted", by: AGENT, at: "t1" }]);
+  assert.equal(applyStatus(one.rows, { requestId: "r", listingKey: "k", status: "contacted", by: OWNER, at: "t2" }).changed, false);
+  const withReason = applyStatus(one.rows, { requestId: "r", listingKey: "k", status: "contacted", by: OWNER, at: "t3", reason: "other" });
+  assert.equal(withReason.changed, true, "adding a reason to the same outcome is a change");
+});
+
+test("clearing the outcome clears its feedback with it", () => {
+  const rows = applyStatus([], { requestId: "r", listingKey: "k", status: "not-a-fit", by: AGENT, at: "t1", reason: "wrong-area", note: "x" }).rows;
+  assert.deepEqual(applyStatus(rows, { requestId: "r", listingKey: "k", status: null, by: AGENT, at: "t2" }).rows, []);
+});
+
+test("the POST body accepts a reason and a note; the reason must be one of the eight, the note at most 300 characters and no phone", () => {
+  const ok = { requestId: requestIdOf("msg-a"), listingKey: "url:https://example.com/x", status: "not-a-fit" };
+  assert.deepEqual(parseStatusPost({ ...ok, reason: "wrong-area", note: "  Too far out  " }), { ok: true, post: { ...ok, reason: "wrong-area", note: "Too far out" } });
+  assert.deepEqual(parseStatusPost({ ...ok, reason: null, note: "" }), { ok: true, post: ok }, "null and empty are no feedback");
+  assert.deepEqual(parseStatusPost(ok), { ok: true, post: ok }, "the one-tap body (no reason) still works");
+  assert.equal(parseStatusPost({ ...ok, reason: "cheap" }).ok, false);
+  assert.equal(parseStatusPost({ ...ok, note: 42 }).ok, false, "a note is text");
+  assert.equal(parseStatusPost({ ...ok, note: "x".repeat(301) }).ok, false, "over 300 characters");
+  assert.equal(parseStatusPost({ ...ok, note: "x".repeat(300) }).ok, true, "300 is the limit");
+  const phoned = parseStatusPost({ ...ok, note: "Call them on +1 868 555 0199 after 5" });
+  assert.equal(phoned.ok && phoned.post.note, "Call them on [number] after 5", "a phone number never reaches the store");
+  assert.deepEqual(parseStatusPost({ ...ok, status: null, reason: "other", note: "gone" }), { ok: true, post: { ...ok, status: null } }, "clearing drops the feedback");
+});
+
+test("the route stores the reason and note with the signed-in email and time, with no phone; a repeat is idempotent and clearing removes both", async () => {
+  const { root, store, a } = seeded();
+  const key = listingKey(ALPHA);
+  const body = { requestId: a, listingKey: key, status: "not-a-fit", reason: "client-unreachable", note: "Tried twice, no answer on +1 868 555 0101" };
+  const r = await post(body, AGENT, GATE, root);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.changed, true);
+  const stored = readFileSync(join(root, "match-status.jsonl"), "utf8");
+  assert.match(stored, /"reason":"client-unreachable"/);
+  assert.match(stored, /"note":"Tried twice, no answer on \[number\]"/);
+  assert.doesNotMatch(stored, /555|\+1868|msg-a/);
+  assert.equal((await post(body, OWNER, GATE, root)).body.changed, false, "the same outcome, reason and note again");
+  assert.equal(store.matchStatuses()[0].by, AGENT, "the first setter stays");
+  assert.equal((await post({ ...body, reason: "other" }, OWNER, GATE, root)).body.changed, true, "a new reason is saved");
+  assert.equal(store.matchStatuses()[0].by, OWNER);
+  assert.equal((await post({ ...body, status: null }, OWNER, GATE, root)).body.changed, true, "clearing the outcome clears the feedback");
+  assert.deepEqual(store.matchStatuses(), []);
+});
+
+test("the route refuses a bad reason or a note over 300 characters, and writes nothing", async () => {
+  const { root, a } = seeded();
+  const key = listingKey(ALPHA);
+  assert.equal((await post({ requestId: a, listingKey: key, status: "not-a-fit", reason: "cheap" }, AGENT, GATE, root)).status, 400);
+  assert.equal((await post({ requestId: a, listingKey: key, status: "not-a-fit", note: "x".repeat(301) }, AGENT, GATE, root)).status, 400);
+  assert.deepEqual(new PeriskopeStore(root).matchStatuses(), []);
+});
+
+test("the feedback reaches the desk's follow-ups only when it's set; a plain follow-up has no reason or note keys", () => {
+  const { store, a } = seeded();
+  set(store, a, ALPHA, "not-a-fit");
+  store.setMatchStatus({ requestId: a, listingKey: listingKey(BRAVO), status: "not-a-fit", by: AGENT, at: "t", reason: "over-budget", note: "Too dear" });
+  const follows = followUpsOf(store.matchStatuses(), a);
+  assert.deepEqual(follows[listingKey(ALPHA)], { status: "not-a-fit", by: AGENT, at: "2026-11-13T19:00:00.000Z" });
+  assert.deepEqual(follows[listingKey(BRAVO)], { status: "not-a-fit", by: AGENT, at: "t", reason: "over-budget", note: "Too dear" });
+});
