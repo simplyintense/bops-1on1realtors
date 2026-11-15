@@ -94,7 +94,7 @@ function PairCard({ r }: { r: AutomatchRow }) {
         <p className="rt-eyebrow">Asked · {a.listingType === "rent" ? "for rent" : "for sale"}</p>
         <p className="mt-1 font-medium">{askLine}</p>
         <p className="rt-muted text-sm">
-          {a.budget != null ? moneyLabel(a.budget, a.currency) : "No budget given"} · last seen {dateAst(a.lastSeenAt)} AST
+          {a.budget != null ? moneyLabel(a.budget, a.currency) : "No budget given"} · last seen {dateAst(a.lastSeenAt)}
         </p>
         <p className="rt-muted text-sm">
           From {a.senderName ?? "unnamed"} · {a.senderPhone}

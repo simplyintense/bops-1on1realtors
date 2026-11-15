@@ -18,7 +18,7 @@ const beds = (n: number | null) => (n == null ? "beds not given" : `${n} bed${n 
 function askLine(r: AutomatchRow): string {
   const a = r.ask;
   const budget = a.budget != null ? moneyLabel(a.budget, a.currency) : "no budget";
-  return [a.area, beds(a.beds), budget, a.type ?? "type not given", a.listingType === "rent" ? "rent" : "sale", `last seen ${dateAst(a.lastSeenAt)} AST`].join(" · ");
+  return [a.area, beds(a.beds), budget, a.type ?? "type not given", a.listingType === "rent" ? "rent" : "sale", `last seen ${dateAst(a.lastSeenAt)}`].join(" · ");
 }
 
 function listingLine(r: AutomatchRow): string {
