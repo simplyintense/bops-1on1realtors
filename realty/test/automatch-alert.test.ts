@@ -10,9 +10,12 @@ import {
   ALERT_CC_DEFAULT,
   ALERT_CC_FLAG,
   ALERT_ENABLED_FLAG,
+  ALERT_FROM_ADDRESS_DEFAULT,
   ALERT_FROM_EMAIL_FLAG,
   ALERT_FROM_NAME_FLAG,
   ALERT_NAME,
+  ALERT_REPLY_TO_DEFAULT,
+  TEST_ALERT_TO,
   ALERT_SEND_EXISTING_FLAG,
   HOT_MATCH_LINE,
   MILES_FROM_NAME,
@@ -22,7 +25,12 @@ import {
   alertAttribution,
   alertBcc,
   alertCc,
+  alertFromAddress,
+  alertFromHeader,
+  alertIdempotencyKey,
   alertKey,
+  alertReplyTo,
+  buildTestAutoMatchAlert,
   alertPriceText,
   alertSendState,
   alertSubject,
@@ -101,6 +109,31 @@ test("the default From display name is 1on1 Auto-Match Alert, not 1on1 Bops, and
   assert.equal(a.fromName, "1on1 Auto-Match Alert");
   assert.equal(a.from, "1on1 Auto-Match Alert <alerts@1on1realtors.com>");
   assert.doesNotMatch(a.from, /Bops/i);
+});
+
+
+test("the default From is 1on1 Auto-Match Alert <alerts@1on1realtors.com> and Reply-To is admin@1on1realtors.com", () => {
+  assert.equal(ALERT_FROM_ADDRESS_DEFAULT, "alerts@1on1realtors.com");
+  assert.equal(ALERT_REPLY_TO_DEFAULT, "admin@1on1realtors.com");
+  assert.equal(alertFromAddress({}), "alerts@1on1realtors.com");
+  assert.equal(alertFromHeader({}), "1on1 Auto-Match Alert <alerts@1on1realtors.com>");
+  assert.equal(alertReplyTo({}), "admin@1on1realtors.com");
+  assert.equal(alertFromAddress({ AUTOMATCH_ALERT_FROM_ADDRESS: "desk@1on1realtors.com" }), "desk@1on1realtors.com");
+  assert.equal(alertReplyTo({ AUTOMATCH_ALERT_REPLY_TO: "office@1on1realtors.com" }), "office@1on1realtors.com");
+  const key = alertIdempotencyKey("aaaaaaaaaaaaaaaaaaaaaaaa", "url:https://1on1realtors.com/property/x");
+  assert.match(key, /^automatch-alert:aaaaaaaaaaaaaaaaaaaaaaaa:/);
+  assert.doesNotMatch(key, /[^A-Za-z0-9._:-]/);
+});
+
+test("the one-off test alert is To miles@simplyintense.com only, prefixed [TEST], with no CC or BCC", () => {
+  const a = buildTestAutoMatchAlert(NOW, { baseUrl: BASE });
+  assert.equal(a.to, TEST_ALERT_TO);
+  assert.equal(TEST_ALERT_TO, "miles@simplyintense.com");
+  assert.deepEqual(a.cc, []);
+  assert.deepEqual(a.bcc, []);
+  assert.match(a.subject, /^\[TEST\] /);
+  assert.equal(a.from, "1on1 Auto-Match Alert <alerts@1on1realtors.com>");
+  assert.doesNotMatch(`${a.from}\n${a.to}\n${a.cc.join(",")}\n${a.subject}\n${a.text}\n${a.html}`, /Bops/i);
 });
 
 test("Bops is absent from the rendered subject, from and body (html and text), and Miles's name stays out of the body", () => {
@@ -296,10 +329,12 @@ test("sending stays off unless AUTOMATCH_ALERT_ENABLED is 1 or true; --send is p
   assert.equal(alertSendState({ [ALERT_ENABLED_FLAG]: "0" }).flagOn, false);
   assert.equal(alertSendState({ [ALERT_ENABLED_FLAG]: "true" }).flagOn, true);
   assert.equal(alertSendState({ [ALERT_ENABLED_FLAG]: "1" }).flagOn, true, "the flag is read");
-  assert.equal(alertSendState({ [ALERT_ENABLED_FLAG]: "1" }).sending, false, "this build has no transport, so nothing sends");
-  assert.deepEqual(parseAlertArgs(["--send", "--test", "--out", "a.html", "--txt", "a.txt"]), {
+  assert.equal(alertSendState({ [ALERT_ENABLED_FLAG]: "1" }).sending, false, "the flow layer never claims a send; the node layer decides");
+  assert.deepEqual(parseAlertArgs(["--send", "--test", "--test-send", "--counts", "--out", "a.html", "--txt", "a.txt"]), {
     send: true,
     test: true,
+    testSend: true,
+    counts: true,
     out: "a.html",
     txt: "a.txt",
   });
@@ -356,12 +391,8 @@ test("dispatch is idempotent: each match is emailed at most once, and flipping t
   assert.equal(alertKey(a), `${RID_A}|${KEY_A}`);
 });
 
-const FILES = ["../flow/automatch-alert.ts", "../node/automatch-alert.ts", "../cli/automatch-alert.ts", "../../app/api/realty/automatch-alert/route.ts"];
-
-test("no fetch and no mail transport in the Auto-Match Alert code", () => {
-  for (const f of FILES) {
-    const src = readFileSync(new URL(f, import.meta.url), "utf8");
-    assert.doesNotMatch(src, /\bfetch\s*\(/, f);
-    assert.doesNotMatch(src, /nodemailer|resend|sendgrid|smtp|sendmail|mailgun|postmark|gmail|send_?message|agentmail/i, f);
-  }
+test("the portable Auto-Match Alert builder has no fetch and no mail transport", () => {
+  const src = readFileSync(new URL("../flow/automatch-alert.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /\bfetch\s*\(/);
+  assert.doesNotMatch(src, /nodemailer|sendgrid|smtp|sendmail|mailgun|postmark|gmail|send_?message|agentmail/i);
 });

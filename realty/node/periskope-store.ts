@@ -474,4 +474,19 @@ export class PeriskopeStore {
     }
     return added;
   }
+
+  /** After a successful send (or a Resend idempotent replay), mark the key as sent. Upserts if it was suppressed. */
+  markAutomatchAlertSent(row: AlertSentRow): void {
+    const key = `${row.requestId}|${row.listingKey}`;
+    const all = this.automatchAlertSentRows();
+    const i = all.findIndex((r) => `${r.requestId}|${r.listingKey}` === key);
+    const next: AlertSentRow = { ...row, kind: "sent" };
+    if (i >= 0) {
+      if (all[i].kind === "sent") return;
+      all[i] = next;
+      this.replace("automatchAlertSent", all);
+      return;
+    }
+    this.add("automatchAlertSent", next);
+  }
 }

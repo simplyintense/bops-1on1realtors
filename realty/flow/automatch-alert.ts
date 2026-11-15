@@ -53,8 +53,19 @@ export const ALERT_BCC_DEFAULT = "miles@simplyintense.com";
 /** Optional From display name; unset, the default is ALERT_NAME. */
 export const ALERT_FROM_NAME_FLAG = "AUTOMATCH_ALERT_FROM_NAME";
 
-/** Optional From email address for the preview's From line. */
+/** Optional From email address for the preview's From line (alias of AUTOMATCH_ALERT_FROM_ADDRESS). */
 export const ALERT_FROM_EMAIL_FLAG = "AUTOMATCH_ALERT_FROM_EMAIL";
+
+/** From address used in the From header. Default ALERT_FROM_ADDRESS_DEFAULT. */
+export const ALERT_FROM_ADDRESS_FLAG = "AUTOMATCH_ALERT_FROM_ADDRESS";
+export const ALERT_FROM_ADDRESS_DEFAULT = "alerts@1on1realtors.com";
+
+/** Reply-To address. Default ALERT_REPLY_TO_DEFAULT. */
+export const ALERT_REPLY_TO_FLAG = "AUTOMATCH_ALERT_REPLY_TO";
+export const ALERT_REPLY_TO_DEFAULT = "admin@1on1realtors.com";
+
+/** The only recipient of a manual [TEST] send. */
+export const TEST_ALERT_TO = "miles@simplyintense.com";
 
 /** When exactly "1", the From name and the body attribution are Miles, so a later switch is one setting. */
 export const ALERT_AS_MILES_FLAG = "AUTOMATCH_ALERT_AS_MILES";
@@ -138,8 +149,37 @@ export function alertAttribution(env: Env = {}): AlertAttribution {
 }
 
 export function alertFromEmail(env: Env = {}): string | null {
-  const raw = (env[ALERT_FROM_EMAIL_FLAG] ?? "").trim();
-  return raw || null;
+  const raw = (env[ALERT_FROM_ADDRESS_FLAG] ?? env[ALERT_FROM_EMAIL_FLAG] ?? "").trim();
+  return raw || ALERT_FROM_ADDRESS_DEFAULT;
+}
+
+/** The From address, default alerts@1on1realtors.com. */
+export function alertFromAddress(env: Env = {}): string {
+  return alertFromEmail(env) ?? ALERT_FROM_ADDRESS_DEFAULT;
+}
+
+/** "1on1 Auto-Match Alert <alerts@1on1realtors.com>". */
+export function alertFromHeader(env: Env = {}): string {
+  return `${alertAttribution(env).fromName} <${alertFromAddress(env)}>`;
+}
+
+export function alertReplyTo(env: Env = {}): string {
+  const raw = (env[ALERT_REPLY_TO_FLAG] ?? "").trim();
+  return raw || ALERT_REPLY_TO_DEFAULT;
+}
+
+/** A stable Resend Idempotency-Key for one match, so a retry cannot double-send. */
+export function alertIdempotencyKey(requestId: string, listingKey: string): string {
+  const raw = `automatch-alert:${requestId}:${listingKey}`;
+  return raw.replace(/[^A-Za-z0-9._:-]+/g, "-").slice(0, 256);
+}
+
+/** Strip API keys and bearer tokens from an error string so it can be logged. */
+export function scrubMailError(s: string): string {
+  return s
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/\bre_[A-Za-z0-9_]+/g, "[redacted]")
+    .replace(/RESEND_API_KEY\s*[=:]\s*\S+/gi, "RESEND_API_KEY=[redacted]");
 }
 
 export function officeEmail(env: Env = {}): string {
@@ -194,7 +234,7 @@ export function alertSendExisting(env: Env = {}): boolean {
   return flagOn(env[ALERT_SEND_EXISTING_FLAG]);
 }
 
-/** The live switch: on only when AUTOMATCH_ALERT_ENABLED is "1" or "true". This build still never sends (no transport). */
+/** The live switch: on only when AUTOMATCH_ALERT_ENABLED is "1" or "true". The node layer also needs a transport to actually send. */
 export function alertSendState(env: Env): { flagOn: boolean; sending: false; message: string } {
   return { flagOn: alertEnabled(env), sending: false, message: SEND_OFF };
 }
@@ -206,12 +246,12 @@ export function allowedRecipient(to: string, allowlist: readonly string[]): bool
 }
 
 /** The command-line flags: --out, --txt, --test, --send. Pure: the argv comes in. */
-export function parseAlertArgs(argv: readonly string[]): { send: boolean; test: boolean; out: string | null; txt: string | null } {
+export function parseAlertArgs(argv: readonly string[]): { send: boolean; test: boolean; testSend: boolean; counts: boolean; out: string | null; txt: string | null } {
   const value = (name: string): string | null => {
     const i = argv.indexOf(`--${name}`);
     return i >= 0 && argv[i + 1] !== undefined && !argv[i + 1].startsWith("--") ? argv[i + 1] : null;
   };
-  return { send: argv.includes("--send"), test: argv.includes("--test"), out: value("out"), txt: value("txt") };
+  return { send: argv.includes("--send"), test: argv.includes("--test"), testSend: argv.includes("--test-send"), counts: argv.includes("--counts"), out: value("out"), txt: value("txt") };
 }
 
 const postedOf = (r: LeadInput): string => r.ask.postedAt ?? r.ask.lastSeenAt;
@@ -479,13 +519,65 @@ export function alertOptsFromEnv(env: Env, now: Date, extra: { statuses: readonl
     now,
     test: extra.test,
     fromName: attr.fromName,
-    fromEmail: alertFromEmail(env),
+    fromEmail: alertFromAddress(env),
     asMiles: attr.asMiles,
     officeEmail: officeEmail(env),
     cc: alertCc(env),
     bcc: alertBcc(env),
     allowlist: alertAllowlist(env),
   };
+}
+
+
+/**
+ * A one-off test alert: fake details, subject prefixed with [TEST], To TEST_ALERT_TO only, and no CC or BCC.
+ * Used by the owners' test-send action and the CLI, and it works while live sending is off.
+ */
+export function buildTestAutoMatchAlert(now: Date, o: { baseUrl?: string; fromName?: string; fromEmail?: string | null } = {}): AutoMatchAlert {
+  const posted = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  const row: AlertInput = {
+    score: 90,
+    reason: "Test alert: invented people and a 555 number only",
+    listingKey: "url:https://1on1realtors.com/property/sample-townhouse",
+    ask: {
+      postId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      area: "Maraval",
+      beds: 3,
+      budget: 2_500_000,
+      currency: "TTD",
+      type: "townhouse",
+      listingType: "sale",
+      lastSeenAt: posted,
+      postedAt: posted,
+      senderName: "Alex Tester",
+      firm: "Example Realty Co",
+      senderPhone: "+18685550100",
+    },
+    listing: {
+      title: "Sample Townhouse, Maraval",
+      url: "https://1on1realtors.com/property/sample-townhouse",
+      price: 2_500_000,
+      currency: "TTD",
+      ttdEquiv: null,
+      agentId: 7,
+      agentName: "Dana Holder",
+      area: "Maraval",
+      beds: 3,
+      type: "townhouse",
+    },
+    agentEmail: TEST_ALERT_TO,
+  };
+  return buildAutoMatchAlert(row, {
+    statuses: [],
+    baseUrl: o.baseUrl ?? publicBaseUrl({}),
+    now,
+    test: true,
+    fromName: o.fromName ?? ALERT_NAME,
+    fromEmail: o.fromEmail ?? ALERT_FROM_ADDRESS_DEFAULT,
+    officeEmail: OFFICE_TO,
+    cc: [],
+    bcc: [],
+  });
 }
 
 export { publicBaseUrl, DEFAULT_PUBLIC_URL, escapeHtml };
