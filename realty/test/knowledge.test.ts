@@ -152,7 +152,7 @@ test("teach with a term and a sale/rent answer saves a rule; without a term it s
   assert.equal(note.stillVague, true);
 });
 
-test("a place, a type or sale/rent without a term is refused, and so is a listingType other than sale or rent", () => {
+test("a place, a type or sale/rent without a term is refused, and so is a listingType other than sale, rent or shortlet", () => {
   const root = world([vaguePost("v-1", "anyone?")]);
   syncFromJsonl(root);
   const [item] = rowsOf(root, "vague");
@@ -161,6 +161,20 @@ test("a place, a type or sale/rent without a term is refused, and so is a listin
     assert.throws(() => s.teach(item.id, { answer: "ok", listingType: "rent" }), SearchInputError);
     assert.throws(() => s.teach(item.id, { answer: "ok", term: "anyone", listingType: "lease" }), SearchInputError);
     assert.deepEqual(s.taught(), []);
+  });
+});
+
+test("a shortlet listing type can be taught, including the spelling short-let, and is stored as shortlet", () => {
+  const root = world([vaguePost("v-2", "Looking for Carnival rental for one person from Jan 15")]);
+  writeFileSync(join(root, "demand.jsonl"), `${JSON.stringify({ ...vaguePost("v-2", "Looking for Carnival rental for one person from Jan 15"), set: "demand", category: "rental_request" })}\n`, { mode: 0o600 });
+  syncFromJsonl(root);
+  const item = [...rowsOf(root, "vague"), ...rowsOf(root, "demand")].find((r) => r.messageIds.includes("v-2"));
+  assert.ok(item);
+  withSearchStore(root, (s) => {
+    const r = s.teach(item.id, { answer: "A Carnival short let: a seasonal stay at premium prices, usually a couple of weeks.", term: "carnival rental", type: "carnival rental", listingType: "short-let" }, "Miles");
+    assert.equal(r.saved, "alias");
+    assert.equal(s.taught().find((t) => t.term === "carnival rental")?.listingType, "shortlet");
+    assert.equal(s.taught().find((t) => t.term === "carnival rental")?.taughtBy, "Miles");
   });
 });
 

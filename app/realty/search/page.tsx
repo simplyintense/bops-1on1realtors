@@ -91,10 +91,11 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         <input name="maxPrice" defaultValue={val("maxPrice")} inputMode="numeric" placeholder="Max price" className="rt-field" aria-label="Max price" />
         <input name="beds" defaultValue={val("beds")} inputMode="numeric" placeholder="Beds" className="rt-field" aria-label="Beds" />
         <input name="type" defaultValue={val("type")} placeholder="Type (house, apartment…)" className="rt-field" aria-label="Type" />
-        <select name="listingType" defaultValue={val("listingType")} className="rt-field" aria-label="Sale or rent">
-          <option value="">Sale or rent</option>
+        <select name="listingType" defaultValue={val("listingType")} className="rt-field" aria-label="Sale, rent or short let">
+          <option value="">Sale, rent or short let</option>
           <option value="sale">Sale</option>
           <option value="rent">Rent</option>
+          <option value="shortlet">Short let</option>
         </select>
         <input name="group" defaultValue={val("group")} placeholder="Group" className="rt-field" aria-label="Group" />
         <input name="from" defaultValue={val("from")} placeholder="From YYYY-MM-DD" className="rt-field" aria-label="From date" />

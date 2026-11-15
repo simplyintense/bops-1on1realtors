@@ -4,8 +4,8 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, st
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEVELOPMENTS } from "../extract.ts";
-import { applyKnownTerms, bestGuess, termIn, type KnownTerm } from "../flow/knowledge.ts";
-import { reparsePost, type PostRecord } from "../flow/periskope.ts";
+import { applyKnownTerms, bestGuess, parseListingType, termIn, type KnownTerm, type RecordListingType } from "../flow/knowledge.ts";
+import { looksLikeEmptyListingAsk, reparsePost, type KindOverride, type PostRecord } from "../flow/periskope.ts";
 import { dateAst } from "./group-posts.ts";
 import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
@@ -35,7 +35,7 @@ export type { KnownTerm };
 export const CROSS_POST_DAYS = 3;
 /** Token-set similarity at or above this counts as near-identical text. */
 const NEAR_IDENTICAL = 0.9;
-const SCHEMA_VERSION = "3";
+const SCHEMA_VERSION = "4";
 export const SEARCH_DB = "search.db";
 const DAY_MS = 86_400_000;
 /** Places are Trinidad and Tobago, which does not observe DST: AST is always UTC-4. */
@@ -118,6 +118,8 @@ export type SearchRow = {
   originalText: string | null;
   explanation?: string | null;
   explainedAt?: string | null;
+  status?: "ignored" | "parked" | null;
+  priority?: "low" | null;
 };
 
 export type SearchInput = {
@@ -129,7 +131,7 @@ export type SearchInput = {
   maxPrice?: number;
   beds?: number;
   type?: string;
-  listingType?: "sale" | "rent";
+  listingType?: RecordListingType;
   agent?: string;
   group?: string;
   from?: string;
@@ -170,8 +172,9 @@ export function nearIdentical(a: string | null | undefined, b: string | null | u
   return union > 0 && shared / union >= NEAR_IDENTICAL;
 }
 
-/** Vague: no area/development and no price, or no type and no area/development. */
-export function isVague(f: { area?: string | null; development?: string | null; price?: number | null; type?: string | null }): boolean {
+/** Vague: no area/development and no price, or no type and no area/development. A shortlet tag is enough on its own. */
+export function isVague(f: { area?: string | null; development?: string | null; price?: number | null; type?: string | null; listingType?: string | null }): boolean {
+  if (f.listingType === "shortlet") return false;
   const place = hasText(f.area) || hasText(f.development);
   if (!place && f.price == null) return true;
   return !hasText(f.type) && !place;
@@ -208,6 +211,8 @@ type Item = {
   notes: string | null;
   originalText: string | null;
   promoted: boolean;
+  status: "ignored" | "parked" | null;
+  priority: "low" | null;
 };
 
 type Rec = Omit<Item, "messageId" | "groupName" | "promoted" | "sentAt"> & {
@@ -231,16 +236,25 @@ const INDEXED = ["area", "development", "price", "beds", "type", "listing_type",
  * Normalize one JSONL row. The file it came from sets the side; a row that can't be keyed or dated is skipped. Taught terms
  * fill whatever the row leaves empty (never overwrite), so a record stored before a term was taught is read with it too.
  */
-function toItem(raw: SourceRow, side: Side, terms: readonly KnownTerm[]): Item | null {
+function toItem(raw: SourceRow, side: Side, terms: readonly KnownTerm[], over?: KindOverride): Item | null {
   const messageId = str(raw.messageId);
   const at = typeof raw.sentAt === "string" ? Date.parse(raw.sentAt) : NaN;
   if (!messageId || !Number.isFinite(at)) return null;
   const price = num(raw.price);
   const text = str(raw.originalText) ?? "";
   const row = { area: str(raw.area), development: str(raw.development), type: str(raw.type), listingType: str(raw.listingType) };
+  if (over?.area) row.area = over.area;
+  if (over?.development) row.development = over.development;
+  if (over?.type) row.type = over.type;
+  if (over?.listingType) row.listingType = over.listingType;
   const fields = applyKnownTerms(row, text, terms);
-  const promoted = isVague({ ...row, price }) && !isVague({ ...fields, price });
-  const tab: Tab = isVague({ ...fields, price }) ? "vague" : side;
+  const beds = num(raw.beds);
+  if (over?.status === "ignored" || looksLikeEmptyListingAsk(text, { ...fields, price, beds })) return null;
+  const vague = isVague({ ...fields, price });
+  const parked = over?.status === "parked";
+  const promoted = isVague({ area: str(raw.area), development: str(raw.development), type: str(raw.type), price }) && !vague;
+  const tab: Tab = parked || !vague ? side : "vague";
+  const priority: "low" | null = over?.priority === "low" || (!fields.area && !fields.development) ? "low" : null;
   return {
     messageId,
     side,
@@ -256,7 +270,7 @@ function toItem(raw: SourceRow, side: Side, terms: readonly KnownTerm[]): Item |
     development: fields.development,
     price,
     currency: str(raw.currency),
-    beds: num(raw.beds),
+    beds,
     baths: num(raw.baths),
     type: fields.type,
     listingType: fields.listingType,
@@ -265,6 +279,8 @@ function toItem(raw: SourceRow, side: Side, terms: readonly KnownTerm[]): Item |
     notes: str(raw.notes),
     originalText: str(raw.originalText),
     promoted,
+    status: parked ? "parked" : null,
+    priority,
   };
 }
 
@@ -339,6 +355,8 @@ function dedupe(items: Item[]): Rec[] {
       propertyClass: it.propertyClass,
       notes: it.notes,
       originalText: it.originalText,
+      status: it.status,
+      priority: it.priority,
     };
     recs.push(rec);
     list.push(rec);
@@ -376,7 +394,7 @@ function fileStamp(file: string): string {
 }
 
 function fingerprint(root: string): string {
-  return [SCHEMA_VERSION, fileStamp(join(root, "supply.jsonl")), fileStamp(join(root, "demand.jsonl"))].join("|");
+  return [SCHEMA_VERSION, fileStamp(join(root, "supply.jsonl")), fileStamp(join(root, "demand.jsonl")), fileStamp(join(root, "kind-overrides.jsonl"))].join("|");
 }
 
 function openDb(root: string): DatabaseSync {
@@ -472,7 +490,7 @@ function ensureSchema(db: DatabaseSync): void {
       SELECT 'alias', term, area, development, type, 'taught', updated_at, NULL FROM aliases;
       DROP TABLE aliases;`);
   }
-  const EXPLAIN_COLS = ["explanation TEXT", "explained_at TEXT"];
+  const EXPLAIN_COLS = ["explanation TEXT", "explained_at TEXT", "status TEXT", "priority TEXT"];
   db.exec(recordTableSql("supply", EXPLAIN_COLS) + ";\n" + recordTableSql("demand", EXPLAIN_COLS) + ";\n" + recordTableSql("needs_explanation", EXPLAIN_COLS) + ";");
   for (const t of ["supply", "demand", "needs_explanation"]) {
     const cols = new Set((db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name));
@@ -571,6 +589,7 @@ export class SearchStore {
       if (last) return { ...(JSON.parse(last) as SyncResult), rebuilt: false };
     }
     const terms = this.knownTerms();
+    const overrides = Object.fromEntries(new PeriskopeStore(this.root).kindOverrides().map((o) => [o.messageId, o]));
     const supplyFile = readJsonl(join(this.root, "supply.jsonl"));
     const demandFile = readJsonl(join(this.root, "demand.jsonl"));
     // Upsert by messageId: a later line for the same message replaces an earlier one (demand after supply).
@@ -578,7 +597,8 @@ export class SearchStore {
     let skipped = supplyFile.skipped + demandFile.skipped;
     for (const [side, rows] of [["supply", supplyFile.rows], ["demand", demandFile.rows]] as const) {
       for (const raw of rows) {
-        const it = toItem(raw, side, terms);
+        const mid = str((raw as { messageId?: unknown }).messageId);
+        const it = toItem(raw, side, terms, mid ? overrides[mid] : undefined);
         if (!it) skipped++;
         else byId.set(it.messageId, it);
       }
@@ -609,8 +629,8 @@ export class SearchStore {
           JSON.stringify(r.groups), JSON.stringify(r.messageIds), r.area, r.development, r.price, r.currency, r.beds, r.baths,
           r.type, r.listingType, r.intent, r.propertyClass, r.notes, r.originalText,
         ];
-        const cols: string[] = [...RECORD_COLS, "explanation", "explained_at"];
-        values.push(note?.explanation ?? null, note?.explainedAt ?? null);
+        const cols: string[] = [...RECORD_COLS, "explanation", "explained_at", "status", "priority"];
+        values.push(note?.explanation ?? null, note?.explainedAt ?? null, r.status, r.priority);
         this.db.prepare(`INSERT INTO ${TABLE[r.tab]} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(...values);
         for (const g of r.groups) insertGroup.run(r.tab, r.id, g);
         insertFts.run(r.tab, r.id, [r.originalText, r.notes, r.area, r.development, r.type].filter(Boolean).join("\n"));
@@ -697,6 +717,32 @@ export class SearchStore {
     const stillQueued = new Set(this.db.prepare("SELECT id FROM needs_explanation").all().map((r) => String(r.id)));
     const promotedRecords = affected.filter((a) => a.tab === "vague" && !stillQueued.has(a.id)).length;
     return { id, saved: v.saved, term: v.term, stillVague, promoted, reparsed, promotedRecords };
+  }
+
+  /**
+   * Save a term to knowledge without a queue item (same rules as teach), reparse stored posts that contain it,
+   * and rebuild the tables. For a term that should apply to posts already on supply or demand.
+   */
+  learnTerm(input: TeachInput, by = "owner"): { saved: "alias" | "rule" | "note"; term: string; reparsed: number } {
+    const v = validateTeach(input);
+    if (!v.term) throw new SearchInputError("A term is needed when you are not teaching from a queue item.");
+    const now = new Date().toISOString();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare(
+        `INSERT INTO knowledge (kind, term, area, development, type, listing_type, note, source, taught_by, taught_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'taught', ?, ?)
+         ON CONFLICT(kind, term) DO UPDATE SET area = excluded.area, development = excluded.development, type = excluded.type,
+           listing_type = excluded.listing_type, note = excluded.note, taught_by = excluded.taught_by, taught_at = excluded.taught_at`,
+      ).run(v.saved, v.term, v.area, v.development, v.type, v.listingType, v.note, by, now);
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+    const reparsed = this.reparseStored(v.term);
+    this.sync({ force: true });
+    return { saved: v.saved, term: v.term, reparsed };
   }
 
   /** Records in any tab whose original text contains the term (whole word). Text is read here and never returned. */
@@ -835,6 +881,8 @@ function toSearchRow(r: Record<string, unknown>, tab: Tab): SearchRow {
   };
   row.explanation = s(r.explanation);
   row.explainedAt = s(r.explained_at);
+  row.status = r.status === "parked" || r.status === "ignored" ? (r.status as "parked" | "ignored") : null;
+  row.priority = r.priority === "low" ? "low" : null;
   return row;
 }
 
@@ -879,13 +927,14 @@ function validateTeach(input: TeachInput): ValidTeach {
   const area = clean(input.area);
   const development = clean(input.development);
   const type = clean(input.type);
-  const listingType = clean(input.listingType, 10);
-  if (listingType && listingType !== "sale" && listingType !== "rent") throw new SearchInputError("listingType must be sale or rent.");
+  const listingTypeRaw = clean(input.listingType, 12);
+  const listingType = listingTypeRaw ? parseListingType(listingTypeRaw) : null;
+  if (listingTypeRaw && listingType === undefined) throw new SearchInputError("listingType must be sale, rent or shortlet.");
   const mapping = !!(area || development || type);
   if (!term && (mapping || listingType)) throw new SearchInputError("A place, type or sale/rent needs a term: the words in posts it should match.");
   const note = clean(input.note, 2000) ?? answer;
   const saved = term && mapping ? "alias" : term && listingType ? "rule" : "note";
-  return { answer: answer.slice(0, 300), saved, term, area, development, type, listingType, note };
+  return { answer: answer.slice(0, 300), saved, term, area, development, type, listingType: listingType ?? null, note };
 }
 
 /** The taught terms in a store's root, for the parser at ingest. No database yet: none (the built-in gazetteer only). */
@@ -925,8 +974,10 @@ export function searchInputFrom(p: URLSearchParams | Record<string, string | str
   };
   const kind = text("kind") ?? "supply";
   if (kind !== "supply" && kind !== "demand" && kind !== "vague") throw new SearchInputError("kind must be supply, demand or vague.");
-  const listingType = text("listingType") ?? text("listing_type");
-  if (listingType !== undefined && listingType !== "sale" && listingType !== "rent") throw new SearchInputError("listingType must be sale or rent.");
+  const listingTypeRaw = text("listingType") ?? text("listing_type");
+  const listingParsed = listingTypeRaw !== undefined ? parseListingType(listingTypeRaw) : undefined;
+  if (listingTypeRaw !== undefined && (listingParsed === undefined || listingParsed === null)) throw new SearchInputError("listingType must be sale, rent or shortlet.");
+  const listingType = listingParsed ?? undefined;
   const limit = Math.min(Math.max(number("limit", { int: true }) ?? 100, 1), 500);
   const offset = Math.max(number("offset", { int: true }) ?? 0, 0);
   return {
@@ -979,8 +1030,8 @@ export function exportSheets(root: string): Record<"Supply" | "Demand" | "Needs 
   }));
 }
 
-const SALE_HEADER = ["First seen (AST)", "Last seen (AST)", "Times seen", "Groups", "Sender", "Phone", "Area / development", "Type", "Sale or rent", "Beds", "Price", "Currency", "Category", "Text", "Explanation", "Explained (AST)"];
-const QUEUE_HEADER = ["First seen (AST)", "Last seen (AST)", "Times seen", "Side", "Groups", "Sender", "Phone", "Text", "Explanation", "Explained (AST)"];
+const SALE_HEADER = ["First seen (AST)", "Last seen (AST)", "Times seen", "Groups", "Sender", "Phone", "Area / development", "Type", "Sale or rent", "Beds", "Price", "Currency", "Category", "Text", "Explanation", "Explained (AST)", "Status", "Priority"];
+const QUEUE_HEADER = ["First seen (AST)", "Last seen (AST)", "Times seen", "Side", "Groups", "Sender", "Phone", "Text", "Explanation", "Explained (AST)", "Status", "Priority"];
 
 function sheet(rows: SearchRow[], header: string[]): string[][] {
   return [
@@ -1002,6 +1053,8 @@ function sheet(rows: SearchRow[], header: string[]): string[][] {
       r.originalText ?? "",
       r.explanation ?? "",
       r.explainedAt ? dateAst(r.explainedAt) : "",
+      r.status ?? "",
+      r.priority ?? "",
     ]),
   ];
 }
@@ -1018,5 +1071,7 @@ function queueLine(r: SearchRow): string[] {
     r.originalText ?? "",
     r.explanation ?? "",
     r.explainedAt ? dateAst(r.explainedAt) : "",
+    r.status ?? "",
+    r.priority ?? "",
   ];
 }

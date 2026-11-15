@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 import type { LiveMatchStatus, LiveRequest } from "../flow/live-match.ts";
 import { developmentNameOf, foldPrice, priceKey, setOf, unknownPlaceHints, type PriceRangeRow, type StrongAlert, type UnknownPlace } from "../flow/observe.ts";
-import type { GroupConsent, Kind, MarketIngestItem, PostRecord } from "../flow/periskope.ts";
+import { applyRecordOverride, type GroupConsent, type Kind, type KindOverride, type MarketIngestItem, type PostRecord } from "../flow/periskope.ts";
 import { applyStatus, type MatchStatus, type StatusRow } from "../flow/match-status.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
@@ -72,9 +72,12 @@ const FILES = {
   priceRanges: "price-ranges.jsonl",
   unknownPlaces: "unknown-places.jsonl",
   alerts: "alerts.jsonl",
+  kindOverrides: "kind-overrides.jsonl",
 } as const;
 
 export type Collection = keyof typeof FILES;
+
+const saleOrRent = (t: PostRecord["listingType"]): t is "sale" | "rent" => t === "sale" || t === "rent";
 
 /** The records the intake keeps under one root (default .data/realty/periskope). */
 export class PeriskopeStore {
@@ -151,7 +154,7 @@ export class PeriskopeStore {
   /** False if this messageId is already stored. */
   addPost(row: PostRecord): boolean {
     if (this.post(row.messageId)) return false;
-    this.add("posts", row);
+    this.add("posts", this.withKindOverride(row));
     return true;
   }
 
@@ -162,8 +165,9 @@ export class PeriskopeStore {
   upsertPost(row: PostRecord): "added" | "refilled" | "unchanged" {
     const existing = this.post(row.messageId);
     if (!existing) {
-      this.add("posts", row);
-      this.observe(row, true);
+      const added = this.withKindOverride(row);
+      this.add("posts", added);
+      this.observe(added, true);
       return "added";
     }
     const patch: Partial<PostRecord> = {};
@@ -189,22 +193,23 @@ export class PeriskopeStore {
 
   /** Project a parsed post into the supply or demand set, and update price and unknown-place knowledge. */
   observe(row: PostRecord, recordKnowledge = true, at = row.sentAt): void {
-    const side = row.set ?? setOf(row.category);
-    if (side === "supply") this.upsertSet("supply", { ...row, set: "supply", development: row.development ?? developmentNameOf(row.area) });
-    if (side === "demand") this.upsertSet("demand", { ...row, set: "demand", development: row.development ?? developmentNameOf(row.area) });
-    if (recordKnowledge && side && row.area && row.price != null && row.listingType && row.currency) {
-      const base = { area: row.area, development: row.development ?? developmentNameOf(row.area), beds: row.beds, listingType: row.listingType, currency: row.currency, side };
+    const post = this.withKindOverride(row);
+    const side = post.set ?? setOf(post.category);
+    if (side === "supply") this.upsertSet("supply", { ...post, set: "supply", development: post.development ?? developmentNameOf(post.area) });
+    if (side === "demand") this.upsertSet("demand", { ...post, set: "demand", development: post.development ?? developmentNameOf(post.area) });
+    if (recordKnowledge && side && post.area && post.price != null && saleOrRent(post.listingType) && post.currency) {
+      const base = { area: post.area, development: post.development ?? developmentNameOf(post.area), beds: post.beds, listingType: post.listingType, currency: post.currency, side };
       const all = this.priceRanges();
       const k = priceKey(base);
       const i = all.findIndex((r) => priceKey(r) === k);
-      const next = foldPrice(i >= 0 ? all[i] : null, row.price, at, base);
+      const next = foldPrice(i >= 0 ? all[i] : null, post.price, at, base);
       if (i >= 0) all[i] = next;
       else all.push(next);
       this.replace("priceRanges", all);
     }
-    if (recordKnowledge && side && !row.area && row.originalText) {
+    if (recordKnowledge && side && !post.area && post.originalText) {
       const all = this.unknownPlaces();
-      for (const name of unknownPlaceHints(row.originalText)) {
+      for (const name of unknownPlaceHints(post.originalText)) {
         const i = all.findIndex((r) => r.name.toLowerCase() === name.toLowerCase());
         if (i >= 0) all[i] = { ...all[i], count: all[i].count + 1, lastSeenAt: at };
         else all.push({ name, count: 1, firstSeenAt: at, lastSeenAt: at });
@@ -246,18 +251,22 @@ export class PeriskopeStore {
    * from scratch so a post that changed sides is not left in both. Never sends.
    */
   reprojectObservation(posts: PostRecord[]): void {
-    this.replace("posts", posts);
-    this.replace("supply", posts.filter((p) => (p.set ?? setOf(p.category)) === "supply"));
-    this.replace("demand", posts.filter((p) => (p.set ?? setOf(p.category)) === "demand"));
+    const overrides = this.kindOverrides();
+    const ignored = new Set(overrides.filter((o) => o.status === "ignored").map((o) => o.messageId));
+    const projected = posts.map((p) => this.withKindOverride(p));
+    this.replace("posts", projected);
+    const visible = projected.filter((p) => !ignored.has(p.messageId));
+    this.replace("supply", visible.filter((p) => (p.set ?? setOf(p.category)) === "supply"));
+    this.replace("demand", visible.filter((p) => (p.set ?? setOf(p.category)) === "demand"));
     const ranges: PriceRangeRow[] = [];
-    for (const row of [...posts].sort((a, b) => a.sentAt.localeCompare(b.sentAt))) {
+    for (const row of [...visible].sort((a, b) => a.sentAt.localeCompare(b.sentAt))) {
       const side = row.set ?? setOf(row.category);
-      if (!side || !row.area || row.price == null || !row.listingType || !row.currency) continue;
+      if (!side || !row.area || row.price == null || !saleOrRent(row.listingType) || !row.currency) continue;
       const base = { area: row.area, development: row.development ?? developmentNameOf(row.area), beds: row.beds, listingType: row.listingType, currency: row.currency, side };
       const i = ranges.findIndex((r) => priceKey(r) === priceKey(base));
-      const next = foldPrice(i >= 0 ? ranges[i] : null, row.price, row.sentAt, base);
-      if (i >= 0) ranges[i] = next;
-      else ranges.push(next);
+      const folded = foldPrice(i >= 0 ? ranges[i] : null, row.price, row.sentAt, base);
+      if (i >= 0) ranges[i] = folded;
+      else ranges.push(folded);
     }
     this.replace("priceRanges", ranges);
   }
@@ -265,6 +274,39 @@ export class PeriskopeStore {
   /** Replace the alert list (used after a full rematch so stale alerts are dropped). Never sends. */
   replaceAlerts(rows: StrongAlert[]): void {
     this.replace("alerts", rows);
+  }
+
+
+  /* ---- kind overrides (a staff correction of supply/demand, honoured on rebuild) ---- */
+
+  kindOverrides(): KindOverride[] {
+    const last = new Map<string, KindOverride>();
+    for (const row of this.rows<KindOverride>("kindOverrides")) {
+      if (row?.messageId) last.set(row.messageId, row);
+    }
+    return [...last.values()];
+  }
+
+  /** Insert or replace the override for this message (fields merge). Does not reproject; call reprojectObservation after. */
+  setKindOverride(row: KindOverride): KindOverride {
+    const prev = this.kindOverrides().find((r) => r.messageId === row.messageId);
+    const next: KindOverride = { ...prev, ...row, messageId: row.messageId, at: row.at ?? new Date().toISOString(), by: row.by ?? prev?.by ?? null, reason: row.reason ?? prev?.reason ?? null };
+    const all = this.kindOverrides().filter((r) => r.messageId !== next.messageId);
+    this.replace("kindOverrides", [...all, next]);
+    return next;
+  }
+
+  /** Drop the override for this message, if any. Does not reproject. */
+  clearKindOverride(messageId: string): boolean {
+    const all = this.kindOverrides();
+    if (!all.some((r) => r.messageId === messageId)) return false;
+    this.replace("kindOverrides", all.filter((r) => r.messageId !== messageId));
+    return true;
+  }
+
+  private withKindOverride(row: PostRecord): PostRecord {
+    const over = this.kindOverrides().find((r) => r.messageId === row.messageId);
+    return over ? applyRecordOverride(row, over) : row;
   }
 
   /* ---- opt-outs (normalized sender numbers) ---- */

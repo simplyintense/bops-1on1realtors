@@ -72,6 +72,7 @@ test("vague: no place and no price, or no type and no place; clear posts are not
   assert.equal(isVague({ area: null, development: "Aquaria", price: 900_000, type: "condo" }), false);
   assert.equal(isVague({ area: "Maraval", development: null, price: null, type: "house" }), false);
   assert.equal(isVague({ area: "   ", development: null, price: null, type: "house" }), true, "blank strings count as missing");
+  assert.equal(isVague({ area: null, development: null, price: null, type: null, listingType: "shortlet" }), false, "a shortlet tag is enough");
 });
 
 test("near-identical text ignores case, accents, punctuation and emoji, but not different words", () => {
@@ -388,7 +389,7 @@ test("export: a header row per tab, strings only, times in AST, and no line for 
   const sheets = exportSheets(root);
   assert.deepEqual(Object.keys(sheets), ["Supply", "Demand", "Needs explanation"]);
   assert.equal(sheets.Supply[0][0], "First seen (AST)");
-  assert.equal(sheets["Needs explanation"][0].length, 10);
+  assert.equal(sheets["Needs explanation"][0].length, 12);
   assert.equal(sheets.Supply[1][0], "2026-11-02 08:00 AST", "2026-11-02T12:00Z is 08:00 in Trinidad");
   assert.equal(sheets.Supply[1][9], "", "a missing beds value is an empty string");
   for (const rows of Object.values(sheets)) for (const row of rows) for (const cell of row) assert.equal(typeof cell, "string");

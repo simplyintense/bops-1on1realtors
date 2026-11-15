@@ -6,7 +6,7 @@ import { filterParams, hasFlag, searchRoot } from "./search-args.ts";
  * Search the WhatsApp supply, demand and needs-explanation queue. Flags mirror the search fields:
  *   node --experimental-strip-types realty/cli/search.ts --kind supply --area maraval --min-price 1000000 --beds 3
  *   --kind supply|demand|vague  --q TEXT  --area X  --development X  --min-price N  --max-price N  --beds N
- *   --type T  --listing-type sale|rent  --agent NAME-or-PHONE  --group NAME  --from YYYY-MM-DD  --to YYYY-MM-DD
+ *   --type T  --listing-type sale|rent|shortlet  --agent NAME-or-PHONE  --group NAME  --from YYYY-MM-DD  --to YYYY-MM-DD
  *   --limit N  --offset N  --json  --root DIR
  * Times are AST. Phone numbers and text are printed to this terminal only; nothing is logged.
  */

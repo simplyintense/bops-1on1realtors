@@ -2,6 +2,7 @@ import { developmentOf, findAreas, findBudget, findInterest, findPhones, normali
 import type { Currency, Inquiry, ListingType } from "./engine.ts";
 import { runtimeEnv, type Env } from "./env.ts";
 import { applyKnownTerms, type KnownTerm } from "./knowledge.ts";
+import type { RecordListingType } from "./knowledge.ts";
 import { propertyKindFromCrm } from "./taxonomy.ts";
 
 /**
@@ -46,6 +47,8 @@ export type Facts = {
   type: string | null;
   budget: { min: number | null; max: number; currency: Currency; monthly: boolean } | null;
   intent: "buy" | "rent" | null;
+  /** From a taught term: shortlet is kept on the stored post, separate from long-term rent. */
+  listingType?: RecordListingType | null;
 };
 
 /** How a stored post is categorised for the desk and a backfill report. A listing may also be cobroke. */
@@ -131,7 +134,7 @@ export type PostRecord = {
   beds: number | null;
   baths: number | null;
   type: string | null;
-  listingType: "sale" | "rent" | null;
+  listingType: "sale" | "rent" | "shortlet" | null;
   intent: "buy" | "rent" | null;
   propertyClass: string | null;
   notes: string | null;
@@ -360,7 +363,8 @@ export function factsOf(body: string, terms: readonly KnownTerm[] = []): Facts {
     baths: bathsOf(body),
     type: place.type,
     budget: budget ? { min: budget.min, max: budget.max, currency: budget.currency, monthly: budget.period === "month" } : null,
-    intent: interest.intent ?? (place.listingType === "rent" ? "rent" : place.listingType === "sale" ? "buy" : null),
+    listingType: place.listingType === "shortlet" ? "shortlet" : place.listingType === "sale" || place.listingType === "rent" ? place.listingType : null,
+    intent: interest.intent ?? (place.listingType === "rent" || place.listingType === "shortlet" ? "rent" : place.listingType === "sale" ? "buy" : null),
   };
 }
 
@@ -576,7 +580,7 @@ export function postRecordOf(args: { message: ParsedMessage; phone: string; inte
   const { message: m, phone, interpretation: i, sentAt } = args;
   const { category, cobroke } = categoryOf(i, m.body);
   const f = i.facts;
-  const listingType = listingTypeOf(f);
+  const listingType = f.listingType === "shortlet" ? "shortlet" : listingTypeOf(f);
   const listing = category === "listing_for_sale" || category === "listing_for_rent" || category === "cobroke";
   const rec: PostRecord = {
     messageId: m.messageId,
@@ -630,6 +634,82 @@ export function reparsePost(p: PostRecord, terms: readonly KnownTerm[] = []): Po
     sentAt: p.sentAt,
   });
   return { ...next, mediaFiles: p.mediaFiles, mediaUrls: p.mediaUrls ?? next.mediaUrls, groupName: p.groupName ?? next.groupName };
+}
+
+/**
+ * Force a stored post onto supply or demand. Used when the classifier got the side wrong and an
+ * owner override should stick through a later reparse or rebuild. Reversible: drop the override
+ * and reproject to go back. Facts stay; only the side, category, and a matching brief change.
+ * A listing with no sale/rent type is treated as a sale (priced homes); a request with no type
+ * stays a buyer request.
+ */
+export function applyKindOverride(post: PostRecord, side: "supply" | "demand"): PostRecord {
+  const listingType =
+    post.listingType === "sale" || post.listingType === "rent" || post.listingType === "shortlet"
+      ? post.listingType
+      : side === "supply" && post.price != null && post.price < 20_000
+        ? "rent"
+        : side === "supply"
+          ? "sale"
+          : post.listingType;
+  const category =
+    side === "supply"
+      ? listingType === "rent" || listingType === "shortlet"
+        ? "listing_for_rent" as const
+        : "listing_for_sale" as const
+      : listingType === "rent" || listingType === "shortlet"
+        ? "rental_request" as const
+        : "buyer_request" as const;
+  const facts = {
+    area: post.area,
+    beds: post.beds,
+    baths: post.baths,
+    type: post.type,
+    budget: post.price != null ? { min: null, max: post.price, currency: (post.currency === "USD" ? "USD" : "TTD") as "USD" | "TTD", monthly: listingType === "rent" || listingType === "shortlet" } : null,
+    intent: (post.intent === "rent" || post.intent === "buy" ? post.intent : listingType === "rent" || listingType === "shortlet" ? "rent" as const : listingType === "sale" ? "buy" as const : null),
+    listingType,
+  };
+  return {
+    ...post,
+    set: side,
+    category,
+    listingType,
+    intent: facts.intent,
+    notes: side === "demand" ? buyerBrief(facts) : listingBrief(facts),
+  };
+}
+
+/** A staff correction of a stored post, kept under the store root so a rebuild honours it. */
+export type KindOverride = {
+  messageId: string;
+  set?: "supply" | "demand" | null;
+  area?: string | null;
+  development?: string | null;
+  type?: string | null;
+  listingType?: "sale" | "rent" | "shortlet" | null;
+  status?: "ignored" | "parked" | null;
+  priority?: "low" | null;
+  by?: string | null;
+  at?: string;
+  reason?: string | null;
+};
+
+/** Apply a stored override: optional side flip, then any field tags (area, type, shortlet, etc.). */
+export function applyRecordOverride(post: PostRecord, over: KindOverride): PostRecord {
+  let next = over.set === "supply" || over.set === "demand" ? applyKindOverride(post, over.set) : post;
+  if (over.area != null) next = { ...next, area: over.area };
+  if (over.development != null) next = { ...next, development: over.development };
+  if (over.type != null) next = { ...next, type: over.type };
+  if (over.listingType === "sale" || over.listingType === "rent" || over.listingType === "shortlet") {
+    next = { ...next, listingType: over.listingType };
+  }
+  return next;
+}
+
+/** A photo/text ask with no property facts: "does anyone have this house as a listing?" — ignore, don't queue. */
+export function looksLikeEmptyListingAsk(text: string, f: { area?: string | null; development?: string | null; type?: string | null; beds?: number | null; price?: number | null }): boolean {
+  if (f.area || f.development || f.type || f.beds != null || f.price != null) return false;
+  return /\b(?:does\s+anyone\s+have\s+this(?:\s+house)?(?:\s+as\s+a\s+listing)?|anyone\s+have\s+this(?:\s+house)?\s+as\s+a\s+listing)\b/i.test(text);
 }
 
 /* ---------------- Staff inputs ---------------- */
