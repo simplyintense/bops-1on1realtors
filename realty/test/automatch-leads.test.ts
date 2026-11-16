@@ -570,3 +570,59 @@ test("nothing new calls fetch: the lead code is read and checked, and the route 
     globalThis.fetch = real;
   }
 });
+
+/* ---------------- Suggested reply: no invented type or area ---------------- */
+
+test("with no type the reply says 'a 3 bedroom', never a townhouse or a '3-bed property'", () => {
+  const untyped = leadMessage(LEAD({}, { type: null }));
+  assert.match(untyped, /^Hi Dana, I hear you have a client looking for a 3 bedroom in Maraval around TT\$4\.3m\. /);
+  assert.doesNotMatch(untyped, /townhouse|3-bed|3 bed\b/);
+  const untypedNoArea = leadMessage(LEAD({}, { type: null, area: "" }));
+  assert.match(untypedNoArea, /looking for a 3 bedroom around TT\$4\.3m\. /);
+  assert.equal(leadMessage(LEAD({}, { type: null, beds: null, area: "" })).includes("looking for a place around"), true);
+});
+
+test("the type shows only when the message says it, and 'town house' counts as townhouse", () => {
+  const notSaid = leadMessage(LEAD({}, { originalText: "Need 3 bedrooms, pool a bonus" }));
+  assert.match(notSaid, /looking for a 3 bedroom around TT\$4\.3m\. /, "the area is not in the message either, so it stays out");
+  assert.doesNotMatch(notSaid, /townhouse/);
+  const houseNotTown = leadMessage(LEAD({}, { type: "house", originalText: "3 bed townhouse in Maraval" }));
+  assert.match(houseNotTown, /looking for a 3 bedroom in Maraval around/, "'house' does not match inside 'townhouse'");
+  const spaced = leadMessage(LEAD({}, { originalText: "3 bed town house in Maraval" }));
+  assert.match(spaced, /looking for a 3 bed townhouse in Maraval around TT\$4\.3m\. /);
+  const plural = leadMessage(LEAD({}, { originalText: "looking at 3 bed townhouses in Maraval" }));
+  assert.match(plural, /looking for a 3 bed townhouse in Maraval around/);
+});
+
+test("an area is pinned only when the message names it alone: several areas, 'open to', 'or', 'and' or a slash leave it out", () => {
+  const several = leadMessage(LEAD({}, { originalText: "3 bed townhouse preferably Maraval but open to Cascade" }));
+  assert.match(several, /looking for a 3 bed townhouse around TT\$4\.3m\. /);
+  assert.doesNotMatch(several, /in Maraval/);
+  assert.doesNotMatch(leadMessage(LEAD({}, { originalText: "Maraval or Cascade, 3 bed townhouse" })), /in Maraval/);
+  assert.doesNotMatch(leadMessage(LEAD({}, { originalText: "3 bed townhouse Maraval and Glencoe" })), /in Maraval/);
+  assert.doesNotMatch(leadMessage(LEAD({}, { originalText: "3 bed townhouse Maraval/Cascade" })), /in Maraval/);
+  assert.doesNotMatch(leadMessage(LEAD({}, { originalText: "3 bed townhouse, Maraval anywhere" })), /in Maraval/);
+  const single = leadMessage(LEAD({}, { originalText: "3 bed townhouse in Maraval, asking 4.3m" }));
+  assert.match(single, /looking for a 3 bed townhouse in Maraval around TT\$4\.3m\. /, "one area, named: both the type and the area stay");
+  const otherArea = leadMessage(LEAD({}, { originalText: "3 bed townhouse in the west" }));
+  assert.match(otherArea, /looking for a 3 bed townhouse around TT\$4\.3m\. /, "an area the message does not name is not pinned");
+});
+
+test("the type and the area are parsed as-is when there is no original message, and an empty one counts as none", () => {
+  assert.match(leadMessage(LEAD()), /looking for a 3 bed townhouse in Maraval around TT\$4\.3m\. /);
+  assert.match(leadMessage(LEAD({}, { originalText: "   " })), /looking for a 3 bed townhouse in Maraval around TT\$4\.3m\. /);
+});
+
+test("the desk card's suggested message follows the same rule, since it is the same leadMessage", () => {
+  const card = leadsView([LEAD({}, { originalText: "3 bed townhouse preferably Maraval but open to Cascade" })], { owner: true, agentId: null, statuses: [], firstSeen: [], now: NOW }).cards[0];
+  assert.match(card.message, /looking for a 3 bed townhouse around TT\$4\.3m\. /);
+  assert.doesNotMatch(card.message, /in Maraval/);
+});
+
+test("the suggested reply carries the listing link only when it is a public 1on1realtors.com link", () => {
+  const bop = leadMessage(LEAD({}, {}, { url: "https://bop.1on1realtors.com/property/third-urban" }));
+  assert.doesNotMatch(bop, /https?:\/\/|bop\./);
+  assert.match(bop, /I have Third Urban at TT\$3\.7m\. Happy to set up a viewing\./);
+  const www = leadMessage(LEAD({}, {}, { url: "https://www.1on1realtors.com/property/third-urban" }));
+  assert.match(www, /: https:\/\/www\.1on1realtors\.com\/property\/third-urban\. Happy/);
+});

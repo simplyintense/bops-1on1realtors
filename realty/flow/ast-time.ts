@@ -74,3 +74,24 @@ export function mentionedOnWhatsApp(iso: string, now: Date): string {
   if (!day || !time) return "";
   return `A contact mentioned this property on WhatsApp ${day} at ${time}.`;
 }
+
+/**
+ * The long calendar date in AST for the alert's opening line, e.g. "Tuesday 10 Nov". Always the calendar date, never "today" or
+ * "yesterday". An unreadable time gives "".
+ */
+export function longDateAst(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: AST, weekday: "long", day: "numeric", month: "short" }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("weekday")} ${get("day")} ${get("month")}`;
+}
+
+/** A short date and the clock time in AST, e.g. "Tue 10 Nov, 5:30 PM AST". An unreadable time gives "". */
+export function shortDateTimeAst(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: AST, weekday: "short", day: "numeric", month: "short" }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("weekday")} ${get("day")} ${get("month")}, ${timeAst12(iso)}`;
+}

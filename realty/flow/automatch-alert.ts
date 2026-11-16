@@ -1,8 +1,9 @@
+import { bandOf } from "./automatch.ts";
 import { digestRows, escapeHtml, publicBaseUrl, DEFAULT_PUBLIC_URL } from "./admin-digest.ts";
-import { dayKeyAst, mentionedOnWhatsApp } from "./ast-time.ts";
-import { askLine, firstNameOf, leadCardId, leadMessage, listingPriceText, waUrlFor, type LeadInput } from "./automatch-leads.ts";
+import { dayKeyAst, longDateAst, shortDateTimeAst, timeAst12 } from "./ast-time.ts";
+import { firstNameOf, leadCardId, leadMessage, listingPriceText, publicListingUrl, waUrlFor, type LeadInput } from "./automatch-leads.ts";
 import type { Env } from "./env.ts";
-import { isUsd } from "./fx.ts";
+import { isUsd, shortMoney, ttdValue } from "./fx.ts";
 import { phoneLabel, telHref } from "./listing-contact.ts";
 import { shortListingTitle } from "./listing-title.ts";
 import type { StatusRow } from "./match-status.ts";
@@ -20,10 +21,12 @@ import type { StatusRow } from "./match-status.ts";
  * (default Miles). The BCC list is for the transport only: it must not appear in the From, To, Cc, Subject, or body
  * that agents see.
  *
- * Per alert: a soft mention of when a contact brought the property up on WhatsApp (relative day and the time in AST — never
- * the group name or the original message text), the listing, the suggested message, the contact's tap-to-call number next
- * to the wa.me link (omitted when there is no usable number), the "hot or live match" line, and a line asking the recipient
- * to reply so admin can record how it went. The body never links to the Desk or to bop.1on1realtors.com.
+ * Per alert, in order: an opening line (the posted day and time in AST, "Based on a message received on WhatsApp on Tuesday 10
+ * Nov at 5:30 PM AST …"), the older-lead heads-up when it applies, a Contact block (the sender's name, the tap-to-call number,
+ * when it was received, and the contact's own WhatsApp message quoted exactly), the match (listing, price, a plain-words fit
+ * line, a generic caveat when the message names an extra need, and a link to the public listing), and an optional suggested
+ * reply with the public link, the tap-to-call number and the wa.me link. The group name is never in the input or the body, and
+ * the body never links to the Desk or to bop.1on1realtors.com: only a public 1on1realtors.com listing is linked.
  *
  * Portable: no node:*, no next, no bare process.
  */
@@ -98,6 +101,7 @@ export const BASELINE_CONFIRM = "SEND-BASELINE";
 
 const NO_PRICE = "no price listed";
 const NO_LINK = "no link on file";
+export const NO_MESSAGE_TEXT = "No message text is on file for this ask, so there is nothing to quote.";
 const NOTE_USD = "this ask was in US$; the TT$ figure is the fixed-rate equivalent.";
 
 export type AlertInput = LeadInput & {
@@ -128,7 +132,6 @@ export type AutoMatchAlert = {
   tel: string | null;
   waUrl: string | null;
   deskUrl: string;
-  mentioned: string;
   message: string;
   /** Calendar days in AST from when the request was posted, or null when the time is unreadable. */
   ageDays: number | null;
@@ -365,11 +368,80 @@ function fromLine(fromName: string, fromEmail: string | null): string {
   return fromEmail ? `${fromName} <${fromEmail}>` : fromName;
 }
 
-function introOf(toName: string): { hello: string; body: string } {
+/** "Hi Dana," or "Hi," (the office, or no usable first name). */
+function helloOf(toName: string): string {
   const first = firstNameOf(toName === OFFICE_NAME ? null : toName);
-  const hello = first ? `Hi ${first},` : "Hi,";
-  return { hello, body: "Here is a strong match for a listing you hold." };
+  return first ? `Hi ${first},` : "Hi,";
 }
+
+/** The opening paragraph: the posted day and time in AST when both are readable, else the same sentence without them. */
+export function openingLine(postedIso: string): string {
+  const day = longDateAst(postedIso);
+  const time = timeAst12(postedIso);
+  const when = day && time ? ` on ${day} at ${time}` : "";
+  return `Based on a message received on WhatsApp${when}, we believe this property that you are holding is a strong match. Please see the message below.`;
+}
+
+/** The sender's display name, or null when it is missing or has no letters (a phone number is not a name). */
+export function visibleName(name: string | null | undefined): string | null {
+  const n = (name ?? "").trim();
+  return /\p{L}/u.test(n) ? n : null;
+}
+
+const NUM_WORD = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/**
+ * The plain-words reasons a listing fits the ask, from the parsed fields and the score's reason: the area (same, or nearby with the
+ * drive or neighbour wording from the reason), the beds (the same, or one off), and the price against the budget in TT$ (a USD side
+ * uses the fixed rate, or the CRM's TT$ equivalent for a USD listing). Pure.
+ */
+export function fitClauses(r: LeadInput): string[] {
+  const a = r.ask;
+  const l = r.listing;
+  const out: string[] = [];
+  const askArea = (a.area ?? "").trim().toLowerCase();
+  const listingArea = (l.area ?? "").trim();
+  if (askArea && listingArea) {
+    if (listingArea.toLowerCase() === askArea) out.push(`it's in ${listingArea}, the area they asked for`);
+    else if (/near|drive|neighbou?r/i.test(r.reason)) {
+      const drive = r.reason.match(/~?\d+ min drive/i)?.[0];
+      out.push(`it's nearby in ${listingArea}${drive ? `, ${drive} from the area they asked for` : ", next to the area they asked for"}`);
+    }
+  }
+  if (a.beds != null && l.beds != null) {
+    if (l.beds === a.beds) out.push(`it has the ${NUM_WORD(a.beds, "bedroom")} they asked for`);
+    else if (Math.abs(l.beds - a.beds) === 1) out.push(`it has ${NUM_WORD(l.beds, "bedroom")}, one ${l.beds > a.beds ? "more" : "fewer"} than the ${a.beds} they asked for`);
+  }
+  if (a.budget != null && l.price) {
+    const rent = a.listingType === "rent" ? " a month" : "";
+    const budget = ttdValue(a.budget, a.currency);
+    const price = isUsd(l.currency) ? (l.ttdEquiv || ttdValue(l.price, l.currency)) : l.price;
+    const delta = budget - price;
+    if (Math.abs(delta) < 1) out.push("it's right at their budget");
+    else out.push(`it's ${shortMoney(Math.abs(delta), "TTD")}${rent} ${delta > 0 ? "under" : "over"} their budget`);
+  }
+  return out;
+}
+
+/** The recommendation: one sentence, "This is a strong fit: …", built from fitClauses. Pure. */
+export function matchFitText(r: LeadInput): string {
+  const lead = bandOf(r.score) === "strong" ? "This is a strong fit" : "This could be a fit";
+  const clauses = fitClauses(r);
+  return clauses.length ? `${lead}: ${clauses.join("; ")}.` : `${lead}.`;
+}
+
+/** Words that name an extra need the score does not check (pets, office, parking, furnished, pool, garden, and similar). */
+const EXTRA_NEEDS = /\b(pets?|dogs?|cats?|office|study|work from home|wfh|parking|car ?park|garage|carport|furnished|unfurnished|pool|garden|yard|gym|balcony|generator|solar|backup|storage|security|gated|fenced)\b/i;
+
+/**
+ * The generic caveat when the contact's own words name an extra need, else null. It never names the extra: the message quote shows
+ * what they asked for. Pure.
+ */
+export function extraNeedsCaveat(originalText: string | null | undefined): string | null {
+  const text = (originalText ?? "").trim();
+  return text && EXTRA_NEEDS.test(text) ? "Check the ask's extra needs before you call." : null;
+}
+
 
 function recipient(r: AlertInput, office: string): { to: string; toName: string } {
   if (r.listing.agentId == null) return { to: office, toName: OFFICE_NAME };
@@ -391,21 +463,34 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
   const tel = telHref(r.ask.senderPhone);
   const waUrl = waUrlFor(r.ask.senderPhone, message);
   const deskUrl = `${o.baseUrl}/realty/desk#${leadCardId(requestId, r.listingKey)}`;
-  const mentioned = mentionedOnWhatsApp(postedOf(r), o.now);
-  const ageDays = requestAgeDays(postedOf(r), o.now);
+  const posted = postedOf(r);
+  const ageDays = requestAgeDays(posted, o.now);
   const aged = isAgedLead(ageDays, { oneShot: o.oneShot });
   const fromName = o.fromName ?? ALERT_NAME;
   const fromEmail = o.fromEmail ?? null;
   const { to, toName } = recipient(r, o.officeEmail ?? OFFICE_TO);
   const subject = alertSubject(r, { test: o.test, used: o.usedSubjects, aged });
   const listingTitle = shortListingTitle(r.listing);
-  const listing = { title: listingTitle, price: listingPriceText(r.listing, r.ask.listingType), url: r.listing.url };
-  const ask = askLine(r.ask);
-  const usd = isUsd(r.ask.currency);
   const cc = [...(o.cc ?? parseAddressList(ALERT_CC_DEFAULT))];
   const bcc = [...(o.bcc ?? parseAddressList(ALERT_BCC_DEFAULT))];
   const agedLine = (aged || o.oneShot) && ageDays != null ? agedLeadLine(ageDays, { oneShot: o.oneShot }) : null;
-  const view = { toName, mentioned, agedLine, listing, ask, usd, score: r.score, message, phoneText, tel, waUrl };
+  const view: RenderView = {
+    hello: helloOf(toName),
+    opening: openingLine(posted),
+    agedLine,
+    senderName: visibleName(r.ask.senderName),
+    phoneText,
+    tel,
+    received: shortDateTimeAst(posted),
+    originalText: (r.ask.originalText ?? "").trim(),
+    listing: { title: listingTitle, price: listingPriceText(r.listing, r.ask.listingType) },
+    usd: isUsd(r.ask.currency),
+    fit: matchFitText(r),
+    caveat: extraNeedsCaveat(r.ask.originalText),
+    publicUrl: publicListingUrl(r.listing.url),
+    message,
+    waUrl,
+  };
   return {
     to,
     toName,
@@ -423,7 +508,6 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
     tel,
     waUrl,
     deskUrl,
-    mentioned,
     message,
     ageDays,
     listingTitle,
@@ -440,73 +524,97 @@ export function buildAutoMatchAlerts(rows: readonly AlertInput[], o: AlertBuildO
 }
 
 type RenderView = {
-  toName: string;
-  mentioned: string;
+  hello: string;
+  opening: string;
   agedLine: string | null;
-  listing: { title: string; price: string | null; url: string | null };
-  ask: string;
-  usd: boolean;
-  score: number;
-  message: string;
+  senderName: string | null;
   phoneText: string | null;
   tel: string | null;
+  /** The posted time, e.g. "Tue 10 Nov, 5:30 PM AST", or "" when unreadable. */
+  received: string;
+  /** The contact's message, trimmed; "" when none is on file. */
+  originalText: string;
+  listing: { title: string; price: string | null };
+  usd: boolean;
+  fit: string;
+  caveat: string | null;
+  /** The public 1on1realtors.com listing link, or null. */
+  publicUrl: string | null;
+  /** The suggested reply (leadMessage), with the public link inside it when there is one. */
+  message: string;
   waUrl: string | null;
 };
 
+const quoteText = (s: string): string => `“${s}”`;
+
+/** The suggested reply split around its public link, so the link can sit on a line of its own. Null when there is no link to split on. */
+function replyParts(message: string, url: string | null): { before: string; after: string } | null {
+  if (!url) return null;
+  const at = message.indexOf(url);
+  if (at < 0) return null;
+  return {
+    before: message.slice(0, at).replace(/[:\s]+$/, ":").trim(),
+    after: message.slice(at + url.length).replace(/^[.\s]+/, "").trim(),
+  };
+}
+
 function renderText(v: RenderView): string {
-  const { hello, body } = introOf(v.toName);
-  const out: string[] = [hello, "", body, ""];
+  const out: string[] = [v.hello, "", v.opening, ""];
   if (v.agedLine) out.push(v.agedLine, "");
-  if (v.mentioned) out.push(v.mentioned, "");
-  out.push(v.listing.title, "");
-  out.push(`Price: ${v.listing.price ?? NO_PRICE}`);
-  out.push(`Ask: ${v.ask}`);
+  out.push("Contact");
+  if (v.senderName) out.push(`Name: ${v.senderName}`);
+  if (v.phoneText) out.push(`Phone: ${v.phoneText}`);
+  if (v.received) out.push(`Received: ${v.received}`);
+  out.push("Their WhatsApp message:", v.originalText ? quoteText(v.originalText) : NO_MESSAGE_TEXT, "");
+  out.push("The match", `${v.listing.title} · ${v.listing.price ?? NO_PRICE}`);
   if (v.usd) out.push(`Note: ${NOTE_USD}`);
-  out.push(`Listing: ${v.listing.url ?? NO_LINK}`);
-  out.push(`Score: ${v.score}`);
-  out.push("");
-  out.push("Suggested message:");
-  out.push(v.message);
-  out.push("");
+  out.push(v.fit);
+  if (v.caveat) out.push(v.caveat);
+  if (v.publicUrl) out.push("View the property:", v.publicUrl);
+  else out.push(`View the property: ${NO_LINK}.`);
+  out.push("", "Suggested reply (optional)");
+  const parts = replyParts(v.message, v.publicUrl);
+  if (parts && v.publicUrl) out.push(parts.before, v.publicUrl, parts.after);
+  else out.push(v.message);
   if (v.phoneText && v.tel) out.push(`Call: ${v.phoneText} (${v.tel})`);
   if (v.waUrl) out.push(WA_LABEL, v.waUrl);
   else out.push(NO_WA);
-  out.push("");
-  out.push(HOT_MATCH_LINE);
-  out.push("");
-  out.push(REPLY_LINE);
-  out.push("");
+  out.push("", REPLY_LINE, "");
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
 
 function renderHtml(v: RenderView): string {
   const e = escapeHtml;
-  const { hello, body } = introOf(v.toName);
-  const items = [
-    `<li><strong>Price:</strong> ${e(v.listing.price ?? NO_PRICE)}</li>`,
-    `<li><strong>Ask:</strong> ${e(v.ask)}</li>`,
-    v.usd ? `<li><strong>Note:</strong> ${e(NOTE_USD)}</li>` : "",
-    `<li><strong>Listing:</strong> ${v.listing.url ? `<a href="${e(v.listing.url)}">${e(v.listing.url)}</a>` : e(NO_LINK)}</li>`,
-    `<li><strong>Score:</strong> ${v.score}</li>`,
-  ].join("");
-  const call =
-    v.phoneText && v.tel
-      ? `<p>Call: <a href="${e(v.tel)}">${e(v.phoneText)}</a> (${e(v.tel)})</p>`
-      : "";
-  const wa = v.waUrl ? `<p>${e(WA_LABEL)} <a href="${e(v.waUrl)}">here</a></p>` : `<p>${e(NO_WA)}</p>`;
+  const br = (s: string): string => e(s).split("\n").join("<br>");
+  const parts = replyParts(v.message, v.publicUrl);
+  const reply =
+    parts && v.publicUrl
+      ? `<p>${e(parts.before)} <a href="${e(v.publicUrl)}">here</a><br>${e(parts.after)}</p>`
+      : `<p>${e(v.message)}</p>`;
   return [
     "<!doctype html>",
     "<html><body>",
-    `<p>${e(hello)}</p>`,
-    `<p>${e(body)}</p>`,
+    `<p>${e(v.hello)}</p>`,
+    `<p>${e(v.opening)}</p>`,
     v.agedLine ? `<p>${e(v.agedLine)}</p>` : "",
-    v.mentioned ? `<p>${e(v.mentioned)}</p>` : "",
-    `<p><strong>${e(v.listing.title)}</strong></p>`,
-    `<ul>${items}</ul>`,
-    `<p><strong>Suggested message:</strong><br>${e(v.message)}</p>`,
-    call,
-    wa,
-    `<p>${e(HOT_MATCH_LINE)}</p>`,
+    "<h3>Contact</h3>",
+    v.senderName ? `<p>Name: ${e(v.senderName)}</p>` : "",
+    v.phoneText && v.tel ? `<p>Phone: <a href="${e(v.tel)}">${e(v.phoneText)}</a></p>` : "",
+    v.received ? `<p>Received: ${e(v.received)}</p>` : "",
+    "<p>Their WhatsApp message:</p>",
+    `<p>${v.originalText ? br(quoteText(v.originalText)) : e(NO_MESSAGE_TEXT)}</p>`,
+    "<h3>The match</h3>",
+    `<p><strong>${e(v.listing.title)}</strong> · ${e(v.listing.price ?? NO_PRICE)}</p>`,
+    v.usd ? `<p>${e(`Note: ${NOTE_USD}`)}</p>` : "",
+    `<p>${e(v.fit)}</p>`,
+    v.caveat ? `<p>${e(v.caveat)}</p>` : "",
+    v.publicUrl
+      ? `<p>View the property: <a href="${e(v.publicUrl)}">here</a></p>`
+      : `<p>${e(`View the property: ${NO_LINK}.`)}</p>`,
+    "<h3>Suggested reply (optional)</h3>",
+    reply,
+    v.phoneText && v.tel ? `<p>Call: <a href="${e(v.tel)}">${e(v.phoneText)}</a> (${e(v.tel)})</p>` : "",
+    v.waUrl ? `<p>${e(WA_LABEL)} <a href="${e(v.waUrl)}">here</a></p>` : `<p>${e(NO_WA)}</p>`,
     `<p>${e(REPLY_LINE)}</p>`,
     "</body></html>",
   ]
@@ -671,6 +779,7 @@ export function buildTestAutoMatchAlert(now: Date, o: { baseUrl?: string; fromNa
       senderName: "Alex Tester",
       firm: "Example Realty Co",
       senderPhone: "+18685550100",
+      originalText: "Need a 3 bed townhouse in Maraval, budget 2.5m, parking please.",
     },
     listing: {
       title: "Sample Townhouse, Maraval",

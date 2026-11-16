@@ -45,6 +45,10 @@ import {
   alertSubject,
   alertTextFromHtml,
   escapeHtml,
+  extraNeedsCaveat,
+  fitClauses,
+  matchFitText,
+  openingLine,
   buildAutoMatchAlert,
   buildAutoMatchAlerts,
   flipReport,
@@ -52,13 +56,14 @@ import {
   parseAlertArgs,
   planAlertDispatch,
 } from "../flow/automatch-alert.ts";
-import { mentionedOnWhatsApp, relativeDayAst, timeAst12 } from "../flow/ast-time.ts";
-import { leadMessage, type LeadInput } from "../flow/automatch-leads.ts";
+import { longDateAst, mentionedOnWhatsApp, relativeDayAst, shortDateTimeAst, timeAst12 } from "../flow/ast-time.ts";
+import { leadMessage, publicListingUrl, type LeadInput } from "../flow/automatch-leads.ts";
 import type { StatusRow } from "../flow/match-status.ts";
 
 /**
- * 1on1 Auto-Match Alert: the subject, the from name, the soft WhatsApp mention, the tap-to-call number, the hot-match
- * line, and that "Bops", the group name and the original message text never appear. Invented people and 555 numbers only.
+ * 1on1 Auto-Match Alert: the subject, the from name, the opening line, the contact block with the quoted WhatsApp message,
+ * the match and its public link, the suggested reply, and that "Bops", "Periskope", the group name and any Desk or bop link never
+ * appear. Invented people and 555 numbers only.
  */
 
 const NOW = new Date("2026-11-15T20:00:00.000Z"); // 4:00 PM AST on Sun 15 Nov
@@ -108,8 +113,8 @@ const ROW = (over: Partial<LeadInput> = {}, ask: Partial<LeadInput["ask"]> = {},
 const BASE_OPTS = { statuses: [] as StatusRow[], baseUrl: BASE, now: NOW };
 
 const wordsOf = (s: string): string => s.replace(/\s+/g, " ").trim();
-/** The text body with its wa.me URL read as the HTML link word, 'here'. */
-const linkAsHere = (text: string, url: string | null): string => (url ? text.replace(url, "here") : text);
+/** The text body with every public listing link and the wa.me link read as the HTML link word, 'here'. */
+const linkAsHere = (text: string): string => text.replace(/https:\/\/(?:www\.)?1on1realtors\.com\/\S+/g, "here").replace(/https:\/\/wa\.me\/\S+/g, "here");
 
 test("the default From display name is 1on1 Auto-Match Alert, not 1on1 Bops, and Miles is one switch", () => {
   assert.equal(ALERT_NAME, "1on1 Auto-Match Alert");
@@ -247,7 +252,7 @@ test("a request older than 14 calendar days in AST gets an older-lead line and s
   const agedLine = agedLeadLine(32);
   assert.ok(aged.text.includes(agedLine));
   assert.ok(aged.html.includes(escapeHtml(agedLine)));
-  assert.match(aged.text, /A contact mentioned this property on WhatsApp on Wed 14 Oct at 2:15 PM AST/);
+  assert.match(aged.text, /Based on a message received on WhatsApp on Wednesday 14 Oct at 2:15 PM AST, we believe/);
   assert.doesNotMatch(`${aged.from}\n${aged.subject}\n${aged.text}\n${aged.html}`, /Bops|bop\.1on1realtors\.com|\/realty\/desk/i);
   const testAged = buildTestAutoMatchAlert(NOW, { baseUrl: BASE, agedDays: 32 });
   assert.equal(testAged.to, TEST_ALERT_TO);
@@ -255,7 +260,7 @@ test("a request older than 14 calendar days in AST gets an older-lead line and s
   assert.match(testAged.text, /from 32 days ago/);
   assert.deepEqual(testAged.cc, []);
   assert.deepEqual(testAged.bcc, []);
-  assert.equal(wordsOf(linkAsHere(aged.text, aged.waUrl)), wordsOf(alertTextFromHtml(aged.html)));
+  assert.equal(wordsOf(linkAsHere(aged.text)), wordsOf(alertTextFromHtml(aged.html)));
 });
 
 test("every alert gets a unique subject so Gmail will not thread them together", () => {
@@ -275,31 +280,150 @@ test("every alert gets a unique subject so Gmail will not thread them together",
   assert.equal(new Set(subjects).size, subjects.length, subjects.join(" | "));
 });
 
-test("the soft mention uses earlier today, yesterday, or on Fri 13 Nov, and never the group name or the raw text", () => {
+test("the opening says when the message was received: the long weekday, the calendar date and the AST time, and no soft mention", () => {
   assert.equal(timeAst12("2026-11-15T18:15:00.000Z"), "2:15 PM AST");
-  assert.equal(relativeDayAst("2026-11-15T18:15:00.000Z", NOW), "earlier today");
-  assert.equal(relativeDayAst("2026-11-14T18:15:00.000Z", NOW), "yesterday");
-  assert.equal(relativeDayAst("2026-11-13T18:15:00.000Z", NOW), "on Fri 13 Nov");
+  assert.equal(longDateAst("2026-11-10T21:30:00.000Z"), "Tuesday 10 Nov");
+  assert.equal(shortDateTimeAst("2026-11-10T21:30:00.000Z"), "Tue 10 Nov, 5:30 PM AST");
   assert.equal(
     mentionedOnWhatsApp("2026-11-15T18:15:00.000Z", NOW),
     "A contact mentioned this property on WhatsApp earlier today at 2:15 PM AST.",
+    "the old helper stays for other callers, even though the alert no longer uses it",
   );
-  const a = buildAutoMatchAlert(ROW(), BASE_OPTS);
-  assert.equal(a.mentioned, "A contact mentioned this property on WhatsApp earlier today at 2:15 PM AST.");
-  assert.match(a.text, /A contact mentioned this property on WhatsApp earlier today at 2:15 PM AST\./);
-  assert.match(a.html, /A contact mentioned this property on WhatsApp earlier today at 2:15 PM AST\./);
-  const y = buildAutoMatchAlert(ROW({}, { postedAt: "2026-11-14T18:15:00.000Z", lastSeenAt: "2026-11-14T18:15:00.000Z" }), BASE_OPTS);
-  assert.match(y.text, /on WhatsApp yesterday at 2:15 PM AST/);
-  const older = buildAutoMatchAlert(ROW({}, { postedAt: "2026-11-13T18:15:00.000Z", lastSeenAt: "2026-11-13T18:15:00.000Z" }), BASE_OPTS);
-  assert.match(older.text, /on WhatsApp on Fri 13 Nov at 2:15 PM AST/);
+  const a = buildAutoMatchAlert(ROW({}, { postedAt: "2026-11-10T21:30:00.000Z", lastSeenAt: "2026-11-10T21:30:00.000Z" }), BASE_OPTS);
+  const opening = "Based on a message received on WhatsApp on Tuesday 10 Nov at 5:30 PM AST, we believe this property that you are holding is a strong match. Please see the message below.";
+  assert.equal(a.text.split("\n").slice(0, 3).join("\n"), `Hi Dana,\n\n${opening}`);
+  assert.ok(a.html.includes(`<p>${escapeHtml(opening)}</p>`));
+  assert.equal(openingLine("2026-11-10T21:30:00.000Z"), opening);
+  assert.doesNotMatch(`${a.text}\n${a.html}`, /A contact mentioned|earlier today|yesterday|Here is a strong match for a listing you hold|Heads up: this request is from 0/);
+  const blind = buildAutoMatchAlert(ROW({}, { postedAt: "not a time", lastSeenAt: "not a time" }), BASE_OPTS);
+  assert.ok(blind.text.includes("Based on a message received on WhatsApp, we believe this property that you are holding is a strong match. Please see the message below."));
+  assert.doesNotMatch(blind.text, /\bAST\b|Received:/, "no invented time");
+  assert.equal(blind.ageDays, null);
+  const office = buildAutoMatchAlert(ROW({}, {}, { agentId: null, agentName: null }), BASE_OPTS);
+  assert.match(office.text, /^Hi,\n\nBased on a message received on WhatsApp on Sunday 15 Nov at 2:15 PM AST/);
+});
 
-  const groupy = buildAutoMatchAlert(ROW(), BASE_OPTS);
-  const forbidden = /Area Registered Agents|original (message|text)|group scanning|the group "|\bWhatsApp group\b/i;
-  assert.doesNotMatch(groupy.subject, forbidden);
-  assert.doesNotMatch(groupy.from, forbidden);
-  assert.doesNotMatch(groupy.text, forbidden);
-  assert.doesNotMatch(groupy.html, forbidden);
-  assert.doesNotMatch(groupy.text, /Looking for a 3 bed in Maraval ASAP/i, "raw posted text is not in the body");
+test("the contact block: the name, the phone as a tel: link, when it was received, and the exact quoted message (trimmed only)", () => {
+  const a = buildAutoMatchAlert(ROW({}, { originalText: "  Need a 3 bed townhouse in Maraval,\n budget 2.5m  " }), BASE_OPTS);
+  assert.ok(a.text.includes("Contact\nName: Dana Tester\nPhone: +1 868 555 0100\nReceived: Sun 15 Nov, 2:15 PM AST\nTheir WhatsApp message:\n“Need a 3 bed townhouse in Maraval,\n budget 2.5m”\n"));
+  assert.ok(a.html.includes("<p>Phone: <a href=\"tel:+18685550100\">+1 868 555 0100</a></p>"));
+  assert.ok(a.html.includes("<p>“Need a 3 bed townhouse in Maraval,<br> budget 2.5m”</p>"));
+  const noName = buildAutoMatchAlert(ROW({}, { senderName: "+1 868 555 0100", originalText: "3 bed" }), BASE_OPTS);
+  assert.doesNotMatch(noName.text, /Name:/, "a phone number is not shown as a name");
+  assert.doesNotMatch(noName.html, /Name:/);
+  const noText = buildAutoMatchAlert(ROW({}, { originalText: null }), BASE_OPTS);
+  assert.ok(noText.text.includes("Their WhatsApp message:\nNo message text is on file for this ask, so there is nothing to quote.\n"));
+  assert.ok(noText.html.includes("No message text is on file for this ask, so there is nothing to quote."));
+  assert.doesNotMatch(noText.text, /“/, "no quote is invented");
+  const blankText = buildAutoMatchAlert(ROW({}, { originalText: "   " }), BASE_OPTS);
+  assert.ok(blankText.text.includes("No message text is on file"));
+});
+
+test("the match block: title and price on one line, a plain fit line, a generic caveat only when the message names an extra need, and the public link", () => {
+  const plain = buildAutoMatchAlert(ROW({}, { originalText: "3 bed townhouse in Maraval, budget 4.3m" }), BASE_OPTS);
+  assert.ok(plain.text.includes("The match\nThird Urban, Maraval, 3-bed townhouse · TT$3.7m\nThis is a strong fit: it's in Maraval, the area they asked for; it has the 3 bedrooms they asked for; it's TT$600k under their budget.\n"));
+  assert.doesNotMatch(plain.text, /extra needs/, "no caveat when the message names no extra need");
+  assert.ok(plain.text.includes("View the property:\nhttps://1on1realtors.com/property/third-urban\n"));
+  assert.ok(plain.html.includes(`<p>View the property: <a href="${URL_A}">here</a></p>`));
+  const extras = buildAutoMatchAlert(ROW({}, { originalText: "Need 3 bed townhouse in Maraval with parking for two, pets ok" }), BASE_OPTS);
+  assert.ok(extras.text.includes("Check the ask's extra needs before you call.\n"));
+  assert.ok(extras.html.includes("<p>Check the ask&#39;s extra needs before you call.</p>"));
+  const caveatLine = extras.text.split("\n").filter((l) => l.startsWith("Check the ask"));
+  assert.deepEqual(caveatLine, ["Check the ask's extra needs before you call."], "the caveat is the generic line, naming no extra");
+  const bare = buildAutoMatchAlert(ROW({}, { originalText: null }), BASE_OPTS);
+  assert.doesNotMatch(bare.text, /extra needs/, "no message text, so no caveat");
+  const noLink = buildAutoMatchAlert(ROW({}, {}, { url: "https://bop.1on1realtors.com/property/third-urban" }), BASE_OPTS);
+  assert.ok(noLink.text.includes("View the property: no link on file."));
+  assert.ok(noLink.html.includes("<p>View the property: no link on file.</p>"));
+  assert.doesNotMatch(`${noLink.text}\n${noLink.html}\n${noLink.message}\n${noLink.waUrl ?? ""}`, /bop\.1on1realtors\.com/);
+});
+
+test("the public listing link is in the email twice: 'View the property' and the suggested reply; HTML shows 'here', text and the wa.me text carry the raw URL", () => {
+  const a = buildAutoMatchAlert(ROW({}, { originalText: "3 bed townhouse in Maraval" }), BASE_OPTS);
+  const count = (s: string, sub: string): number => s.split(sub).length - 1;
+  assert.equal(count(a.text, URL_A), 2, "text: the view line and the reply line");
+  assert.equal(count(a.html, `href="${URL_A}"`), 2, "html: two links");
+  assert.equal(count(a.html, `>${URL_A}<`), 0, "html: the raw URL is never the visible text");
+  assert.equal(count(a.html, ">here</a>"), 3, "html: here for the view link, the reply's link, and the wa.me link");
+  assert.match(a.text, new RegExp(`View the property:\\n${URL_A}\\n`));
+  assert.match(a.text, new RegExp(`\\n${URL_A}\\nHappy to set up a viewing\\.`), "the reply's link is on its own line in text");
+  const payload = decodeURIComponent(a.waUrl?.split("?text=")[1] ?? "");
+  assert.equal(payload, a.message);
+  assert.ok(payload.includes(URL_A), "the wa.me text keeps the full public URL, since WhatsApp cannot link a word");
+  assert.doesNotMatch(payload, /\bhere\b/, "the word 'here' is only the HTML display");
+  assert.ok(a.message.includes(URL_A));
+});
+
+test("no Bops, Periskope, group name, bop host or Desk link anywhere in from, subject, text or html, even with a quoted message and the production base URL", () => {
+  const forbidden = /Bops|Periskope|\bgroups?\b|bop\.1on1realtors\.com|\/realty\/desk|Outcome:|Record how it went on the Desk|view on the Desk|\blog in\b/i;
+  const withText = { originalText: "Need a 3 bed townhouse in Maraval, budget 2.5m, parking please." };
+  const cases = [
+    buildAutoMatchAlert(ROW({}, withText), { ...BASE_OPTS, baseUrl: "https://bop.1on1realtors.com" }),
+    buildAutoMatchAlert(ROW({}, { originalText: null }), { ...BASE_OPTS, baseUrl: "https://bop.1on1realtors.com" }),
+    buildAutoMatchAlert(ROW({}, { ...withText, senderPhone: "" }, { agentId: null, agentName: null }), { ...BASE_OPTS, baseUrl: "https://bop.1on1realtors.com", oneShot: true }),
+    buildTestAutoMatchAlert(NOW, { baseUrl: "https://bop.1on1realtors.com", agedDays: 32 }),
+  ];
+  for (const a of cases) {
+    const rendered = `${a.from}\n${a.subject}\n${a.text}\n${a.html}`;
+    assert.doesNotMatch(rendered, forbidden, a.subject);
+  }
+});
+
+test("the suggested reply names no type or area the contact did not say: 'a 3 bedroom' when the type is unknown, and no area the message does not name", () => {
+  const typeless = buildAutoMatchAlert(ROW({}, { type: null, area: "Maraval", originalText: "Looking for 3 bedrooms, pool a bonus" }), BASE_OPTS);
+  assert.ok(typeless.message.startsWith("Hi Dana, I hear you have a client looking for a 3 bedroom around TT$4.3m. I have "), typeless.message);
+  assert.doesNotMatch(typeless.message.split(". I have ")[0], /townhouse|Maraval|bed townhouse|-bed/i);
+  assert.doesNotMatch(typeless.text, /a 3 bed townhouse in Maraval/);
+  const unsaid = buildAutoMatchAlert(ROW({}, { area: "Maraval", type: "townhouse", originalText: "3 bed house, something near Cascade" }), BASE_OPTS);
+  assert.ok(unsaid.message.startsWith("Hi Dana, I hear you have a client looking for a 3 bedroom around TT$4.3m. I have "), unsaid.message);
+  const several = buildAutoMatchAlert(ROW({}, { originalText: "3 bed townhouse preferably Maraval but open to Cascade" }), BASE_OPTS);
+  assert.ok(several.message.startsWith("Hi Dana, I hear you have a client looking for a 3 bed townhouse around TT$4.3m. I have "), several.message);
+  assert.doesNotMatch(several.message.split(". I have ")[0], /in Maraval/);
+});
+
+test("the pure fit line: area (same or nearby), beds (same or one off), the TT$ budget gap (under, over, USD, rent), and the strong opening", () => {
+  const under = "This is a strong fit: it's in Maraval, the area they asked for; it has the 3 bedrooms they asked for; it's TT$600k under their budget.";
+  assert.equal(matchFitText(ROW()), under);
+  assert.equal(matchFitText(ROW({}, {}, { price: 4_500_000 })), "This is a strong fit: it's in Maraval, the area they asked for; it has the 3 bedrooms they asked for; it's TT$200k over their budget.");
+  assert.equal(matchFitText(ROW({}, { currency: "USD", budget: 650_000 })), "This is a strong fit: it's in Maraval, the area they asked for; it has the 3 bedrooms they asked for; it's TT$707k under their budget.", "a USD ask compares in TT$ at the fixed rate");
+  assert.equal(matchFitText(ROW({}, {}, { beds: 4 })), "This is a strong fit: it's in Maraval, the area they asked for; it has 4 bedrooms, one more than the 3 they asked for; it's TT$600k under their budget.");
+  assert.equal(matchFitText(ROW({}, {}, { beds: 2 })), "This is a strong fit: it's in Maraval, the area they asked for; it has 2 bedrooms, one fewer than the 3 they asked for; it's TT$600k under their budget.");
+  assert.equal(matchFitText(ROW({}, {}, { beds: 5 })), "This is a strong fit: it's in Maraval, the area they asked for; it's TT$600k under their budget.", "two off is not said");
+  assert.equal(matchFitText(ROW({ reason: "Nearby (Glencoe, ~9 min drive), 3 bed" }, { area: "Maraval" }, { area: "Glencoe" })), "This is a strong fit: it's nearby in Glencoe, ~9 min drive from the area they asked for; it has the 3 bedrooms they asked for; it's TT$600k under their budget.");
+  assert.equal(matchFitText(ROW({ reason: "Neighbour of Maraval, 3 bed" }, { area: "Maraval" }, { area: "Cascade" })).includes("next to the area they asked for"), true);
+  assert.equal(matchFitText(ROW({}, {}, { price: 4_300_000 })).includes("it's right at their budget"), true);
+  assert.equal(matchFitText(ROW({}, { listingType: "rent", budget: 9000, currency: "TTD" }, { price: 8000 })).includes("it's TT$1,000 a month under their budget."), true);
+  assert.equal(matchFitText(ROW({ score: 60 })).startsWith("This could be a fit: "), true);
+  assert.deepEqual(fitClauses(ROW({}, { area: "", beds: null, budget: null }, { area: null, beds: null, price: null })), []);
+  assert.equal(matchFitText(ROW({}, { area: "", beds: null, budget: null }, { area: null, beds: null, price: null })), "This is a strong fit.");
+});
+
+test("the extra-needs caveat is generic, only when the message names an extra, and never names it", () => {
+  assert.equal(extraNeedsCaveat("3 bed townhouse in Maraval"), null);
+  assert.equal(extraNeedsCaveat(null), null);
+  assert.equal(extraNeedsCaveat("   "), null);
+  for (const extra of ["Need a home office", "pets allowed?", "parking for two", "furnished please", "a pool", "garden", "a gym"]) {
+    assert.equal(extraNeedsCaveat(`3 bed townhouse, ${extra}`), "Check the ask's extra needs before you call.", extra);
+  }
+});
+
+test("publicListingUrl accepts only http(s) on 1on1realtors.com or www.1on1realtors.com, and gives null for anything else", () => {
+  assert.equal(publicListingUrl("https://1on1realtors.com/property/x"), "https://1on1realtors.com/property/x");
+  assert.equal(publicListingUrl("http://www.1on1realtors.com/property/x"), "http://www.1on1realtors.com/property/x");
+  assert.equal(publicListingUrl("  https://1on1realtors.com/property/x  "), "https://1on1realtors.com/property/x");
+  for (const bad of [null, undefined, "", "   ", "https://bop.1on1realtors.com/property/x", "https://bop.1on1realtors.com/realty/desk", "https://1on1realtors.com.evil.example/x", "https://evil.example/1on1realtors.com", "javascript:alert(1)", "ftp://1on1realtors.com/x", "https://user:pw@1on1realtors.com/x", "1on1realtors.com/property/x"]) {
+    assert.equal(publicListingUrl(bad as string), null, String(bad));
+  }
+});
+
+test("the subject, from, reply-to and the footer are unchanged, and the body has no other 'hot match' or 'Here is a strong match' copy", () => {
+  const a = buildAutoMatchAlert(ROW({}, { originalText: "3 bed townhouse in Maraval" }), { ...BASE_OPTS, fromName: ALERT_NAME, fromEmail: "alerts@1on1realtors.com" });
+  assert.equal(a.subject, "1on1 Auto-Match Alert: townhouse · 3 bed · Maraval · TT$3.7M");
+  assert.equal(a.from, "1on1 Auto-Match Alert <alerts@1on1realtors.com>");
+  assert.ok(a.text.endsWith("Reply to this email to let admin know how it went.\n"));
+  assert.ok(a.html.includes("<p>Reply to this email to let admin know how it went.</p>"));
+  assert.doesNotMatch(`${a.text}\n${a.html}`, /hot or live match|Here is a strong match for a listing you hold|A contact mentioned/);
+  assert.equal(HOT_MATCH_LINE.length > 0, true, "the constant stays exported for other callers");
 });
 
 test("the contact's direct number is a readable E.164-style line with a tel: link, next to the wa.me link; no number omits the phone line", () => {
@@ -324,24 +448,6 @@ test("the contact's direct number is a readable E.164-style line with a tel: lin
   assert.match(none.text, /No usable WhatsApp number on this ask, so there's no link\./);
   assert.doesNotMatch(none.text, /wa\.me/);
   assert.doesNotMatch(none.html, /wa\.me/);
-});
-
-test("the hot or live match line, the suggested message, and the reply-to-admin line are in both bodies, with no Desk or outcome links", () => {
-  const a = buildAutoMatchAlert(ROW(), BASE_OPTS);
-  assert.ok(a.text.includes(HOT_MATCH_LINE));
-  assert.ok(a.html.includes(escapeHtml(HOT_MATCH_LINE)));
-  assert.ok(a.text.includes(a.message));
-  assert.ok(a.text.includes(REPLY_LINE));
-  assert.ok(a.html.includes(escapeHtml(REPLY_LINE)));
-  assert.equal(REPLY_LINE, "Reply to this email to let admin know how it went.");
-  assert.doesNotMatch(a.text, /Outcome:|Record how it went on the Desk|view on the Desk|\blog in\b/i);
-  assert.doesNotMatch(a.html, /Outcome:|Record how it went on the Desk|view on the Desk|\blog in\b/i);
-  assert.doesNotMatch(a.text, /bop\.1on1realtors\.com|bop\.example|\/realty\/desk/i);
-  assert.doesNotMatch(a.html, /bop\.1on1realtors\.com|bop\.example|\/realty\/desk/i);
-  assert.match(a.text, /^Hi Dana,\n\nHere is a strong match for a listing you hold\.\n/);
-  const miles = buildAutoMatchAlert(ROW(), { ...BASE_OPTS, asMiles: true, fromName: MILES_FROM_NAME });
-  assert.match(miles.text, /Here is a strong match for a listing you hold\./);
-  assert.doesNotMatch(miles.text, /I'm passing along|Miles/);
 });
 
 test("an unassigned listing, or one with no agent email, goes to the office address", () => {
@@ -375,19 +481,20 @@ test("only strong, not-yet-actioned matches become alerts, one per request and l
   assert.equal(actioned[0].requestId, RID_B);
 });
 
-test("the text and the HTML say the same words (whitespace collapsed), and the HTML stays style-free", () => {
+test("the text and the HTML say the same words once every public listing link and the wa.me link read as 'here', and the HTML stays style-free", () => {
   const cases: LeadInput[][] = [
-    [ROW()],
+    [ROW({}, { originalText: "Need a 3 bed townhouse in Maraval, budget 2.5m, parking please." })],
     [ROW({}, { senderPhone: "" })],
-    [ROW({}, { currency: "USD", budget: 650_000 }, { currency: "USD", price: 650_000 })],
+    [ROW({}, { currency: "USD", budget: 650_000, originalText: "Need 3 bed & pool, <3m budget" }, { currency: "USD", price: 650_000 })],
     [ROW({}, {}, { agentId: null, agentName: null, url: null, price: null })],
-    [ROW({}, { postedAt: "2026-11-13T18:15:00.000Z", lastSeenAt: "2026-11-13T18:15:00.000Z" })],
-    [ROW({}, { postedAt: "2026-10-14T18:15:00.000Z", lastSeenAt: "2026-10-14T18:15:00.000Z" })],
+    [ROW({}, { postedAt: "2026-11-13T18:15:00.000Z", lastSeenAt: "2026-11-13T18:15:00.000Z", originalText: "3 bed\nmultiline ask" })],
+    [ROW({}, { postedAt: "2026-10-14T18:15:00.000Z", lastSeenAt: "2026-10-14T18:15:00.000Z", originalText: null })],
+    [ROW({}, { originalText: "3 bed townhouse in Maraval" }, { url: "https://bop.1on1realtors.com/property/third-urban" })],
   ];
-  const allowed = new Set(["html", "body", "p", "h3", "ul", "li", "a", "br", "strong"]);
+  const allowed = new Set(["html", "body", "p", "h3", "a", "br", "strong"]);
   for (const rows of cases) {
     const a = buildAutoMatchAlert(rows[0], BASE_OPTS);
-    assert.equal(wordsOf(linkAsHere(a.text, a.waUrl)), wordsOf(alertTextFromHtml(a.html)), "the link is 'here' in the HTML and the URL in the text");
+    assert.equal(wordsOf(linkAsHere(a.text)), wordsOf(alertTextFromHtml(a.html)), a.html);
     assert.doesNotMatch(a.html, /\sstyle\s*=|class=|id=/i);
     for (const m of a.html.matchAll(/<\/?([a-z0-9]+)\b([^>]*)>/gi)) {
       assert.ok(allowed.has(m[1].toLowerCase()), m[1]);

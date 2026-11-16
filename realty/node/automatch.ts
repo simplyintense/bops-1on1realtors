@@ -30,6 +30,8 @@ export type AutomatchAskRow = AutomatchAsk & {
   senderPhone: string;
   /** The stored post's id for /realty/posts/[messageId] (requestIdOf), or null. */
   postId: string | null;
+  /** The contact's WhatsApp message as posted (SearchRow.originalText), or null. No group name. */
+  originalText?: string | null;
 };
 
 export type AutomatchRow = {
@@ -153,6 +155,7 @@ function rowOf(p: AutomatchGroup, d: SearchRow | undefined, names: Map<number, s
       firm: d?.firm ?? null,
       senderPhone: d?.senderPhone ?? "",
       postId: d?.messageIds[0] ? requestIdOf(d.messageIds[0]) : null,
+      originalText: d?.originalText ?? null,
     },
     listing: {
       title: p.listing.title || "Listing",
