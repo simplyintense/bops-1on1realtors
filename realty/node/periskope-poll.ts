@@ -13,7 +13,9 @@ import {
 import { pollGroups } from "./periskope-groups.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
-import { exclusive } from "./periskope-intake.ts";
+import { exclusive, flushWebhookInbox } from "./periskope-intake.ts";
+import { checkWebhookHealth } from "./webhook-health.ts";
+import { GAP_EVERY_MS, runGapReport } from "./webhook-gap.ts";
 import { sweepMedia } from "./listing-media.ts";
 import { syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
 import { syncFromJsonl, type SyncResult } from "./search-store.ts";
@@ -22,8 +24,11 @@ import { syncFromJsonl, type SyncResult } from "./search-store.ts";
  * Read-only live observation: GET new messages for the pinned groups and the auto-discovered ones every 10
  * minutes, then push each through ingestEvent (parse, dedupe by message_id, supply/demand store, very-strong
  * alerts). Once an hour it also lists the groups (periskope-discover.ts) and auto-adds real-estate ones.
- * Never POST/PUT/PATCH/DELETE, and never sends, flags, or replies. The API key is read from
- * PERISKOPE_API_KEY or a 0600 key file (PERISKOPE_API_KEY_FILE, or `<root>/.api-key`); it is never logged.
+ * It never sends, flags, or replies to WhatsApp. Its only writes to Periskope are the webhook reconnect
+ * (webhook-resubscribe.ts): when the webhook is DOWN, a PATCH or POST for OUR hook URL's message.created row, at most
+ * once an hour. Every 10 minutes it also retries the durable webhook inbox (webhook-inbox.ts), checks the webhook's
+ * silence (webhook-health.ts), and once an hour runs the read-only gap report (webhook-gap.ts). The API key is read
+ * from PERISKOPE_API_KEY or a 0600 key file (PERISKOPE_API_KEY_FILE, or `<root>/.api-key`); it is never logged.
  */
 
 export const POLL_EVERY_MS = 10 * 60_000;
@@ -57,9 +62,11 @@ export type PollResult = {
   discovery?: { ran: true; ok: true; checked: number } | { ran: true; ok: false; code: string } | { ran: false };
   /** The search index rebuild after this poll. Counts only; a failure here never fails the poll. */
   searchSync?: { ok: true; counts: SyncResult } | { ok: false; code: string };
+  /** The webhook's health after this poll, where the webhook is configured and the API answered (webhook-health.ts). */
+  health?: { state: "UP" | "DOWN"; lagMs: number | null };
 };
 
-type Cursor = { lastRunAt: string | null; lastDiscoveryAt: string | null; byChat: Record<string, { lastSentAt: string | null }> };
+type Cursor = { lastRunAt: string | null; lastDiscoveryAt: string | null; lastGapAt: string | null; byChat: Record<string, { lastSentAt: string | null }> };
 
 export type PollOptions = {
   apiKey?: string;
@@ -71,6 +78,10 @@ export type PollOptions = {
   fetcher?: typeof getJson;
   /** Tests pass null so a live CRM on the machine is not used. */
   crm?: null;
+  /** The webhook API (reconnect) and Resend (alerts). Tests pass a fake; unset is the global fetch. */
+  webhookFetch?: typeof fetch;
+  /** The silence threshold. Unset: WEBHOOK_SILENCE_MS (30 minutes). */
+  silenceMs?: number;
 };
 
 function keyFileCandidates(root: string, env: Env, explicit?: string): string[] {
@@ -103,9 +114,9 @@ function cursorPath(root: string): string {
 function loadCursor(root: string): Cursor {
   try {
     const j = JSON.parse(readFileSync(cursorPath(root), "utf8")) as Cursor;
-    if (j && typeof j === "object") return { lastRunAt: j.lastRunAt ?? null, lastDiscoveryAt: j.lastDiscoveryAt ?? null, byChat: j.byChat ?? {} };
+    if (j && typeof j === "object") return { lastRunAt: j.lastRunAt ?? null, lastDiscoveryAt: j.lastDiscoveryAt ?? null, lastGapAt: j.lastGapAt ?? null, byChat: j.byChat ?? {} };
   } catch {}
-  return { lastRunAt: null, lastDiscoveryAt: null, byChat: {} };
+  return { lastRunAt: null, lastDiscoveryAt: null, lastGapAt: null, byChat: {} };
 }
 
 function saveCursor(root: string, cursor: Cursor): void {
@@ -148,6 +159,14 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
     return { at: iso(at), ok: false, reason: "no API key", groups: [], fetched: 0, added: 0, alertsAdded: 0, groupsAdded: [] };
   }
   const phoneId = (opts.phoneId ?? env.PERISKOPE_PHONE_ID ?? DEFAULT_PHONE_ID).trim() || undefined;
+  // The webhook checks (health, gap report) run only where the webhook is configured: a signing key is set.
+  const webhookOn = (env.PERISKOPE_SIGNING_KEY ?? "").trim() !== "";
+  // Retry the queued webhook deliveries first. A delivery that failed earlier is still in the durable inbox.
+  try {
+    await flushWebhookInbox({ root, env, now: () => at, crm: opts.crm });
+  } catch {
+    /* never fails the poll */
+  }
   const store = new PeriskopeStore(root);
   const cursor = loadCursor(root);
   const fetcher = opts.fetcher ?? getJson;
@@ -156,6 +175,9 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
   let fetched = 0;
   let added = 0;
   let alertsAdded = 0;
+  // The newest text message from someone else across the groups this poll read (the silence check's input).
+  let latestApiAt: string | null = null;
+  let apiAnswered = 0;
 
   // Discovery first, so a group added now is polled in this same run. Throttled to once an hour; a failure
   // (or a thrown error) is logged as a code and never stops the poll.
@@ -203,6 +225,8 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
       groups.push(emptyGroup(g.chatId, g.chatName, listed.error));
       continue;
     }
+    apiAnswered += 1;
+    if (listed.latestAt && (!latestApiAt || listed.latestAt > latestApiAt)) latestApiAt = listed.latestAt;
     const afterStore = new PeriskopeStore(root);
     const newAlerts = Math.max(0, afterStore.alerts().length - alertsBefore);
     const addedNow = afterStore.posts().filter((p) => !beforeIds.has(p.messageId)).length;
@@ -230,6 +254,28 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
     cursor.byChat[g.chatId] = { lastSentAt: latest };
   }
   cursor.lastRunAt = iso(at);
+
+  // Webhook health (where the webhook is configured, and only if the API answered this poll): the silence check, then the
+  // hourly gap report. Read-only against Periskope; a failure here never fails the poll.
+  let health: PollResult["health"];
+  if (webhookOn && apiAnswered > 0) {
+    const webhookFetch = opts.webhookFetch ?? fetch;
+    try {
+      const h = await checkWebhookHealth({ root, env, now: at, apiKey, latestApiAt, silenceMs: opts.silenceMs, fetch: webhookFetch });
+      health = { state: h.state, lagMs: h.lagMs };
+    } catch (e) {
+      console.error(JSON.stringify({ webhookHealth: "error", code: (e as { code?: string }).code ?? (e as Error).name }));
+    }
+    const gapDue = !cursor.lastGapAt || at.getTime() - Date.parse(cursor.lastGapAt) >= GAP_EVERY_MS;
+    if (gapDue) {
+      cursor.lastGapAt = iso(at);
+      try {
+        await runGapReport({ root, env, now: at, apiKey, fetcher, phoneId });
+      } catch (e) {
+        console.error(JSON.stringify({ webhookGap: "error", code: (e as { code?: string }).code ?? (e as Error).name }));
+      }
+    }
+  }
   saveCursor(root, cursor);
   // The poller is the only scheduled loop on the hosted app, so it also runs the 180-day listing-photo sweep.
   // Never fail the poll for it.
@@ -240,7 +286,7 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
   try {
     await syncAutoMatchAlertsSafely({ root, env, now: at });
   } catch {}
-  return { at: iso(at), ok: true, groups, fetched, added, alertsAdded, groupsAdded, discovery, searchSync: searchSyncSafely(root) };
+  return { at: iso(at), ok: true, groups, fetched, added, alertsAdded, groupsAdded, discovery, searchSync: searchSyncSafely(root), ...(health ? { health } : {}) };
 }
 
 /** Rebuilds <root>/search.db from the JSONL when it changed. Never throws: the poll must not fail on the index. */
@@ -270,6 +316,7 @@ export function startPeriskopePoller(opts: PollOptions = {}): void {
           fetched: r.fetched,
           added: r.added,
           alertsAdded: r.alertsAdded,
+          webhook: r.health ?? null,
           search: r.searchSync?.ok ? { supply: r.searchSync.counts.supply, demand: r.searchSync.counts.demand, needsExplanation: r.searchSync.counts.needsExplanation, rebuilt: r.searchSync.counts.rebuilt } : (r.searchSync ?? null),
           discovery: r.discovery ?? null,
           groupsAdded: r.groupsAdded.map((x) => ({ group: x.group, chatId: x.chatId, members: x.members, source: x.source })),

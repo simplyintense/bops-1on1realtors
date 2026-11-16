@@ -45,6 +45,7 @@ import { isListingCategory } from "../flow/listing-photos.ts";
 import { matchingKnowledgeFrom, taughtTermsFrom } from "./search-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 import { recordWebhookAccepted, type WebhookOutcome } from "./webhook-status.ts";
+import { appendInboxItem, readInbox, writeInbox, type InboxItem } from "./webhook-inbox.ts";
 
 /**
  * The Periskope WhatsApp intake, Node side: the signature check, the webhook's ingest, opt-outs, group
@@ -215,19 +216,75 @@ export function signatureOk(raw: Uint8Array, signature: string | null, key: stri
 }
 
 /**
- * POST /api/intake/periskope. 503 with no signing key; 401 for a missing or wrong signature; otherwise 200
- * for everything it accepts, ignores or drops (wrong event, from us, not allowlisted, no consent, opted
- * out, media, already seen, other). 500 only if taking a buyer request fails, so Periskope can retry it.
+ * POST /api/intake/periskope. 503 with no signing key; 401 for a missing or wrong signature. A verified delivery is
+ * appended to the durable webhook inbox first (webhook-inbox.ts), then drained: 200 with the ingest result when it
+ * was handled, and 200 {result:"accepted"} when handling threw (the item stays queued for a retry). Processing never
+ * gives a 5xx. The only 5xx is a failure to write the queue, which tells Periskope to send it again.
  */
 export async function handleWebhook(raw: Uint8Array, signature: string | null, o: IntakeOptions = {}): Promise<Reply> {
   const env = o.env ?? runtimeEnv();
   const key = (env.PERISKOPE_SIGNING_KEY ?? "").trim();
   if (!key) return reply(503, { error: "PERISKOPE_SIGNING_KEY isn't set" });
   if (!signatureOk(raw, signature, key)) return reply(401, { error: "bad signature" });
-  const text = new TextDecoder().decode(raw);
-  const result = await exclusive(() => ingest(text, context(o), true));
+  const result = await exclusive(async (): Promise<Reply | null> => {
+    const c = context(o);
+    let queued: InboxItem;
+    try {
+      queued = appendInboxItem(c.root, raw, c.now);
+    } catch (e) {
+      console.error(`periskope: webhook not queued code=${errorCode(e)}`);
+      return null;
+    }
+    return (await drainInbox(c, queued.id)).reply;
+  });
+  if (!result) return reply(500, { error: "could not queue" });
   await syncAutoMatchAlertsSafely({ env, root: context(o).root, now: context(o).now });
   return result;
+}
+
+/**
+ * Handles every queued delivery once, oldest first: an item that handles cleanly is removed, one that throws stays with
+ * attempts+1. Called after each webhook and from the 10-minute poller, so a retry never waits for Periskope. Under
+ * `exclusive`, so it never races an append. Logs the error code only, never the body. Never throws.
+ */
+async function drainInbox(c: Ctx, currentId?: string): Promise<{ reply: Reply | null; attempted: number; done: number; pending: number }> {
+  let items: InboxItem[] = [];
+  try {
+    items = readInbox(c.root);
+  } catch (e) {
+    console.error(`periskope: webhook inbox unreadable code=${errorCode(e)}`);
+    return { reply: currentId ? reply(200, { result: "accepted" }) : null, attempted: 0, done: 0, pending: 0 };
+  }
+  let current: Reply | null = null;
+  const keep: InboxItem[] = [];
+  for (const item of items) {
+    try {
+      const r = await ingest(new TextDecoder().decode(Buffer.from(item.body, "base64")), c, true);
+      if (item.id === currentId) current = r;
+    } catch (e) {
+      keep.push({ ...item, attempts: item.attempts + 1 });
+      console.error(`periskope: webhook processing failed attempts=${item.attempts + 1} code=${errorCode(e)}`);
+      if (item.id === currentId) current = reply(200, { result: "accepted" });
+    }
+  }
+  if (items.length) {
+    try {
+      writeInbox(c.root, keep);
+    } catch (e) {
+      console.error(`periskope: webhook inbox not updated code=${errorCode(e)}`);
+    }
+  }
+  return { reply: current ?? (currentId ? reply(200, { result: "accepted" }) : null), attempted: items.length, done: items.length - keep.length, pending: keep.length };
+}
+
+/** Retries every queued webhook delivery once. Called from the 10-minute poller (periskope-poll.ts). Never throws. */
+export async function flushWebhookInbox(o: IntakeOptions = {}): Promise<{ attempted: number; done: number; pending: number }> {
+  const r = await exclusive(() => drainInbox(context(o)));
+  return { attempted: r.attempted, done: r.done, pending: r.pending };
+}
+
+function errorCode(e: unknown): string {
+  return (e as { code?: string }).code ?? (e as Error)?.name ?? "error";
 }
 
 /**

@@ -1,8 +1,23 @@
 import { createHmac } from "node:crypto";
+import { periskopeRoot } from "@/realty/node/periskope-root.ts";
+import { readWebhookStatus } from "@/realty/node/webhook-status.ts";
 
 export const dynamic = "force-dynamic";
 
 const g = globalThis as unknown as { __bopsBuild?: string | null; __bopsStopping?: boolean };
+
+/**
+ * The Periskope webhook's health, compact: state, lag and when it was checked. Never a reason for a non-200: a DOWN
+ * webhook still answers 200, and this never needs the window token. Null until the poller has checked.
+ */
+function webhookSummary(): { state: "UP" | "DOWN"; lagMs: number | null; checkedAt: string } | null {
+  try {
+    const h = readWebhookStatus(periskopeRoot()).health;
+    return h ? { state: h.state, lagMs: h.lagMs, checkedAt: h.checkedAt } : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Whether this is Bops and its server is answering. The Mac app waits on it at start (desktop/main.cjs),
@@ -19,10 +34,11 @@ const g = globalThis as unknown as { __bopsBuild?: string | null; __bopsStopping
 export async function GET(request: Request) {
   if (g.__bopsStopping) return Response.json({ bops: true, stopping: true }, { status: 503 });
   const token = process.env.BOPS_UI_TOKEN;
-  if (!token) return Response.json({ bops: true });
+  if (!token) return Response.json({ bops: true, webhook: webhookSummary() });
   const nonce = new URL(request.url).searchParams.get("nonce") ?? "";
   return Response.json({
     bops: true,
+    webhook: webhookSummary(),
     version: process.env.BOPS_APP_VERSION ?? null,
     build: g.__bopsBuild ?? null,
     exe: process.execPath,
