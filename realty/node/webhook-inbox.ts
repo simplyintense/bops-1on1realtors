@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendJsonl } from "./jsonl.ts";
 
@@ -31,11 +31,11 @@ export function appendInboxItem(root: string, raw: Uint8Array, at: Date, id: str
   return item;
 }
 
-/** The queued items in arrival order. A torn line from a crash is skipped. Never throws on a missing file. */
-export function readInbox(root: string): InboxItem[] {
-  const file = inboxFile(root);
-  if (!existsSync(file)) return [];
-  return readFileSync(file, "utf8")
+/** Claimed batches (see claimInbox) are renamed to webhook-inbox.<id>.claim; one left by a crash is picked up again. */
+const CLAIM = /^webhook-inbox\.[A-Za-z0-9-]+\.claim$/;
+
+function parseLines(text: string): InboxItem[] {
+  return text
     .split("\n")
     .filter(Boolean)
     .flatMap((line) => {
@@ -46,6 +46,44 @@ export function readInbox(root: string): InboxItem[] {
         return [];
       }
     });
+}
+
+function claimFiles(root: string): string[] {
+  if (!existsSync(root)) return [];
+  return readdirSync(root)
+    .filter((n) => CLAIM.test(n))
+    .sort()
+    .map((n) => join(root, n));
+}
+
+/** Every queued item (claimed batches first, then the live file) in arrival order. A torn line is skipped. Never throws on a missing file. */
+export function readInbox(root: string): InboxItem[] {
+  const file = inboxFile(root);
+  const files = [...claimFiles(root), ...(existsSync(file) ? [file] : [])];
+  return files.flatMap((f) => parseLines(readFileSync(f, "utf8")));
+}
+
+/**
+ * Takes the queue for one drain without a lock against appends: the live file is renamed to a claim file in one step,
+ * so a delivery appended while the drain is still processing lands in a fresh live file and is never overwritten.
+ * `release(keep)` appends the items to retry back onto the live file and removes the claim files. Claim files a crash
+ * left behind are included, so nothing is lost (a re-handled message is deduplicated by its message id).
+ */
+export function claimInbox(root: string): { items: InboxItem[]; release: (keep: InboxItem[]) => void } {
+  const file = inboxFile(root);
+  if (existsSync(file)) {
+    const stamp = `${Date.now().toString().padStart(15, "0")}-${crypto.randomUUID()}`;
+    renameSync(file, join(root, `webhook-inbox.${stamp}.claim`));
+  }
+  const claimed = claimFiles(root);
+  const items = claimed.flatMap((f) => parseLines(readFileSync(f, "utf8")));
+  return {
+    items,
+    release: (keep) => {
+      for (const i of keep) appendJsonl(file, JSON.stringify(i));
+      for (const f of claimed) unlinkSync(f);
+    },
+  };
 }
 
 /** Rewrites the queue with `items` (atomic: tmp file, 0600, then rename). */

@@ -14,7 +14,7 @@ import { pollGroups } from "./periskope-groups.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 import { exclusive, flushWebhookInbox } from "./periskope-intake.ts";
-import { checkWebhookHealth } from "./webhook-health.ts";
+import { checkSubscription, checkWebhookHealth, SUBSCRIPTION_CHECK_MS } from "./webhook-health.ts";
 import { GAP_EVERY_MS, runGapReport } from "./webhook-gap.ts";
 import { sweepMedia } from "./listing-media.ts";
 import { syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
@@ -298,7 +298,31 @@ function searchSyncSafely(root: string): NonNullable<PollResult["searchSync"]> {
   }
 }
 
-const g = globalThis as typeof globalThis & { __bopsPeriskopePoll?: ReturnType<typeof setInterval>; __bopsPeriskopePollKick?: ReturnType<typeof setTimeout> };
+const g = globalThis as typeof globalThis & {
+  __bopsPeriskopePoll?: ReturnType<typeof setInterval>;
+  __bopsPeriskopePollKick?: ReturnType<typeof setTimeout>;
+  __bopsWebhookWatch?: ReturnType<typeof setInterval>;
+};
+
+/**
+ * One subscription-watchdog tick (see checkSubscription): only where the webhook is configured and an API key is set.
+ * Logs a line only when the subscription is not live or the check failed. Never throws.
+ */
+export async function watchSubscriptionOnce(opts: PollOptions = {}): Promise<void> {
+  try {
+    const env = { ...runtimeEnv(), ...(opts.env ?? {}) };
+    if ((env.PERISKOPE_SIGNING_KEY ?? "").trim() === "") return;
+    const root = opts.root ?? periskopeRoot(env);
+    const apiKey = readApiKey({ apiKey: opts.apiKey, keyFile: opts.keyFile, root, env });
+    if (!apiKey) return;
+    const r = await checkSubscription({ root, env, now: opts.now?.() ?? new Date(), apiKey, fetch: opts.webhookFetch ?? fetch });
+    if (r.state !== "subscribed" || r.reconnect) {
+      console.log(JSON.stringify({ webhookSubscription: r.state, reconnect: r.reconnect ? (r.reconnect.ok ? r.reconnect.action : `failed: ${r.reconnect.code}`) : null, deferred: r.deferred }));
+    }
+  } catch (e) {
+    console.error(JSON.stringify({ webhookSubscription: "error", code: (e as { code?: string }).code ?? (e as Error).name }));
+  }
+}
 
 /** Start the 10-minute GET poller once per process. No-op without a key on the first cycle. First cycle runs shortly after start. */
 export function startPeriskopePoller(opts: PollOptions = {}): void {
@@ -327,4 +351,16 @@ export function startPeriskopePoller(opts: PollOptions = {}): void {
   };
   g.__bopsPeriskopePollKick = setTimeout(run, 5_000);
   g.__bopsPeriskopePoll = setInterval(run, POLL_EVERY_MS);
+  // The subscription watchdog runs on its own short timer, so a Periskope pause is caught in minutes, not when the
+  // silence detector notices (30 minutes of missing messages). A tick still running skips the next one.
+  let watching = false;
+  const watch = () => {
+    if (watching) return;
+    watching = true;
+    void watchSubscriptionOnce(opts).finally(() => {
+      watching = false;
+    });
+  };
+  setTimeout(watch, 20_000);
+  g.__bopsWebhookWatch = setInterval(watch, SUBSCRIPTION_CHECK_MS);
 }

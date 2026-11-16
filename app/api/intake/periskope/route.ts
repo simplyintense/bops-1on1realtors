@@ -11,11 +11,12 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const raw = new Uint8Array(await request.arrayBuffer());
   try {
-    const r = await handleWebhook(raw, request.headers.get(SIGNATURE_HEADER));
+    const r = await handleWebhook(raw, request.headers.get(SIGNATURE_HEADER), { ackFirst: true });
     return Response.json(r.body, { status: r.status });
   } catch {
-    // handleWebhook queues a verified delivery before it processes it, and processing errors never throw out of it. So
-    // a throw here means nothing was queued: a 500 makes Periskope send it again.
+    // ackFirst: a verified delivery is queued and answered 200 at once; it is handled in the background (never behind the
+    // poll's lock, which made replies take 10-22 s and got the endpoint unsubscribed). A throw here means nothing was
+    // queued: a 500 makes Periskope send it again.
     return Response.json({ error: "could not process" }, { status: 500 });
   }
 }

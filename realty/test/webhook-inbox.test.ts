@@ -144,3 +144,62 @@ test("a bad signature or a missing key queues nothing", async () => {
   assert.equal(noKey.status, 503);
   assert.deepEqual(readInbox(w.root), []);
 });
+
+test("ackFirst (the route): answered 200 {queued} at once even while the intake lock is busy, then handled in the background", async () => {
+  const { exclusive, webhookBackgroundIdle } = await import("../node/periskope-intake.ts");
+  const w = world();
+  await withConsent(w);
+  // Something long holds the lock, the way the 10-minute poll does.
+  let release!: () => void;
+  const held = exclusive(() => new Promise<void>((r) => (release = r)));
+  const raw = JSON.stringify(envelope("m-fast"));
+  const started = Date.now();
+  const r = await handleWebhook(Buffer.from(raw), sign(raw), { ...w.opts, ackFirst: true });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, { result: "queued" });
+  assert.ok(Date.now() - started < 1000, "the answer does not wait for the lock");
+  assert.equal(readInbox(w.root).length, 1, "queued durably before the answer");
+  assert.equal(w.store().posts().filter((p) => p.messageId === "m-fast").length, 0, "not handled yet: the lock is held");
+
+  release();
+  await held;
+  await webhookBackgroundIdle();
+  assert.equal(w.store().posts().filter((p) => p.messageId === "m-fast").length, 1, "handled once the lock is free");
+  assert.equal(readInbox(w.root).length, 0);
+});
+
+test("a delivery queued while a drain is running is not lost when the drain finishes", async () => {
+  const { exclusive, webhookBackgroundIdle } = await import("../node/periskope-intake.ts");
+  const w = world();
+  await withConsent(w);
+  let release!: () => void;
+  const held = exclusive(() => new Promise<void>((r) => (release = r)));
+  const a = JSON.stringify(envelope("m-first"));
+  const b = JSON.stringify(envelope("m-second"));
+  await handleWebhook(Buffer.from(a), sign(a), { ...w.opts, ackFirst: true });
+  release();
+  await held;
+  // The first drain is now in flight; the second delivery lands mid-drain.
+  await handleWebhook(Buffer.from(b), sign(b), { ...w.opts, ackFirst: true });
+  await webhookBackgroundIdle();
+  await flushWebhookInbox(w.opts);
+  const ids = w.store().posts().map((p) => p.messageId);
+  assert.ok(ids.includes("m-first") && ids.includes("m-second"), "both deliveries are stored");
+  assert.equal(readInbox(w.root).length, 0);
+});
+
+test("ackFirst: a delivery whose processing throws stays queued and the poller's retry handles it", async () => {
+  const { webhookBackgroundIdle } = await import("../node/periskope-intake.ts");
+  const w = world();
+  await withConsent(w);
+  blockPosts(w.root);
+  const raw = JSON.stringify(envelope("m-bg-fail"));
+  const r = await handleWebhook(Buffer.from(raw), sign(raw), { ...w.opts, ackFirst: true });
+  assert.equal(r.status, 200);
+  await webhookBackgroundIdle();
+  const q = readInbox(w.root);
+  assert.equal(q.length, 1);
+  assert.equal(q[0].attempts, 1);
+  unblockPosts(w.root);
+  assert.deepEqual(await flushWebhookInbox(w.opts), { attempted: 1, done: 1, pending: 0 });
+});

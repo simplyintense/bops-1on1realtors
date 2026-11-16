@@ -30,6 +30,8 @@ export type WebhookHealth = {
   lastReconnect: { at: string; ok: boolean; action: string } | null;
   /** The last gap check: text messages in the API window that aren't in the store. Counts only. */
   gap: { checkedAt: string; missing: number; chats: number } | null;
+  /** The last direct subscription check (GET /v1/webhooks): our row's state, or the failure code. Absent before the first. */
+  subscription?: { checkedAt: string; state: "subscribed" | "paused" | "missing" | "unknown"; code?: string } | null;
 };
 
 export type WebhookStatus = {
@@ -46,6 +48,14 @@ export const WEBHOOK_STATUS_FILE = "webhook-status.json";
 const EMPTY: WebhookStatus = { lastAcceptedAt: null, lastEventType: null, lastGroupName: null, lastOutcome: null, acceptedCount: 0, health: null };
 
 const validIso = (v: unknown): string | null => (typeof v === "string" && Number.isFinite(Date.parse(v)) ? v : null);
+
+function readSub(v: unknown): WebhookHealth["subscription"] {
+  if (!v || typeof v !== "object") return null;
+  const s = v as { checkedAt?: unknown; state?: unknown; code?: unknown };
+  const at = validIso(s.checkedAt);
+  if (!at || (s.state !== "subscribed" && s.state !== "paused" && s.state !== "missing" && s.state !== "unknown")) return null;
+  return { checkedAt: at, state: s.state, ...(typeof s.code === "string" ? { code: s.code } : {}) };
+}
 
 function readHealth(v: unknown): WebhookHealth | null {
   if (!v || typeof v !== "object") return null;
@@ -66,6 +76,7 @@ function readHealth(v: unknown): WebhookHealth | null {
     lastReconnectAt: validIso(h.lastReconnectAt),
     lastReconnect: last,
     gap,
+    subscription: readSub(h.subscription),
   };
 }
 
@@ -128,6 +139,7 @@ export function webhookStatusLabel(status: WebhookStatus): string {
   const time = status.lastAcceptedAt ? timeAst(status.lastAcceptedAt) : null;
   const parts = [time ? `Live feed: last message ${time}` : "Live feed: no messages yet"];
   if (status.health?.state === "DOWN") parts.push("Webhook DOWN");
+  else if (status.health?.subscription?.state === "paused" || status.health?.subscription?.state === "missing") parts.push("Webhook unsubscribed");
   if (status.health?.gap && status.health.gap.missing > 0) parts.push(`${status.health.gap.missing} missing in the last 24h`);
   return parts.join(" · ");
 }

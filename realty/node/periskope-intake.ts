@@ -45,7 +45,7 @@ import { isListingCategory } from "../flow/listing-photos.ts";
 import { matchingKnowledgeFrom, taughtTermsFrom } from "./search-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 import { recordWebhookAccepted, type WebhookOutcome } from "./webhook-status.ts";
-import { appendInboxItem, readInbox, writeInbox, type InboxItem } from "./webhook-inbox.ts";
+import { appendInboxItem, claimInbox, type InboxItem } from "./webhook-inbox.ts";
 
 /**
  * The Periskope WhatsApp intake, Node side: the signature check, the webhook's ingest, opt-outs, group
@@ -87,6 +87,11 @@ export type IntakeOptions = {
   market?: ToolCaller | null;
   /** Where our own listings come from for live matching. Unset: the same CRM as `crm`. Null: no listings of ours. */
   ours?: Pick<CrmSource, "listings"> | null;
+  /**
+   * Webhook only. True (the route): answer 200 {result:"queued"} as soon as the delivery is queued and handle it in the
+   * background. Unset (tests, tools): handle it first and answer with the ingest result.
+   */
+  ackFirst?: boolean;
 };
 
 export type Reply = { status: number; body: Record<string, unknown> };
@@ -226,35 +231,52 @@ export async function handleWebhook(raw: Uint8Array, signature: string | null, o
   const key = (env.PERISKOPE_SIGNING_KEY ?? "").trim();
   if (!key) return reply(503, { error: "PERISKOPE_SIGNING_KEY isn't set" });
   if (!signatureOk(raw, signature, key)) return reply(401, { error: "bad signature" });
-  const result = await exclusive(async (): Promise<Reply | null> => {
-    const c = context(o);
-    let queued: InboxItem;
-    try {
-      queued = appendInboxItem(c.root, raw, c.now);
-    } catch (e) {
-      console.error(`periskope: webhook not queued code=${errorCode(e)}`);
-      return null;
-    }
-    return (await drainInbox(c, queued.id)).reply;
-  });
-  if (!result) return reply(500, { error: "could not queue" });
-  await syncAutoMatchAlertsSafely({ env, root: context(o).root, now: context(o).now });
+  const c = context(o);
+  // Queue first, outside the intake lock: a poll or another delivery holding the lock must never delay the answer.
+  // Periskope unsubscribes an endpoint that answers slowly (it saw 10 to 22 s replies while the poll held the lock).
+  let queued: InboxItem;
+  try {
+    queued = appendInboxItem(c.root, raw, c.now);
+  } catch (e) {
+    console.error(`periskope: webhook not queued code=${errorCode(e)}`);
+    return reply(500, { error: "could not queue" });
+  }
+  if (o.ackFirst) {
+    // Answer now; handle it in the background, in order behind whatever holds the lock. A failure stays queued and
+    // the 10-minute poller retries it.
+    const done = processQueued(o, env, c.root, queued.id).catch(() => undefined);
+    lastBackground = done;
+    return reply(200, { result: "queued" });
+  }
+  return (await processQueued(o, env, c.root, queued.id)) ?? reply(200, { result: "accepted" });
+}
+
+/** The background work of the newest fast-acked delivery. Tests await it; production never does. */
+let lastBackground: Promise<unknown> = Promise.resolve();
+export function webhookBackgroundIdle(): Promise<unknown> {
+  return lastBackground.then(() => exclusive(() => undefined));
+}
+
+async function processQueued(o: IntakeOptions, env: Env, root: string, id: string): Promise<Reply | null> {
+  const result = await exclusive(async () => (await drainInbox(context(o), id)).reply);
+  await syncAutoMatchAlertsSafely({ env, root, now: context(o).now });
   return result;
 }
 
 /**
  * Handles every queued delivery once, oldest first: an item that handles cleanly is removed, one that throws stays with
  * attempts+1. Called after each webhook and from the 10-minute poller, so a retry never waits for Periskope. Under
- * `exclusive`, so it never races an append. Logs the error code only, never the body. Never throws.
+ * `exclusive`, so drains never overlap; appends don't need the lock (claimInbox). Logs the error code only, never the body. Never throws.
  */
 async function drainInbox(c: Ctx, currentId?: string): Promise<{ reply: Reply | null; attempted: number; done: number; pending: number }> {
-  let items: InboxItem[] = [];
+  let claim: ReturnType<typeof claimInbox>;
   try {
-    items = readInbox(c.root);
+    claim = claimInbox(c.root);
   } catch (e) {
     console.error(`periskope: webhook inbox unreadable code=${errorCode(e)}`);
     return { reply: currentId ? reply(200, { result: "accepted" }) : null, attempted: 0, done: 0, pending: 0 };
   }
+  const items = claim.items;
   let current: Reply | null = null;
   const keep: InboxItem[] = [];
   for (const item of items) {
@@ -269,7 +291,7 @@ async function drainInbox(c: Ctx, currentId?: string): Promise<{ reply: Reply | 
   }
   if (items.length) {
     try {
-      writeInbox(c.root, keep);
+      claim.release(keep);
     } catch (e) {
       console.error(`periskope: webhook inbox not updated code=${errorCode(e)}`);
     }

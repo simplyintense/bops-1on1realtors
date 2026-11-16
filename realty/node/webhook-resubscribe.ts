@@ -85,3 +85,20 @@ export async function resubscribeWebhook(o: { apiKey: string; hookUrl: string; f
   const created = await call(o.fetch, o.apiKey, "POST", PERISKOPE_WEBHOOKS_URL, { hookUrl: o.hookUrl, integrationName: WEBHOOK_EVENT });
   return ok2xx(created) ? { ok: true, action: "created" } : fail(created ? `post_${created.status}` : "network");
 }
+
+export type SubscriptionRead = { ok: true; state: "subscribed" | "paused" | "missing" } | { ok: false; code: string };
+
+/**
+ * Read-only: is OUR hook URL subscribed to message.created right now? One GET, nothing changed. Periskope pauses a
+ * failing endpoint (is_subscribed false) without telling the endpoint, so this is the direct check; the silence
+ * detector only notices once messages pile up. Failures return a short code, never a body.
+ */
+export async function readSubscription(o: { apiKey: string; hookUrl: string; fetch: typeof fetch }): Promise<SubscriptionRead> {
+  const q = new URLSearchParams({ hook_url: o.hookUrl, integration_name: WEBHOOK_EVENT });
+  const listed = await call(o.fetch, o.apiKey, "GET", `${PERISKOPE_WEBHOOKS_URL}?${q}`);
+  if (!listed) return { ok: false, code: "network" };
+  if (listed.status !== 200) return { ok: false, code: `list_${listed.status}` };
+  const row = rowsOf(listed.body).find((r) => r.hook_url === o.hookUrl && r.integration_name === WEBHOOK_EVENT);
+  if (!row) return { ok: true, state: "missing" };
+  return { ok: true, state: row.is_subscribed === false ? "paused" : "subscribed" };
+}
