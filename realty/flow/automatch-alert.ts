@@ -86,7 +86,7 @@ export const HOT_MATCH_LINE =
 
 export const SEND_OFF = "Sending Auto-Match Alert is off. This command only renders a preview; nothing was sent.";
 
-export const WA_LABEL = "WhatsApp, with the message filled in (opens in your own browser):";
+export const WA_LABEL = "WhatsApp, with the message filled in:";
 export const NO_WA = "No usable WhatsApp number on this ask, so there's no link.";
 export const REPLY_LINE = "Reply to this email to let admin know how it went.";
 
@@ -469,7 +469,8 @@ function renderText(v: RenderView): string {
   out.push(v.message);
   out.push("");
   if (v.phoneText && v.tel) out.push(`Call: ${v.phoneText} (${v.tel})`);
-  out.push(v.waUrl ? `${WA_LABEL} ${v.waUrl}` : NO_WA);
+  if (v.waUrl) out.push(WA_LABEL, v.waUrl);
+  else out.push(NO_WA);
   out.push("");
   out.push(HOT_MATCH_LINE);
   out.push("");
@@ -492,7 +493,7 @@ function renderHtml(v: RenderView): string {
     v.phoneText && v.tel
       ? `<p>Call: <a href="${e(v.tel)}">${e(v.phoneText)}</a> (${e(v.tel)})</p>`
       : "";
-  const wa = v.waUrl ? `<p>${e(WA_LABEL)} <a href="${e(v.waUrl)}">${e(v.waUrl)}</a></p>` : `<p>${e(NO_WA)}</p>`;
+  const wa = v.waUrl ? `<p>${e(WA_LABEL)} <a href="${e(v.waUrl)}">here</a></p>` : `<p>${e(NO_WA)}</p>`;
   return [
     "<!doctype html>",
     "<html><body>",

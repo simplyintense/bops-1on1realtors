@@ -97,33 +97,51 @@ test("type and sale or rent: 5 each; no type asked gives the kind-of-place 5; a 
   assert.equal(scoreOf({ type: "land" }, {}).parts.kind, 0, "land asked, residential listing");
 });
 
-test("recency: full 15 today, half (7.5) at 7 days, near 0 by 30 days, still near 0 at 90 (the decay runs, no hard zero)", () => {
-  assert.equal(scoreOf({}, {}, "same", 0).parts.recency, 15);
-  assert.ok(Math.abs(scoreOf({}, {}, "same", 7).parts.recency - 7.5) < 1e-9, "a week is half");
-  const at30 = scoreOf({}, {}, "same", 30).parts.recency;
-  assert.ok(Math.abs(at30 - 15 * 0.5 ** (30 / 7)) < 1e-9, "30 days is 15 * 0.5^(30/7), about 0.77");
-  assert.ok(at30 > 0 && at30 < 1);
-  assert.ok(scoreOf({}, {}, "same", 90).parts.recency < 0.01, "90 days is about 0.002");
+test("recency: full 15 up to 30 days, then step down by tier, 0 after 365 days", () => {
+  const recencyAt = (days: number) => scoreOf({}, {}, "same", days).parts.recency;
+  assert.equal(recencyAt(0), 15);
+  assert.equal(recencyAt(5), 15, "5 days");
+  assert.equal(recencyAt(29), 15, "29 days");
+  assert.equal(recencyAt(30), 15, "30 days is still full");
+  assert.equal(recencyAt(31), 12, "31 days drops to 12");
   assert.match(scoreOf({}, {}, "same", 2).reason, /posted 2 days ago$/);
+  assert.match(scoreOf({}, {}, "same", 0).reason, /posted today$/);
+});
+
+test("recency: the tier boundaries are 60, 90, 120, 365 and 366 days", () => {
+  const recencyAt = (days: number) => scoreOf({}, {}, "same", days).parts.recency;
+  assert.equal(recencyAt(31), 12);
+  assert.equal(recencyAt(60), 12);
+  assert.equal(recencyAt(61), 9);
+  assert.equal(recencyAt(90), 9);
+  assert.equal(recencyAt(91), 6);
+  assert.equal(recencyAt(120), 6);
+  assert.equal(recencyAt(121), 3);
+  assert.equal(recencyAt(365), 3);
+  assert.equal(recencyAt(366), 0);
 });
 
 test("recency: a newer ask outranks an otherwise identical older one (only the age differs)", async () => {
-  const day0 = scoreOf({}, {}, "same", 0);
-  const day7 = scoreOf({}, {}, "same", 7);
-  const day14 = scoreOf({}, {}, "same", 14);
-  assert.ok(day0.score > day7.score && day7.score > day14.score);
-  assert.deepEqual({ ...day0.parts, recency: 0 }, { ...day7.parts, recency: 0 }, "everything but recency is the same");
+  const day29 = scoreOf({}, {}, "same", 29);
+  const day31 = scoreOf({}, {}, "same", 31);
+  const day61 = scoreOf({}, {}, "same", 61);
+  assert.ok(day29.score > day31.score && day31.score > day61.score);
+  assert.deepEqual({ ...day29.parts, recency: 0 }, { ...day31.parts, recency: 0 }, "everything but recency is the same");
 
-  const pairs = await automatchPairs([ASK({ id: "old", lastSeenAt: ago(14) }), ASK({ id: "new", lastSeenAt: ago(0) })], [LISTING()], AREAS, NOW);
+  const pairs = await automatchPairs([ASK({ id: "old", lastSeenAt: ago(61) }), ASK({ id: "new", lastSeenAt: ago(0) })], [LISTING()], AREAS, NOW);
   assert.deepEqual(pairs.map((p) => p.ask.id), ["new", "old"]);
 });
 
 test("recency is measured from the posted date (firstSentAt) when the ask has one, else from last seen", () => {
   const posted = scorePair({ ...ASK({ lastSeenAt: ago(0) }), postedAt: ago(7) }, LISTING(), { areaRelation: "same", now: NOW });
-  assert.ok(Math.abs(posted.parts.recency - 7.5) < 1e-9, "posted a week ago, seen today");
+  assert.equal(posted.parts.recency, 15, "posted a week ago is still full, seen today");
   assert.match(posted.reason, /posted 7 days ago$/);
   const unparsed = scorePair({ ...ASK({ lastSeenAt: ago(0) }), postedAt: "not a date" }, LISTING(), { areaRelation: "same", now: NOW });
   assert.equal(unparsed.parts.recency, 15, "an unreadable posted date falls back to last seen");
+  const oldPost = scorePair({ ...ASK({ lastSeenAt: ago(0) }), postedAt: ago(40) }, LISTING(), { areaRelation: "same", now: NOW });
+  assert.equal(oldPost.parts.recency, 12, "a posted date 40 days ago is tier 12, though seen today");
+  const fallback = scorePair({ ...ASK({ lastSeenAt: ago(40) }), postedAt: "not a date" }, LISTING(), { areaRelation: "same", now: NOW });
+  assert.equal(fallback.parts.recency, 12, "an unreadable posted date uses last seen (40 days, tier 12)");
 });
 
 test("the score is an integer from 0 to 100, the parts add up to it, and a perfect pair is 100", () => {
@@ -278,8 +296,8 @@ test("an owner sees the same-area pair with the holder's name, the stored post, 
   assert.equal(view.listings, 1);
   assert.equal(view.pairs.length, 1);
   const [row] = view.pairs;
-  // Posted 2 days ago: recency is 15 * 0.5^(2/7), about 12.3, so 25 + 30 + 20 + 10 + 12.3 rounds to 97.
-  assert.equal(row.score, 97);
+  // Posted 2 days ago: recency is full 15, so 25 + 30 + 20 + 10 + 15 is 100.
+  assert.equal(row.score, 100);
   assert.equal(row.band, "strong");
   assert.equal(row.listing.agentName, "Dana Holder");
   assert.equal(row.listing.url, "https://1on1realtors.com/property/test-flat-westmoorings");
