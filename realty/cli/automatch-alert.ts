@@ -9,7 +9,7 @@ import { searchRoot } from "./search-args.ts";
  * agent, CC Crystal and Wendy. A BCC is set and is not printed in this preview. Read only of the CRM. It may record
  * suppressed keys so a later flag flip does not bulk-send. Live sending happens in the poller when AUTOMATCH_ALERT_ENABLED
  * is on and RESEND_API_KEY is set. The CLI never bulk-sends new matches. An explicit --send-baseline
- * (with --dry-run, or --confirm SEND-BASELINE) can email previously suppressed baseline matches once.
+ * (with --dry-run, or --confirm SEND-BASELINE) can email previously suppressed baseline matches and the first-review set once.
  *   npm run realty:automatch-alert                         prints the plain-text previews to stdout
  *   npm run realty:automatch-alert -- --txt PATH           writes the first plain-text preview (or all, joined) to PATH
  *   npm run realty:automatch-alert -- --out PATH           writes the first HTML preview to PATH
@@ -46,17 +46,32 @@ async function main(): Promise<void> {
     }
     const lines = r.results.map((row) => {
       const age = row.ageDays == null ? "age unknown" : `${row.ageDays} day${row.ageDays === 1 ? "" : "s"}`;
+      const score = `score ${row.score}`;
       const id = row.id ? ` · ${row.id}` : "";
-      return `- ${row.agent} · ${row.listingTitle} · ${age}${id}`;
+      return `- ${row.agent} · ${row.listingTitle} · ${age} · ${score}${id}`;
+    });
+    const skippedLines = (r.skipped ?? []).map((row) => {
+      const age = row.ageDays == null ? "age unknown" : `${row.ageDays} day${row.ageDays === 1 ? "" : "s"}`;
+      const score = row.score == null ? "score unknown" : `score ${row.score}`;
+      const who = row.agent ?? "unassigned";
+      return `- ${who} · ${row.listingTitle} · ${age} · ${score} · skipped (${row.reason})`;
     });
     if (r.dryRun) {
-      console.error(`Baseline dry-run: ${r.wouldSend} suppressed match${r.wouldSend === 1 ? "" : "es"} would be emailed.`);
+      console.error(`Baseline dry-run: ${r.wouldSend} match${r.wouldSend === 1 ? "" : "es"} would be emailed (suppressed baseline plus first-review, de-duplicated).`);
       if (lines.length) console.error(lines.join("\n"));
+      if (skippedLines.length) {
+        console.error(`Skipped ${skippedLines.length}:`);
+        console.error(skippedLines.join("\n"));
+      }
       console.error("Nothing was sent.");
       return;
     }
-    console.error(`Baseline send: ${r.sent} sent, ${r.failed} failed, of ${r.wouldSend} suppressed match${r.wouldSend === 1 ? "" : "es"}.`);
+    console.error(`Baseline send: ${r.sent} sent, ${r.failed} failed, of ${r.wouldSend} match${r.wouldSend === 1 ? "" : "es"}.`);
     if (lines.length) console.error(lines.join("\n"));
+    if (skippedLines.length) {
+      console.error(`Skipped ${skippedLines.length}:`);
+      console.error(skippedLines.join("\n"));
+    }
     if (r.failed > 0 || r.error) {
       if (r.error) console.error(r.error);
       process.exitCode = 1;
