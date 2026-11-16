@@ -1,4 +1,5 @@
 import { runtimeEnv, type Env } from "../flow/env.ts";
+import { parseMessage, type ParsedMessage } from "../flow/periskope.ts";
 import { ingestEvent, type IntakeOptions, type Reply } from "./periskope-intake.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 import { periskopeRoot } from "./periskope-root.ts";
@@ -56,6 +57,15 @@ export function messageToEnvelope(msg: ChatMessage, chatName: string, senderName
   };
   if (senderName) data.contact_name = senderName;
   return { event_type: "message.created", data };
+}
+
+/**
+ * A text message from someone other than us, parsed the way the intake parses it. This is what the webhook would accept
+ * (we never reply, so our own messages and media-only ones are not part of the silence check or the gap report). Null otherwise.
+ */
+export function textFromOthers(msg: ChatMessage, chatName: string): ParsedMessage | null {
+  const p = parseMessage(messageToEnvelope(msg, chatName, null).data);
+  return p && p.hasText && !p.fromMe ? p : null;
 }
 
 export async function getJson(url: string, apiKey: string, phoneId?: string): Promise<{ status: number; body: unknown }> {
@@ -137,7 +147,7 @@ export async function backfillGroup(args: {
   phoneId?: string;
   opts: IntakeOptions;
   fetcher?: typeof getJson;
-}): Promise<{ ok: true; counts: BackfillCounts } | { ok: false; error: string; status?: number }> {
+}): Promise<{ ok: true; counts: BackfillCounts; latestAt: string | null } | { ok: false; error: string; status?: number }> {
   const chatId = args.chatId ?? AREA_REGISTERED_AGENTS_CHAT_ID;
   const chatName = args.chatName ?? AREA_REGISTERED_AGENTS_NAME;
   const days = args.days ?? 7;
@@ -149,6 +159,12 @@ export async function backfillGroup(args: {
     fetcher: args.fetcher,
   });
   if (!listed.ok) return { ok: false, error: listed.error, status: listed.status };
+  // The newest text message from someone else, as the API reports it (read-only; the poller's silence check uses it).
+  let latestAt: string | null = null;
+  for (const m of listed.messages) {
+    const at = textFromOthers(m, chatName)?.sentAt ?? null;
+    if (at && (!latestAt || at > latestAt)) latestAt = at;
+  }
   const names = await memberNames({ apiKey: args.apiKey, chatId, phoneId: args.phoneId, fetcher: args.fetcher });
   const store = new PeriskopeStore(args.opts.root ?? periskopeRoot());
   const before = new Map(
@@ -223,5 +239,5 @@ export async function backfillGroup(args: {
     counts.crmMatches += ours;
     if (market + ours > 0) counts.matchedRequests += 1;
   }
-  return { ok: true, counts };
+  return { ok: true, counts, latestAt };
 }

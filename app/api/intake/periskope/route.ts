@@ -14,7 +14,8 @@ export async function POST(request: Request) {
     const r = await handleWebhook(raw, request.headers.get(SIGNATURE_HEADER));
     return Response.json(r.body, { status: r.status });
   } catch {
-    // Only a failure to take a buyer request gets here. The message isn't marked seen, so Periskope's retry can take it.
+    // handleWebhook queues a verified delivery before it processes it, and processing errors never throw out of it. So
+    // a throw here means nothing was queued: a 500 makes Periskope send it again.
     return Response.json({ error: "could not process" }, { status: 500 });
   }
 }

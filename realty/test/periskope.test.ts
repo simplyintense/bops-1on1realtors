@@ -25,7 +25,8 @@ import {
   type GroupConsent,
   type MarketIngestItem,
 } from "../flow/periskope.ts";
-import { handleWebhook, optOutSender, purgeExpiredPeriskope, setConsent, tickFlow, senderHashOf } from "../node/periskope-intake.ts";
+import { flushWebhookInbox, handleWebhook, optOutSender, purgeExpiredPeriskope, setConsent, tickFlow, senderHashOf } from "../node/periskope-intake.ts";
+import { readInbox } from "../node/webhook-inbox.ts";
 import { loadFixtureCrm } from "../node/jsonl.ts";
 import { PeriskopeStore } from "../node/periskope-store.ts";
 import sharp from "sharp";
@@ -273,7 +274,7 @@ test("addLead and addLive keep the first row for a messageId", () => {
   assert.equal(store.live()[0].status, "pending");
 });
 
-test("a buyer request that cannot be stored leaves no lead or live row, and a retry stores it once", async () => {
+test("a buyer request that cannot be stored is queued and answered 200; nothing is stored until the retry, which stores it once", async () => {
   const w = world();
   await withConsent(w);
   mkdirSync(w.root, { recursive: true });
@@ -281,18 +282,23 @@ test("a buyer request that cannot be stored leaves no lead or live row, and a re
   writeFileSync(posts, "", { mode: 0o000 });
   chmodSync(posts, 0o000);
   const payload = envelope({}, { body: REQUEST_TEXT, message_id: "m-locked" });
-  await assert.rejects(() => w.post(payload));
+  // A failed store write is not a 5xx: the verified delivery stays in the durable inbox and is retried.
+  const first = await w.post(payload);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.result, "accepted");
+  assert.equal(readInbox(w.root).length, 1);
   chmodSync(posts, 0o600);
   assert.equal(w.store().leads().filter((r) => r.messageId === "m-locked").length, 0);
   assert.equal(w.store().live().filter((r) => r.messageId === "m-locked").length, 0);
   assert.ok(!w.store().isSeen("m-locked"));
-  const r = await w.post(payload);
-  assert.equal(r.status, 200);
-  assert.match(String(r.body.result), /buyer request taken as L/);
+  const flushed = await flushWebhookInbox(w.opts);
+  assert.deepEqual(flushed, { attempted: 1, done: 1, pending: 0 });
+  assert.equal(readInbox(w.root).length, 0);
   assert.equal(w.store().leads().filter((r) => r.messageId === "m-locked").length, 1);
   assert.equal(w.store().live().filter((r) => r.messageId === "m-locked").length, 1);
   assert.ok(w.store().post("m-locked"));
 });
+
 
 /* ---------------- Flow and outbox ---------------- */
 
