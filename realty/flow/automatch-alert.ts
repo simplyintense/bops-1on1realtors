@@ -17,9 +17,10 @@ import type { StatusRow } from "./match-status.ts";
  *
  * User-facing name: "1on1 Auto-Match Alert". The word "Bops" must never appear in the from name, the subject, the body or
  * the footer (it may appear in internal module names only). The default sender is "1on1 Auto-Match Alert". The body never
- * names Miles. Each alert is CC'd to AUTOMATCH_ALERT_CC (default Crystal and Wendy) and BCC'd to AUTOMATCH_ALERT_BCC
- * (default Miles). The BCC list is for the transport only: it must not appear in the From, To, Cc, Subject, or body
- * that agents see.
+ * names Miles. Each alert is CC'd to AUTOMATCH_ALERT_CC (default Chrystalle and Wendy) when ALERT_CC_STAFF is on
+ * (the default) and BCC'd to AUTOMATCH_ALERT_BCC (default Miles). When ALERT_CC_STAFF is off, the agent is the only
+ * To recipient; Miles stays on BCC. The BCC list is for the transport only: it must not appear in the From, To, Cc,
+ * Subject, or body that agents see.
  *
  * Per alert, in order: an opening line (the posted day and time in AST, "Based on a message received on WhatsApp on Tuesday 10
  * Nov at 5:30 PM AST …"), the older-lead heads-up when it applies, a Contact block (the sender's name, the tap-to-call number,
@@ -43,10 +44,13 @@ export const ALERT_SEND_EXISTING_FLAG = "AUTOMATCH_ALERT_SEND_EXISTING";
 /** Optional allowlist of agent emails; empty or unset means every agent with a strong match. */
 export const ALERT_ALLOWLIST_FLAG = "AUTOMATCH_ALERT_ALLOWLIST";
 
-/** Comma-separated CC list. Unset uses ALERT_CC_DEFAULT (Crystal and Wendy). */
+/** Comma-separated CC list. Unset uses ALERT_CC_DEFAULT (Chrystalle and Wendy). */
 export const ALERT_CC_FLAG = "AUTOMATCH_ALERT_CC";
 
 export const ALERT_CC_DEFAULT = "admin@1on1realtors.com,wendy@1on1realtors.com";
+
+/** Staff CC switch for instant alerts. On by default. When "0", "false" or "off", CC is empty (agent only; BCC unchanged). */
+export const ALERT_CC_STAFF_FLAG = "ALERT_CC_STAFF";
 
 /** Comma-separated BCC list. Unset uses ALERT_BCC_DEFAULT (Miles). Not shown in the agent-facing headers or body. */
 export const ALERT_BCC_FLAG = "AUTOMATCH_ALERT_BCC";
@@ -221,14 +225,27 @@ export function flagOn(value: string | undefined): boolean {
   return ["1", "true"].includes((value ?? "").trim().toLowerCase());
 }
 
+/** True when unset/empty (the default), or not an explicit off ("0", "false", "off", "no"). */
+export function flagDefaultOn(value: string | undefined): boolean {
+  const v = (value ?? "").trim().toLowerCase();
+  if (v === "") return true;
+  return !["0", "false", "off", "no"].includes(v);
+}
+
+/** Staff CC on instant alerts: on unless ALERT_CC_STAFF is an explicit off. */
+export function alertCcStaff(env: Env = {}): boolean {
+  return flagDefaultOn(env[ALERT_CC_STAFF_FLAG]);
+}
+
 function listOrDefault(env: Env, flag: string, fallback: string): string[] {
   return Object.prototype.hasOwnProperty.call(env, flag) && (env[flag] ?? "").trim() !== ""
     ? parseAddressList(env[flag])
     : parseAddressList(fallback);
 }
 
-/** CC addresses: AUTOMATCH_ALERT_CC, or the default (Crystal and Wendy) when unset. */
+/** CC addresses: AUTOMATCH_ALERT_CC, or the default (Chrystalle and Wendy) when unset. Empty when ALERT_CC_STAFF is off. */
 export function alertCc(env: Env = {}): string[] {
+  if (!alertCcStaff(env)) return [];
   return listOrDefault(env, ALERT_CC_FLAG, ALERT_CC_DEFAULT);
 }
 

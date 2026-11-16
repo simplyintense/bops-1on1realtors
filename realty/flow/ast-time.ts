@@ -23,6 +23,16 @@ export function dateAst(iso: string): string {
   return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")} AST`;
 }
 
+/** The 24-hour clock in AST, e.g. "07:00", or "" when the time is unreadable. */
+export function clockHmAst(iso: string | Date): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (!Number.isFinite(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: AST, hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return `${hour}:${get("minute")}`;
+}
+
 /** The calendar date in AST, e.g. "2026-11-15", or "" when the time is unreadable. */
 export function dayKeyAst(iso: string | Date): string {
   const d = typeof iso === "string" ? new Date(iso) : iso;
