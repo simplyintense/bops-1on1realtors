@@ -7,10 +7,11 @@ export type ReviewSeed = {
   listingUrl: string;
   askArea: string;
   listingType: "sale" | "rent";
-  budget: number;
+  /** Omitted or null when the ask has no budget; the budget bonus in reviewFit then does not apply. */
+  budget?: number | null;
 };
 
-/** The 11 first-review matches, identified by listing URL and the ask (area, sale/rent, budget). */
+/** The 16 first-review matches (11 original, then 5 newly-strong recency-rescored pairs), identified by listing URL and the ask (area, sale/rent, budget). */
 export const FIRST_REVIEW_SEEDS: readonly ReviewSeed[] = [
   { listingUrl: "https://1on1realtors.com/property/maraval-3bed-residential-for-sale-1382", askArea: "Maraval", listingType: "sale", budget: 4_300_000 },
   { listingUrl: "https://1on1realtors.com/property/maraval-3bed-residential-for-sale-1268", askArea: "Goodwood Park", listingType: "sale", budget: 2_400_000 },
@@ -23,6 +24,11 @@ export const FIRST_REVIEW_SEEDS: readonly ReviewSeed[] = [
   { listingUrl: "https://1on1realtors.com/property/carenage-2bed-residential-for-rent-1366", askArea: "Westmoorings", listingType: "rent", budget: 15_000 },
   { listingUrl: "https://1on1realtors.com/property/valsayn-3bed-residential-for-sale-1397", askArea: "Tunapuna", listingType: "sale", budget: 3_500_000 },
   { listingUrl: "https://1on1realtors.com/property/d-abadie-5bed-residential-for-sale-1363", askArea: "Tunapuna", listingType: "sale", budget: 3_500_000 },
+  { listingUrl: "https://1on1realtors.com/property/petit-valley-3bed-residential-for-sale-1422", askArea: "Goodwood Park", listingType: "sale", budget: 2_400_000 },
+  { listingUrl: "https://1on1realtors.com/property/westmoorings-3bed-residential-for-rent-1358", askArea: "Westmoorings", listingType: "rent" },
+  { listingUrl: "https://1on1realtors.com/property/westmoorings-3bed-residential-for-rent-1059", askArea: "Westmoorings", listingType: "rent" },
+  { listingUrl: "https://1on1realtors.com/property/san-fernando-3bed-residential-for-rent-1287", askArea: "San Fernando", listingType: "rent" },
+  { listingUrl: "https://1on1realtors.com/property/san-fernando-3bed-residential-for-rent-1350", askArea: "San Fernando", listingType: "rent" },
 ];
 
 export function normListingUrl(url: string | null | undefined): string {
