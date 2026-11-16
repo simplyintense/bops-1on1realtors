@@ -23,7 +23,9 @@ import {
   REPLY_LINE,
   agedLeadLine,
   isAgedLead,
+  oneShotAgentStatus,
   planBaselineSend,
+  planOneShotSend,
   requestAgeDays,
   MILES_FROM_NAME,
   OFFICE_TO,
@@ -512,6 +514,52 @@ test("the CLI refuses --send-baseline without --dry-run or the confirm token, an
   assert.equal(wrong.status, 2);
   assert.equal(wrong.stdout, "");
   assert.match(wrong.stderr, /Nothing was sent/);
+});
+
+test("a one-shot alert includes the aged-lead heads-up even when the request is 14 days old or newer", () => {
+  const held = buildAutoMatchAlert(ROW({}, { postedAt: "2026-11-10T18:15:00.000Z", lastSeenAt: "2026-11-10T18:15:00.000Z" }), { ...BASE_OPTS, oneShot: true });
+  assert.equal(held.ageDays, 5);
+  assert.equal(held.score, 90);
+  assert.match(held.subject, /older lead/);
+  assert.ok(held.text.includes(agedLeadLine(5, { oneShot: true })));
+  assert.ok(held.html.includes(escapeHtml(agedLeadLine(5, { oneShot: true }))));
+  const today = buildAutoMatchAlert(ROW(), { ...BASE_OPTS, oneShot: true });
+  assert.equal(today.ageDays, 0);
+  assert.doesNotMatch(today.subject, /older lead/i);
+  assert.ok(today.text.includes(agedLeadLine(0, { oneShot: true })));
+  assert.match(today.text, /this request came in today/);
+  assert.doesNotMatch(`${held.from}\n${held.subject}\n${held.text}\n${held.html}`, /Bops|bop\.1on1realtors\.com|\/realty\/desk/i);
+});
+
+test("the one-shot plan unions suppressed and first-review keys, de-duplicates, and skips already-sent matches", () => {
+  const a = buildAutoMatchAlert(ROW(), { ...BASE_OPTS, oneShot: true });
+  const b = buildAutoMatchAlert(ROW({ listingKey: KEY_B, score: 69 }, { postId: RID_B }, { title: "GLENCOE FLAT", url: URL_B, area: "Glencoe", type: "apartment", beds: 2, price: 8000 }), { ...BASE_OPTS, oneShot: true });
+  const c = buildAutoMatchAlert(ROW({ listingKey: "url:https://1on1realtors.com/property/new", score: 80 }, { postId: "cccccccccccccccccccccccc", area: "Cascade" }, { title: "NEW HILL", url: "https://1on1realtors.com/property/new", area: "Cascade", type: "house", beds: 4, price: 2_500_000 }), BASE_OPTS);
+  const seeded = [
+    { requestId: a.requestId, listingKey: a.listingKey, at: NOW.toISOString(), kind: "suppressed" as const },
+    { requestId: b.requestId, listingKey: b.listingKey, at: NOW.toISOString(), kind: "sent" as const },
+  ];
+  const reviewKeys = new Set([alertKey(a), alertKey(b), alertKey(c)]);
+  const one = planOneShotSend([a, a, b, c], seeded, { reviewKeys });
+  assert.deepEqual(one.map((x) => x.requestId).sort(), [a.requestId, c.requestId].sort(), "a is suppressed+review (once), b is already sent, c is review-only");
+  const live = planAlertDispatch([a, b, c], seeded, { enabled: true, sendExisting: false, holdKeys: new Set([alertKey(c)]) });
+  assert.equal(live.send.length, 0, "the first-review key is held, not live-sent");
+  assert.equal(live.skip.length, 2);
+  assert.equal(live.suppress.length, 1);
+  assert.equal(live.suppress[0].requestId, c.requestId);
+  const freshNew = buildAutoMatchAlert(ROW({ listingKey: "url:https://1on1realtors.com/property/brand-new", score: 88 }, { postId: "dddddddddddddddddddddddd", area: "Cascade" }, { title: "BRAND NEW", url: "https://1on1realtors.com/property/brand-new", area: "Cascade", type: "house", beds: 4, price: 2_800_000 }), BASE_OPTS);
+  const liveNew = planAlertDispatch([a, b, c, freshNew], seeded, { enabled: true, sendExisting: false, holdKeys: new Set([alertKey(c)]) });
+  assert.equal(liveNew.send.length, 1);
+  assert.equal(liveNew.send[0].requestId, "dddddddddddddddddddddddd", "genuinely new matches still go out live");
+});
+
+test("the one-shot skips a listing with no assigned agent or no agent email", () => {
+  const unassigned = { ...ROW({}, {}, { agentId: null, agentName: null }), agentEmail: "office-should-not-be-used@1on1.example" };
+  const noEmail = { ...ROW({ listingKey: KEY_B }, { postId: RID_B }, { agentId: 8, agentName: "Eve Other", url: URL_B }), agentEmail: null };
+  const ok = { ...ROW(), agentEmail: "dana@1on1.example" };
+  assert.equal(oneShotAgentStatus(unassigned), "no assigned agent");
+  assert.equal(oneShotAgentStatus(noEmail), "no agent email");
+  assert.equal(oneShotAgentStatus(ok), "ok");
 });
 
 test("the portable Auto-Match Alert builder has no fetch and no mail transport", () => {

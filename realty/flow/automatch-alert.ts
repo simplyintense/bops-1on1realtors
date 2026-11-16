@@ -133,6 +133,7 @@ export type AutoMatchAlert = {
   /** Calendar days in AST from when the request was posted, or null when the time is unreadable. */
   ageDays: number | null;
   listingTitle: string;
+  score: number;
 };
 
 export type AlertBuildOpts = {
@@ -148,6 +149,8 @@ export type AlertBuildOpts = {
   cc?: readonly string[];
   bcc?: readonly string[];
   allowlist?: readonly string[];
+  /** When true, the aged-lead heads-up is included even if the request is 14 days old or newer. */
+  oneShot?: boolean;
 };
 
 /** The From display name and whether the body is attributed to Miles. */
@@ -305,12 +308,17 @@ export function requestAgeDays(iso: string, now: Date): number | null {
   return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(py, pm - 1, pd)) / 86_400_000);
 }
 
-export function isAgedLead(ageDays: number | null): boolean {
-  return ageDays != null && ageDays > AGED_LEAD_DAYS;
+export function isAgedLead(ageDays: number | null, o: { oneShot?: boolean } = {}): boolean {
+  if (ageDays == null) return false;
+  if (ageDays > AGED_LEAD_DAYS) return true;
+  return Boolean(o.oneShot) && ageDays > 0;
 }
 
-/** The heads-up line used when a request is older than AGED_LEAD_DAYS. */
-export function agedLeadLine(days: number): string {
+/** The heads-up line for an older (or one-shot held) request. */
+export function agedLeadLine(days: number, o: { oneShot?: boolean } = {}): string {
+  if (o.oneShot && days <= 0) {
+    return "Heads up: this request came in today. It was held for review, but it's still worth a quick call to see if they're still looking.";
+  }
   const unit = days === 1 ? "day" : "days";
   return `Heads up: this request is from ${days} ${unit} ago, so it's an older lead, but still worth a quick call to see if they're still looking.`;
 }
@@ -369,6 +377,13 @@ function recipient(r: AlertInput, office: string): { to: string; toName: string 
   return { to: email || office, toName: r.listing.agentName ?? "Agent" };
 }
 
+/** For the one-shot: only email a holding agent, never fall back to the office. */
+export function oneShotAgentStatus(r: AlertInput): "ok" | "no assigned agent" | "no agent email" {
+  if (r.listing.agentId == null) return "no assigned agent";
+  if (!(r.agentEmail ?? "").trim()) return "no agent email";
+  return "ok";
+}
+
 export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSubjects?: Set<string> }): AutoMatchAlert {
   const message = leadMessage(r);
   const requestId = r.ask.postId as string;
@@ -378,7 +393,7 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
   const deskUrl = `${o.baseUrl}/realty/desk#${leadCardId(requestId, r.listingKey)}`;
   const mentioned = mentionedOnWhatsApp(postedOf(r), o.now);
   const ageDays = requestAgeDays(postedOf(r), o.now);
-  const aged = isAgedLead(ageDays);
+  const aged = isAgedLead(ageDays, { oneShot: o.oneShot });
   const fromName = o.fromName ?? ALERT_NAME;
   const fromEmail = o.fromEmail ?? null;
   const { to, toName } = recipient(r, o.officeEmail ?? OFFICE_TO);
@@ -389,7 +404,7 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
   const usd = isUsd(r.ask.currency);
   const cc = [...(o.cc ?? parseAddressList(ALERT_CC_DEFAULT))];
   const bcc = [...(o.bcc ?? parseAddressList(ALERT_BCC_DEFAULT))];
-  const agedLine = aged && ageDays != null ? agedLeadLine(ageDays) : null;
+  const agedLine = (aged || o.oneShot) && ageDays != null ? agedLeadLine(ageDays, { oneShot: o.oneShot }) : null;
   const view = { toName, mentioned, agedLine, listing, ask, usd, score: r.score, message, phoneText, tel, waUrl };
   return {
     to,
@@ -412,6 +427,7 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
     message,
     ageDays,
     listingTitle,
+    score: r.score,
   };
 }
 
@@ -538,9 +554,10 @@ export type AlertPlan = {
 export function planAlertDispatch(
   alerts: readonly AutoMatchAlert[],
   sent: readonly AlertSentRow[],
-  o: { enabled: boolean; sendExisting: boolean },
+  o: { enabled: boolean; sendExisting: boolean; holdKeys?: ReadonlySet<string> },
 ): AlertPlan {
   const byKey = new Map(sent.map((r) => [alertKey(r), r]));
+  const hold = o.holdKeys ?? new Set<string>();
   const send: AutoMatchAlert[] = [];
   const suppress: AutoMatchAlert[] = [];
   const skip: AutoMatchAlert[] = [];
@@ -561,6 +578,11 @@ export function planAlertDispatch(
       skip.push(a);
       continue;
     }
+    // First-review / held keys stay suppressed so the live poller does not email them before the one-shot.
+    if (hold.has(alertKey(a))) {
+      suppress.push(a);
+      continue;
+    }
     if (o.enabled && hasBaseline) send.push(a);
     else suppress.push(a);
   }
@@ -568,18 +590,41 @@ export function planAlertDispatch(
 }
 
 /**
- * The one-shot baseline send: only matches already recorded as suppressed.
- * Unrecorded (new) matches and already-sent keys are left alone, so this never changes how new matches are handled.
+ * The one-shot send: previously suppressed baseline matches, plus first-review matches (by key),
+ * de-duplicated, excluding already-sent keys. New unrecorded matches that are not in either set
+ * are left alone, so live alerts for genuinely new matches stay unchanged.
  */
-export function planBaselineSend(alerts: readonly AutoMatchAlert[], sent: readonly AlertSentRow[]): AutoMatchAlert[] {
+export function planOneShotSend(
+  alerts: readonly AutoMatchAlert[],
+  sent: readonly AlertSentRow[],
+  o: { reviewKeys?: ReadonlySet<string> } = {},
+): AutoMatchAlert[] {
   const byKey = new Map(sent.map((r) => [alertKey(r), r]));
-  return alerts.filter((a) => byKey.get(alertKey(a))?.kind === "suppressed");
+  const review = o.reviewKeys ?? new Set<string>();
+  const out: AutoMatchAlert[] = [];
+  const seen = new Set<string>();
+  for (const a of alerts) {
+    const key = alertKey(a);
+    if (seen.has(key)) continue;
+    const prev = byKey.get(key);
+    if (prev?.kind === "sent") continue;
+    if (prev?.kind === "suppressed" || review.has(key)) {
+      seen.add(key);
+      out.push(a);
+    }
+  }
+  return out;
+}
+
+/** @deprecated Use planOneShotSend. Kept as the suppressed-only subset. */
+export function planBaselineSend(alerts: readonly AutoMatchAlert[], sent: readonly AlertSentRow[]): AutoMatchAlert[] {
+  return planOneShotSend(alerts, sent);
 }
 
 /** What a flag flip would do right now, with sendExisting off: how many would go immediately vs only later new ones. */
-export function flipReport(alerts: readonly AutoMatchAlert[], sent: readonly AlertSentRow[]): { existing: number; wouldSendImmediately: number; wouldSuppress: number; alreadyRecorded: number } {
-  const off = planAlertDispatch(alerts, sent, { enabled: false, sendExisting: false });
-  const on = planAlertDispatch(alerts, [...sent, ...off.suppress.map((a) => ({ requestId: a.requestId, listingKey: a.listingKey, at: "", kind: "suppressed" as const }))], { enabled: true, sendExisting: false });
+export function flipReport(alerts: readonly AutoMatchAlert[], sent: readonly AlertSentRow[], holdKeys?: ReadonlySet<string>): { existing: number; wouldSendImmediately: number; wouldSuppress: number; alreadyRecorded: number } {
+  const off = planAlertDispatch(alerts, sent, { enabled: false, sendExisting: false, holdKeys });
+  const on = planAlertDispatch(alerts, [...sent, ...off.suppress.map((a) => ({ requestId: a.requestId, listingKey: a.listingKey, at: "", kind: "suppressed" as const }))], { enabled: true, sendExisting: false, holdKeys });
   return { existing: alerts.length, wouldSendImmediately: on.send.length, wouldSuppress: off.suppress.length, alreadyRecorded: off.skip.length };
 }
 

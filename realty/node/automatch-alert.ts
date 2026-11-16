@@ -16,15 +16,19 @@ import {
   alertSendExisting,
   alertSendState,
   alertAttribution,
+  buildAutoMatchAlert,
   buildAutoMatchAlerts,
   buildTestAutoMatchAlert,
   flipReport,
   planAlertDispatch,
-  planBaselineSend,
+  oneShotAgentStatus,
+  planOneShotSend,
   type AlertInput,
   type AlertSentRow,
   type AutoMatchAlert,
 } from "../flow/automatch-alert.ts";
+import { FIRST_REVIEW_SEEDS, resolveReviewSeeds, reviewKeysOf } from "../flow/automatch-alert-review.ts";
+import { shortListingTitle } from "../flow/listing-title.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import type { SeamAgent } from "../flow/crm-seam.ts";
 import { hasResendKey, resendApiKey, resendInputOf, sendResendEmail, type SendFetch } from "./automatch-alert-resend.ts";
@@ -61,17 +65,19 @@ export async function loadAutoMatchAlerts(o: AutomatchOpts & { test?: boolean } 
   const { result, agents } = await automatchRun({ ...o, env, root, now });
   const store = new PeriskopeStore(root);
   const opts = alertOptsFromEnv(env, now, { statuses: store.matchStatuses(), test: o.test });
-  const alerts = buildAutoMatchAlerts(result.pairs.map((p) => asInput(p, agents)), opts);
+  const inputs = result.pairs.map((p) => asInput(p, agents));
+  const alerts = buildAutoMatchAlerts(inputs, opts);
   const sent = store.automatchAlertSentRows();
   const enabled = alertEnabled(env);
   const sendExisting = alertSendExisting(env);
-  const plan = planAlertDispatch(alerts, sent, { enabled, sendExisting });
+  const holdKeys = reviewKeysOf(resolveReviewSeeds(result.pairs, FIRST_REVIEW_SEEDS));
+  const plan = planAlertDispatch(alerts, sent, { enabled, sendExisting, holdKeys });
   const state = alertSendState(env);
   const hasTransport = hasResendKey(env);
   return {
     alerts,
     plan,
-    flip: flipReport(alerts, sent),
+    flip: flipReport(alerts, sent, holdKeys),
     enabled,
     sendExisting,
     sending: enabled && hasTransport,
@@ -163,20 +169,37 @@ export async function deliverAlerts(
   return { sent, failed, results };
 }
 
-export type BaselinePreview = { agent: string; listingTitle: string; ageDays: number | null; subject: string };
+export type OneShotSkipped = {
+  reason: "no assigned agent" | "no agent email" | "unresolved";
+  agent: string | null;
+  listingTitle: string;
+  listingUrl: string | null;
+  ageDays: number | null;
+  score: number | null;
+};
+
+export type BaselinePreview = {
+  agent: string;
+  listingTitle: string;
+  ageDays: number | null;
+  subject: string;
+  score: number;
+};
 export type BaselineSendResult = {
   dryRun: boolean;
   wouldSend: number;
   sent: number;
   failed: number;
   results: Array<BaselinePreview & { id?: string | null; ok?: boolean }>;
+  skipped: OneShotSkipped[];
   error?: string;
 };
 
 /**
- * One-shot send of matches already recorded as suppressed (the go-live baseline). New unrecorded matches
- * are not sent and are not marked. dryRun previews only. A live send requires confirm === BASELINE_CONFIRM,
- * marks each successful send as sent so it can never go again, and returns Resend ids plus agent names only.
+ * One-shot send of the suppressed baseline plus the first-review matches, de-duplicated by request and listing.
+ * Listings with no assigned agent (or no agent email) are skipped and reported, not emailed to the office.
+ * dryRun previews only. A live send requires confirm === BASELINE_CONFIRM, marks each successful send as sent
+ * so it can never go again, and returns Resend ids plus agent names only. Genuinely new matches are not sent.
  */
 export async function sendBaselineAutoMatchAlerts(
   o: AutomatchOpts & { fetch?: SendFetch; dryRun?: boolean; confirm?: string } = {},
@@ -184,17 +207,64 @@ export async function sendBaselineAutoMatchAlerts(
   const env = o.env ?? runtimeEnv();
   const root = o.root ?? periskopeRoot(env);
   const now = o.now ?? new Date();
-  const loaded = await loadAutoMatchAlerts({ ...o, env, root, now });
+  const { result, agents } = await automatchRun({ ...o, env, root, now });
   const store = new PeriskopeStore(root);
-  const toSend = planBaselineSend(loaded.alerts, store.automatchAlertSentRows());
+  const sentRows = store.automatchAlertSentRows();
+  const opts = { ...alertOptsFromEnv(env, now, { statuses: store.matchStatuses() }), oneShot: true };
+  const inputs = result.pairs.map((p) => asInput(p, agents));
+  const inputByKey = new Map(inputs.map((r) => [`${r.ask.postId}|${r.listingKey}`, r]));
+  const resolved = resolveReviewSeeds(result.pairs, FIRST_REVIEW_SEEDS);
+  const reviewKeys = reviewKeysOf(resolved);
+  const skipped: OneShotSkipped[] = [];
+  for (const r of resolved) {
+    if (!r.pair) {
+      skipped.push({
+        reason: "unresolved",
+        agent: null,
+        listingTitle: r.seed.listingUrl,
+        listingUrl: r.seed.listingUrl,
+        ageDays: null,
+        score: null,
+      });
+    }
+  }
+  const usedSubjects = new Set<string>();
+  const built: AutoMatchAlert[] = [];
+  const seen = new Set<string>();
+  const considerKeys = new Set<string>([
+    ...sentRows.filter((r) => r.kind === "suppressed").map((r) => `${r.requestId}|${r.listingKey}`),
+    ...reviewKeys,
+  ]);
+  for (const key of considerKeys) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const row = inputByKey.get(key);
+    if (!row) continue;
+    const listingTitle = shortListingTitle(row.listing);
+    const status = oneShotAgentStatus(row);
+    if (status !== "ok") {
+      skipped.push({
+        reason: status,
+        agent: status === "no assigned agent" ? null : (row.listing.agentName ?? "Agent"),
+        listingTitle,
+        listingUrl: row.listing.url ?? null,
+        ageDays: null,
+        score: row.score,
+      });
+      continue;
+    }
+    built.push(buildAutoMatchAlert(row, { ...opts, usedSubjects, oneShot: true }));
+  }
+  const toSend = planOneShotSend(built, sentRows, { reviewKeys });
   const preview: BaselinePreview[] = toSend.map((a) => ({
     agent: a.toName,
     listingTitle: a.listingTitle,
     ageDays: a.ageDays,
     subject: a.subject,
+    score: a.score,
   }));
   if (o.dryRun) {
-    return { dryRun: true, wouldSend: toSend.length, sent: 0, failed: 0, results: preview };
+    return { dryRun: true, wouldSend: toSend.length, sent: 0, failed: 0, results: preview, skipped };
   }
   if (o.confirm !== BASELINE_CONFIRM) {
     return {
@@ -203,11 +273,12 @@ export async function sendBaselineAutoMatchAlerts(
       sent: 0,
       failed: 0,
       results: preview,
+      skipped,
       error: `Refused: --send-baseline requires --dry-run or --confirm ${BASELINE_CONFIRM}. Nothing was sent.`,
     };
   }
   if (!hasResendKey(env)) {
-    return { dryRun: false, wouldSend: toSend.length, sent: 0, failed: toSend.length, results: preview, error: "RESEND_API_KEY is not set" };
+    return { dryRun: false, wouldSend: toSend.length, sent: 0, failed: toSend.length, results: preview, skipped, error: "RESEND_API_KEY is not set" };
   }
   const r = await deliverAlerts(toSend, { env, now, store, fetch: o.fetch });
   return {
@@ -215,6 +286,7 @@ export async function sendBaselineAutoMatchAlerts(
     wouldSend: toSend.length,
     sent: r.sent,
     failed: r.failed,
+    skipped,
     results: r.results.map((row, i) => ({ ...preview[i], ok: row.ok, id: row.id })),
   };
 }
