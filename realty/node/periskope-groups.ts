@@ -23,6 +23,7 @@ export const INTAKE_GROUPS = [
   { chatId: "18683898353-1597076235@g.us", chatName: "Top Notch Realtors" },
   { chatId: "18687143939-1555072973@g.us", chatName: "T&T Realty Co Broke Group" },
   { chatId: "120363421375699959@g.us", chatName: "Co-Broke 🤝" },
+  { chatId: "18684781548-1520973114@g.us", chatName: "Tobago- TR" },
 ] as const;
 
 /** The brokerage's own staff chats. Matched against the group name; an auto-discovered group with one of these names is never polled. */

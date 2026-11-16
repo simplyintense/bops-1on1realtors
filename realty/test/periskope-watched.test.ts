@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { allowlistCheck } from "../flow/periskope.ts";
-import { discoverGroups, type ApiChat } from "../node/periskope-discover.ts";
+import { discoverGroups, discoveryVerdict, type ApiChat } from "../node/periskope-discover.ts";
 import { INTAKE_GROUPS, pollGroups } from "../node/periskope-groups.ts";
 import { handleWebhook } from "../node/periskope-intake.ts";
 import { pollOnce, type PollResult } from "../node/periskope-poll.ts";
@@ -182,4 +182,12 @@ test("an unsigned or wrongly signed POST is 401, and no signing key is 503, for 
   const noKey = await postTo(w, payload(DISC, "wh-unsigned-1"), { ...w.env, PERISKOPE_SIGNING_KEY: "" }, webhookFetch(), createHmac("sha256", KEY).update(raw).digest("hex"));
   assert.equal(noKey.status, 503);
   assert.ok(!w.store().isSeen("wh-unsigned-1"), "nothing stored by a rejected post");
+});
+
+test("Tobago- TR is pinned so the poller watches it, even though discovery would skip the name as not_real_estate", () => {
+  const g = INTAKE_GROUPS.find((x) => x.chatName === "Tobago- TR");
+  assert.ok(g, "pinned in INTAKE_GROUPS");
+  assert.equal(g.chatId, "18684781548-1520973114@g.us");
+  assert.equal(discoveryVerdict({ chat_id: g.chatId, chat_name: g.chatName, member_count: 83 }).reason, "not_real_estate");
+  assert.ok(pollGroups("/no-roster", {}).some((x) => x.chatId === g.chatId && x.source === "pinned"));
 });
