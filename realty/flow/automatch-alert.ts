@@ -18,9 +18,9 @@ import type { StatusRow } from "./match-status.ts";
  * User-facing name: "1on1 Auto-Match Alert". The word "Bops" must never appear in the from name, the subject, the body or
  * the footer (it may appear in internal module names only). The default sender is "1on1 Auto-Match Alert". The body never
  * names Miles. Each alert is CC'd to AUTOMATCH_ALERT_CC (default Chrystalle and Wendy) when ALERT_CC_STAFF is on
- * (the default) and BCC'd to AUTOMATCH_ALERT_BCC (default Miles). When ALERT_CC_STAFF is off, the agent is the only
- * To recipient; Miles stays on BCC. The BCC list is for the transport only: it must not appear in the From, To, Cc,
- * Subject, or body that agents see.
+ * (the default) and BCC'd to AUTOMATCH_ALERT_BCC (default Miles). When ALERT_CC_STAFF is off, there is no CC: the
+ * agent is the only To recipient, admin@ is added to BCC, and Miles stays on BCC. Wendy is not copied. The BCC list
+ * is for the transport only: it must not appear in the From, To, Cc, Subject, or body that agents see.
  *
  * Per alert, in order: an opening line (the posted day and time in AST, "Based on a message received on WhatsApp on Tuesday 10
  * Nov at 5:30 PM AST …"), the older-lead heads-up when it applies, a Contact block (the sender's name, the tap-to-call number,
@@ -49,8 +49,11 @@ export const ALERT_CC_FLAG = "AUTOMATCH_ALERT_CC";
 
 export const ALERT_CC_DEFAULT = "admin@1on1realtors.com,wendy@1on1realtors.com";
 
-/** Staff CC switch for instant alerts. On by default. When "0", "false" or "off", CC is empty (agent only; BCC unchanged). */
+/** Staff CC switch for instant alerts. On by default. When "0", "false" or "off", CC is empty and admin@ is BCC'd with Miles. Wendy is not copied. */
 export const ALERT_CC_STAFF_FLAG = "ALERT_CC_STAFF";
+
+/** Hidden staff copy added to BCC when ALERT_CC_STAFF is off (Wendy is not included). */
+export const ALERT_STAFF_BCC_DEFAULT = "admin@1on1realtors.com";
 
 /** Comma-separated BCC list. Unset uses ALERT_BCC_DEFAULT (Miles). Not shown in the agent-facing headers or body. */
 export const ALERT_BCC_FLAG = "AUTOMATCH_ALERT_BCC";
@@ -249,9 +252,32 @@ export function alertCc(env: Env = {}): string[] {
   return listOrDefault(env, ALERT_CC_FLAG, ALERT_CC_DEFAULT);
 }
 
-/** BCC addresses: AUTOMATCH_ALERT_BCC, or Miles when unset. Never shown in the agent-facing message. */
+function mergeAddresses(...lists: readonly (readonly string[])[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const list of lists) {
+    for (const raw of list) {
+      const e = raw.trim().toLowerCase();
+      if (!e || seen.has(e)) continue;
+      seen.add(e);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+/** BCC addresses: AUTOMATCH_ALERT_BCC, or Miles when unset. When ALERT_CC_STAFF is off, admin@ is included too. Never shown in the agent-facing message. */
 export function alertBcc(env: Env = {}): string[] {
-  return listOrDefault(env, ALERT_BCC_FLAG, ALERT_BCC_DEFAULT);
+  const bcc = listOrDefault(env, ALERT_BCC_FLAG, ALERT_BCC_DEFAULT);
+  if (alertCcStaff(env)) return bcc;
+  return mergeAddresses(parseAddressList(ALERT_STAFF_BCC_DEFAULT), bcc);
+}
+
+/** Operator-facing envelope (To / Cc / Bcc). Not part of the agent-facing email. */
+export function alertEnvelopeLines(a: { to: string; cc: readonly string[]; bcc: readonly string[] }): string {
+  const cc = a.cc.length ? a.cc.join(", ") : "(none)";
+  const bcc = a.bcc.length ? a.bcc.join(", ") : "(none)";
+  return `To: ${a.to}\nCc: ${cc}\nBcc: ${bcc}`;
 }
 
 /** Agent-email allowlist; empty means every agent with a strong match. */

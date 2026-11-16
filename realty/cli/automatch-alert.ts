@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { BASELINE_CONFIRM, parseAlertArgs, SEND_OFF } from "../flow/automatch-alert.ts";
+import { alertEnvelopeLines, BASELINE_CONFIRM, parseAlertArgs, SEND_OFF } from "../flow/automatch-alert.ts";
 import { loadAutoMatchAlerts, sendBaselineAutoMatchAlerts, sendTestAutoMatchAlert, syncAutoMatchAlerts } from "../node/automatch-alert.ts";
 import { searchRoot } from "./search-args.ts";
 
@@ -14,7 +14,7 @@ import { searchRoot } from "./search-args.ts";
  *   npm run realty:automatch-alert -- --txt PATH           writes the first plain-text preview (or all, joined) to PATH
  *   npm run realty:automatch-alert -- --out PATH           writes the first HTML preview to PATH
  *   npm run realty:automatch-alert -- --test               prefixes subjects with [TEST]
- *   npm run realty:automatch-alert -- --counts             summary counts only (no bodies, no addresses)
+ *   npm run realty:automatch-alert -- --counts             dry-run counts and recipient headers (To/Cc/Bcc); nothing is sent
  *   npm run realty:automatch-alert -- --test-send          sends ONE fake [TEST] alert to miles@simplyintense.com only
  *   npm run realty:automatch-alert -- --test-send --aged   same, with a 32-day-old sample so the aged-lead line is visible
  *   npm run realty:automatch-alert -- --send-baseline --dry-run
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
   }
   const root = searchRoot();
   const loaded = await loadAutoMatchAlerts({ root, test: args.test });
-  await syncAutoMatchAlerts({ root });
+  if (!args.counts) await syncAutoMatchAlerts({ root });
   const n = loaded.alerts.length;
   const summary =
     `Auto-Match Alert preview: ${n} match${n === 1 ? "" : "es"}. ` +
@@ -99,7 +99,16 @@ async function main(): Promise<void> {
     `On flip: ${loaded.flip.wouldSendImmediately} would go immediately, ${loaded.flip.wouldSuppress} would be held as the baseline. ` +
     `Enabled: ${loaded.enabled}. Transport: ${loaded.hasTransport ? "yes" : "no"}. Nothing bulk-sent from this CLI.`;
   console.error(summary);
-  if (args.counts) return;
+  if (args.counts) {
+    const sample = loaded.plan.send[0] ?? loaded.alerts[0];
+    if (sample) {
+      console.error(`Recipient headers (dry-run, nothing sent)${loaded.plan.send.length ? " for the next send" : " for a built alert (none waiting to send)"}:`);
+      console.error(alertEnvelopeLines(sample));
+    } else {
+      console.error("No alerts to show recipient headers for.");
+    }
+    return;
+  }
   const text = loaded.alerts
     .map((a) => `To: ${a.to}\nCc: ${a.cc.join(", ")}\nFrom: ${a.from}\nSubject: ${a.subject}\n\n${a.text}`)
     .join("\n-----\n");
