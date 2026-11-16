@@ -17,7 +17,7 @@ import type { Listing } from "./source.ts";
  *   area 30     same area 30, nearby 15
  *   beds 20     exact 20, one off 10, missing 0
  *   type 10     sale/rent agrees (5; eligibility makes it agree) + kind of place agrees (5; no type asked is 5)
- *   recency 15  the ask's posted date (first seen, else last seen): full today, halving every 7 days (7.5 at a week, under 1 by 30 days)
+ *   recency 15  the ask's posted date (first seen, else last seen), by whole days old: 15 to 30 days, 12 to 60, 9 to 90, 6 to 120, 3 to 365, 0 after
  * The parts add up to at most 100 and the score is their rounded sum. Bands: 75+ strong, 50–74 fair, below 50 not shown.
  *
  * One sender's near-identical asks (sameDemandAsk) that hit the same listing are one row: the best score stands (tie: the newer
@@ -29,10 +29,21 @@ import type { Listing } from "./source.ts";
 export const STRONG = 75;
 export const FAIR = 50;
 
-const WEIGHT = { price: 25, area: 30, beds: 20, saleRent: 5, kind: 5, recency: 15 } as const;
+const WEIGHT = { price: 25, area: 30, beds: 20, saleRent: 5, kind: 5 } as const;
 const DAY_MS = 86_400_000;
-/** Recency: full today, halving every RECENCY_HALF_LIFE_DAYS (no hard zero: the decay just runs on). */
-const RECENCY_HALF_LIFE_DAYS = 7;
+/** Recency by the ask's age in whole days: [the most days in the tier, its points]. Over the last tier is 0. */
+const RECENCY_TIERS: readonly (readonly [number, number])[] = [
+  [30, 15],
+  [60, 12],
+  [90, 9],
+  [120, 6],
+  [365, 3],
+];
+
+function recencyPoints(days: number): number {
+  const whole = Math.floor(days);
+  return RECENCY_TIERS.find(([most]) => whole <= most)?.[1] ?? 0;
+}
 
 /**
  * A demand record as the scorer reads it: one ask, and when it was last seen (ISO). `postedAt` is when the ask was first seen
@@ -115,7 +126,7 @@ export function scorePair(ask: Omit<AutomatchAsk, "id">, l: Listing, o: { areaRe
   if (!Number.isFinite(seen)) recency = { points: 0, text: "posted date unknown" };
   else {
     const days = Math.max(0, (o.now.getTime() - seen) / DAY_MS);
-    recency = { points: WEIGHT.recency * 0.5 ** (days / RECENCY_HALF_LIFE_DAYS), text: days < 1 ? "posted today" : `posted ${plural(Math.floor(days), "day")} ago` };
+    recency = { points: recencyPoints(days), text: days < 1 ? "posted today" : `posted ${plural(Math.floor(days), "day")} ago` };
   }
 
   const parts: ScoreParts = { price: price.points, area: area.points, beds: beds.points, saleRent, kind, recency: recency.points };

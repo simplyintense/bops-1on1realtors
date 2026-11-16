@@ -108,6 +108,8 @@ const ROW = (over: Partial<LeadInput> = {}, ask: Partial<LeadInput["ask"]> = {},
 const BASE_OPTS = { statuses: [] as StatusRow[], baseUrl: BASE, now: NOW };
 
 const wordsOf = (s: string): string => s.replace(/\s+/g, " ").trim();
+/** The text body with its wa.me URL read as the HTML link word, 'here'. */
+const linkAsHere = (text: string, url: string | null): string => (url ? text.replace(url, "here") : text);
 
 test("the default From display name is 1on1 Auto-Match Alert, not 1on1 Bops, and Miles is one switch", () => {
   assert.equal(ALERT_NAME, "1on1 Auto-Match Alert");
@@ -253,7 +255,7 @@ test("a request older than 14 calendar days in AST gets an older-lead line and s
   assert.match(testAged.text, /from 32 days ago/);
   assert.deepEqual(testAged.cc, []);
   assert.deepEqual(testAged.bcc, []);
-  assert.equal(wordsOf(aged.text), wordsOf(alertTextFromHtml(aged.html)));
+  assert.equal(wordsOf(linkAsHere(aged.text, aged.waUrl)), wordsOf(alertTextFromHtml(aged.html)));
 });
 
 test("every alert gets a unique subject so Gmail will not thread them together", () => {
@@ -306,9 +308,10 @@ test("the contact's direct number is a readable E.164-style line with a tel: lin
   assert.equal(a.tel, "tel:+18685550100");
   assert.ok(a.waUrl?.startsWith("https://wa.me/18685550100?text="));
   assert.match(a.text, /Call: \+1 868 555 0100 \(tel:\+18685550100\)/);
-  assert.match(a.text, /WhatsApp, with the message filled in \(opens in your own browser\): https:\/\/wa\.me\/18685550100\?text=/);
+  assert.match(a.text, /WhatsApp, with the message filled in:\nhttps:\/\/wa\.me\/18685550100\?text=/);
   assert.match(a.html, /<a href="tel:\+18685550100">\+1 868 555 0100<\/a>/);
-  assert.ok(a.html.includes(`<a href="${a.waUrl}">${a.waUrl}</a>`));
+  assert.ok(a.html.includes(`<a href="${a.waUrl}">here</a>`));
+  assert.equal(a.html.includes(`>${a.waUrl}<`), false, "the raw wa.me URL is not visible HTML text");
   assert.equal(decodeURIComponent(a.waUrl?.split("?text=")[1] ?? ""), a.message);
   assert.equal(a.message, leadMessage(ROW()));
 
@@ -384,7 +387,7 @@ test("the text and the HTML say the same words (whitespace collapsed), and the H
   const allowed = new Set(["html", "body", "p", "h3", "ul", "li", "a", "br", "strong"]);
   for (const rows of cases) {
     const a = buildAutoMatchAlert(rows[0], BASE_OPTS);
-    assert.equal(wordsOf(a.text), wordsOf(alertTextFromHtml(a.html)));
+    assert.equal(wordsOf(linkAsHere(a.text, a.waUrl)), wordsOf(alertTextFromHtml(a.html)), "the link is 'here' in the HTML and the URL in the text");
     assert.doesNotMatch(a.html, /\sstyle\s*=|class=|id=/i);
     for (const m of a.html.matchAll(/<\/?([a-z0-9]+)\b([^>]*)>/gi)) {
       assert.ok(allowed.has(m[1].toLowerCase()), m[1]);
