@@ -34,6 +34,12 @@ import { syncFromJsonl, type SyncResult } from "./search-store.ts";
 export const POLL_EVERY_MS = 10 * 60_000;
 export const DEFAULT_PHONE_ID = "phone-cykqswyyyicimtti";
 const OVERLAP_MS = 2 * 60_000;
+/**
+ * Every poll re-reads at least the last hour of each group, however new the newest stored post is. The newest post can
+ * be newer than messages we don't have yet (a webhook delivery that arrived first, or a message the API listed late),
+ * and a window starting at the newest post would skip those for good. Already-seen messages are cheap no-ops.
+ */
+export const POLL_LOOKBACK_FLOOR_MS = 60 * 60_000;
 
 export type PollGroupResult = {
   chatId: string;
@@ -137,8 +143,9 @@ function startTimeFor(store: PeriskopeStore, chatId: string, cursor: Cursor, now
     .sort()
     .at(-1);
   const raw = fromCursor && latest ? (fromCursor > latest ? fromCursor : latest) : fromCursor || latest;
-  if (raw) return iso(new Date(new Date(raw).getTime() - OVERLAP_MS));
-  return iso(new Date(now.getTime() - POLL_EVERY_MS));
+  const floor = now.getTime() - POLL_LOOKBACK_FLOOR_MS;
+  if (raw) return iso(new Date(Math.min(new Date(raw).getTime() - OVERLAP_MS, floor)));
+  return iso(new Date(floor));
 }
 
 /** Groups new to the store (no cursor, no posts): the first fetch covers the last seven days. */

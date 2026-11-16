@@ -131,8 +131,13 @@ test("an added group gets the owner waiver once and a 7-day backfill on its firs
   const later = new Date(NOW.getTime() + 10 * MIN);
   await pollOnce({ root: w.root, env: {}, apiKey: "test-key", now: () => later, fetcher, crm: null });
   assert.notEqual(startTimeFor(fetcher.urls, NEW.chat_id), sevenDaysAgo, "not the seven-day window again");
-  // No posts yet, so the cursor from the first poll (NOW) less the two-minute overlap.
-  assert.equal(startTimeFor(fetcher.urls, NEW.chat_id), new Date(NOW.getTime() - 2 * MIN).toISOString(), "the cursor less the overlap");
+  // No posts yet: the cursor from the first poll (NOW) less the two-minute overlap, but never less than the last hour.
+  assert.equal(startTimeFor(fetcher.urls, NEW.chat_id), new Date(later.getTime() - 60 * MIN).toISOString(), "at least the last hour");
+
+  // Hours later with no new posts: the old cursor less the overlap is older than the hour floor, so it is kept.
+  const much = new Date(NOW.getTime() + 5 * 60 * MIN);
+  await pollOnce({ root: w.root, env: {}, apiKey: "test-key", now: () => much, fetcher, crm: null });
+  assert.equal(startTimeFor(fetcher.urls, NEW.chat_id), new Date(NOW.getTime() - 2 * MIN).toISOString(), "the wider of the two windows");
 });
 
 test("discovery runs at most once an hour, and a second run adds nothing and rewrites no consent", async () => {
