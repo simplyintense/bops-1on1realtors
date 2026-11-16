@@ -46,6 +46,8 @@ export type LeadInput = {
     senderName: string | null;
     firm: string | null;
     senderPhone: string;
+    /** The contact's WhatsApp message as posted (no group name). Used to check the words in the suggested reply, and quoted by the alert. */
+    originalText?: string | null;
   };
   listing: {
     /** The CRM title as it came; the cards and messages show shortListingTitle of it (with the fields below). */
@@ -133,6 +135,66 @@ function placeWords(beds: number | null, type: string | null, dash: boolean): st
   return [b, type].filter(Boolean).join(" ") || (dash ? "property" : "place");
 }
 
+/**
+ * The public listing link, or null. Only http(s) on 1on1realtors.com or www.1on1realtors.com, with no login in the URL. Any other
+ * host (bop.1on1realtors.com included) gives null, so an email or message never carries it. Pure.
+ */
+export function publicListingUrl(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s || !/^https?:\/\//i.test(s)) return null;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  if (u.username || u.password) return null;
+  const host = u.hostname.toLowerCase();
+  if (host !== "1on1realtors.com" && host !== "www.1on1realtors.com") return null;
+  return u.toString();
+}
+
+/** Whole-word, case-insensitive: the area's words as they are, separated by anything, not part of a longer word. */
+function wordIn(phrase: string, text: string): boolean {
+  const words = phrase.trim().split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!words.length) return false;
+  return new RegExp(`(?<!\\p{L})${words.join("\\s+")}(?!\\p{L})`, "iu").test(text);
+}
+
+/**
+ * A type word as the message writes it: "townhouse" matches "town house", "town-house" and "townhouses"; "house" does not match
+ * inside "townhouse". Pure.
+ */
+export function typeWordIn(type: string, text: string): boolean {
+  const letters = type.trim().toLowerCase().replace(/[\s-]+/g, "");
+  if (!letters) return false;
+  const body = [...letters].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s-]?");
+  return new RegExp(`(?<!\\p{L})${body}s?(?!\\p{L})`, "iu").test(text);
+}
+
+/** Words that can mean the message offers more than one place ("open to", "or", "and", a slash). Conservative on purpose. */
+const MULTI_AREA_CUE = /\b(open to|or|and|either|also|nearby|anywhere|neighbou?rs?|neighbou?rhood)\b|[/&+]/i;
+
+/** True when the message reads as offering alternative areas, so no single area should be pinned on the contact. */
+export function offersSeveralAreas(text: string): boolean {
+  return MULTI_AREA_CUE.test(text);
+}
+
+/**
+ * The ask's words for the suggested reply, with no invented type or area. A type shows only when the parsed type is set and, if the
+ * original message is there, the message says it. An area shows only when the parsed area is set, and, if the message is there, the
+ * message names that area and does not offer several areas. Pure.
+ */
+export function askPlaceWords(a: LeadInput["ask"]): string {
+  const text = (a.originalText ?? "").trim();
+  const type = a.type && (!text || typeWordIn(a.type, text)) ? a.type : null;
+  const area = a.area && (!text || (wordIn(a.area, text) && !offersSeveralAreas(text))) ? a.area : null;
+  const beds = a.beds != null ? (type ? `${a.beds} bed` : `${a.beds} bedroom`) : null;
+  const what = [beds, type].filter(Boolean).join(" ") || "place";
+  return area ? `${what} in ${area}` : what;
+}
+
 /** The budget as the desk's plain line: TT$ as it reads, a USD ask as "asked in US$ (US$650k ≈ TT$4.41m)". A rent is a month. */
 function budgetPlain(budget: number, currency: string, listingType: "sale" | "rent"): string {
   const rent = listingType === "rent" ? " a month" : "";
@@ -162,11 +224,11 @@ export function listingPriceText(l: LeadInput["listing"], listingType: "sale" | 
 export function leadMessage(r: LeadInput): string {
   const hi = firstNameOf(r.ask.senderName);
   const a = r.ask;
-  const want = `a client looking for a ${placeWords(a.beds, a.type, false)} in ${a.area}`;
+  const want = `a client looking for a ${askPlaceWords(a)}`;
   const budget = a.budget != null ? ` around ${budgetMsg(a.budget, a.currency, a.listingType)}` : "";
   const price = listingPriceText(r.listing, a.listingType);
-  const link = r.listing.url ? `: ${r.listing.url}` : "";
-  const have = `I have ${shortListingTitle(r.listing)}${price ? ` at ${price}` : ""}${link}`;
+  const link = publicListingUrl(r.listing.url);
+  const have = `I have ${shortListingTitle(r.listing)}${price ? ` at ${price}` : ""}${link ? `: ${link}` : ""}`;
   return `${hi ? `Hi ${hi},` : "Hi,"} I hear you have ${want}${budget}. ${have}. Happy to set up a viewing.`;
 }
 

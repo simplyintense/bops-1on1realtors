@@ -302,6 +302,8 @@ test("an owner sees the same-area pair with the holder's name, the stored post, 
   assert.equal(row.listing.agentName, "Dana Holder");
   assert.equal(row.listing.url, "https://1on1realtors.com/property/test-flat-westmoorings");
   assert.equal(row.ask.senderName, "Test Renter");
+  assert.equal(row.ask.originalText, "Looking to rent a 2 bed apartment in Westmoorings, up to TT$9,000", "the contact's message is threaded through for the alert and the reply");
+  assert.equal("groupName" in row.ask || "chatName" in row.ask, false, "no group name on the row");
   assert.match(row.ask.postId ?? "", /^[0-9a-f]{24}$/);
   assert.deepEqual([view.strong, view.fair], [1, 0]);
 });
