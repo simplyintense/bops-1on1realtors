@@ -18,6 +18,7 @@ import { checkSubscription, checkWebhookHealth, SUBSCRIPTION_CHECK_MS } from "./
 import { GAP_EVERY_MS, runGapReport } from "./webhook-gap.ts";
 import { sweepMedia } from "./listing-media.ts";
 import { syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
+import { startDailySummaryScheduler, tickDailySummarySafely } from "./daily-summary.ts";
 import { syncFromJsonl, type SyncResult } from "./search-store.ts";
 
 /**
@@ -293,6 +294,10 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
   try {
     await syncAutoMatchAlertsSafely({ root, env, now: at });
   } catch {}
+  // Morning daily summary (no-op while DAILY_SUMMARY_ENABLED is off). Never fail the poll for it.
+  try {
+    await tickDailySummarySafely({ root, env, now: at });
+  } catch {}
   return { at: iso(at), ok: true, groups, fetched, added, alertsAdded, groupsAdded, discovery, searchSync: searchSyncSafely(root), ...(health ? { health } : {}) };
 }
 
@@ -370,4 +375,5 @@ export function startPeriskopePoller(opts: PollOptions = {}): void {
   };
   setTimeout(watch, 20_000);
   g.__bopsWebhookWatch = setInterval(watch, SUBSCRIPTION_CHECK_MS);
+  startDailySummaryScheduler({ root: opts.root, env: opts.env });
 }

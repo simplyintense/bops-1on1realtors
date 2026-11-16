@@ -7,6 +7,7 @@ import { applyRecordOverride, type GroupConsent, type Kind, type KindOverride, t
 import { applyStatus, type StatusChange, type StatusRow } from "../flow/match-status.ts";
 import type { MatchSeenRow } from "../flow/automatch-leads.ts";
 import type { AlertSentRow } from "../flow/automatch-alert.ts";
+import type { DailySummarySentRow } from "../flow/daily-summary.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
 import { appendJsonl } from "./jsonl.ts";
 
@@ -70,6 +71,7 @@ const FILES = {
   matchStatus: "match-status.jsonl",
   matchSeen: "match-seen.jsonl",
   automatchAlertSent: "automatch-alert-sent.jsonl",
+  dailySummarySent: "daily-summary-sent.jsonl",
   posts: "posts.jsonl",
   supply: "supply.jsonl",
   demand: "demand.jsonl",
@@ -490,5 +492,18 @@ export class PeriskopeStore {
       return;
     }
     this.add("automatchAlertSent", next);
+  }
+
+  /* ---- Daily Auto-Match summary (one morning email per AST day) ---- */
+
+  dailySummarySentRows(): DailySummarySentRow[] {
+    return this.rows<DailySummarySentRow>("dailySummarySent");
+  }
+
+  /** Records one successful morning send for a day. A second row for the same day is ignored. */
+  recordDailySummarySent(row: DailySummarySentRow): boolean {
+    if (this.dailySummarySentRows().some((r) => r.dayKey === row.dayKey)) return false;
+    this.add("dailySummarySent", row);
+    return true;
   }
 }

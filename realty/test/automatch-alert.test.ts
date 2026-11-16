@@ -9,6 +9,7 @@ import {
   ALERT_BCC_FLAG,
   ALERT_CC_DEFAULT,
   ALERT_CC_FLAG,
+  ALERT_CC_STAFF_FLAG,
   ALERT_ENABLED_FLAG,
   ALERT_FROM_ADDRESS_DEFAULT,
   ALERT_FROM_EMAIL_FLAG,
@@ -34,6 +35,7 @@ import {
   alertAttribution,
   alertBcc,
   alertCc,
+  alertCcStaff,
   alertFromAddress,
   alertFromHeader,
   alertIdempotencyKey,
@@ -193,6 +195,7 @@ test("the rendered subject and bodies never mention Bops or link to bop.1on1real
 test("each alert is CC'd to Crystal and Wendy, and BCC'd to Miles, who stays off the agent-facing headers and body", () => {
   assert.equal(ALERT_CC_DEFAULT, "admin@1on1realtors.com,wendy@1on1realtors.com");
   assert.equal(ALERT_BCC_DEFAULT, "miles@simplyintense.com");
+  assert.equal(alertCcStaff({}), true, "ALERT_CC_STAFF defaults on");
   assert.deepEqual(alertCc({}), ["admin@1on1realtors.com", "wendy@1on1realtors.com"]);
   assert.deepEqual(alertBcc({}), ["miles@simplyintense.com"]);
   const a = buildAutoMatchAlert(ROW(), BASE_OPTS);
@@ -210,6 +213,20 @@ test("each alert is CC'd to Crystal and Wendy, and BCC'd to Miles, who stays off
   assert.deepEqual(custom.cc, ["wendy@1on1realtors.com"]);
   assert.deepEqual(custom.bcc, ["owner@1on1.example"]);
   assert.doesNotMatch([custom.from, custom.subject, custom.text, custom.html].join("\n"), /owner@1on1\.example/);
+});
+
+test("ALERT_CC_STAFF off drops the staff CC, even when AUTOMATCH_ALERT_CC is set; Miles stays on BCC", () => {
+  assert.equal(ALERT_CC_STAFF_FLAG, "ALERT_CC_STAFF");
+  assert.equal(alertCcStaff({}), true);
+  assert.equal(alertCcStaff({ [ALERT_CC_STAFF_FLAG]: "true" }), true);
+  assert.equal(alertCcStaff({ [ALERT_CC_STAFF_FLAG]: "1" }), true);
+  for (const off of ["0", "false", "off", "no"]) {
+    assert.equal(alertCcStaff({ [ALERT_CC_STAFF_FLAG]: off }), false, off);
+    assert.deepEqual(alertCc({ [ALERT_CC_STAFF_FLAG]: off, [ALERT_CC_FLAG]: "wendy@1on1realtors.com" }), []);
+  }
+  const a = buildAutoMatchAlert(ROW(), { ...BASE_OPTS, cc: alertCc({ [ALERT_CC_STAFF_FLAG]: "false" }) });
+  assert.deepEqual(a.cc, []);
+  assert.deepEqual(a.bcc, ["miles@simplyintense.com"]);
 });
 
 test("the subject names the type, beds, area and price, and leaves out unknown parts", () => {
