@@ -26,7 +26,7 @@ ENV NODE_ENV=production \
     BOPS_SELF_HOSTED=1 \
     BOPS_LOGIN_GATE=google
 # ca-certificates for the calls out (Orgo, OpenAI, Google, the CRM); tini so signals reach Node.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini gosu && rm -rf /var/lib/apt/lists/* \
   && useradd --create-home --uid 10001 bops
 COPY --from=build --chown=bops:bops /app/.next/standalone ./
 COPY --from=build --chown=bops:bops /app/.next/static ./.next/static
@@ -36,7 +36,9 @@ COPY --from=build --chown=bops:bops /app/public ./public
 COPY --from=build --chown=bops:bops /app/realty ./realty
 # State (.data/: chats, bots, settings) lives on the host's volume mounted here, so a deploy keeps it.
 RUN mkdir -p /app/.data && chown bops:bops /app/.data
-USER bops
+# Stay root so the entrypoint can chown volume files left behind by fly ssh, then drop to bops.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 EXPOSE 8080
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

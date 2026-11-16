@@ -52,6 +52,16 @@ One instance only on either host: the state is a file on the volume, which two i
 (Upstream's Postgres mode, `BOPS_DATABASE_URL`, is for Bops Cloud's own multi-user hosting and isn't
 used here.)
 
+On Fly, `fly ssh` is root. The app runs as `bops`, so a CLI run as root can leave volume files
+(mode 0600) the app can no longer write, and intake starts returning 500. Run tools as `bops`:
+
+```sh
+flyctl ssh console -a bop-1on1realtors -C "su -s /bin/sh bops -c 'cd /app && npx tsx realty/cli/automatch-alert.ts --counts'"
+```
+
+The image entrypoint also returns any root-owned files under `/app/.data` (except `lost+found`) to
+`bops` at start, then drops privileges.
+
 ### Public demo on Vercel (demo data only)
 
 A free Vercel project imported from this repo (framework Next.js, default `npm run build`) serves only the
