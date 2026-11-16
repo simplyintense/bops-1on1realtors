@@ -3,6 +3,7 @@ import { periskopeRoot } from "./periskope-root.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 import {
   ALERT_NAME,
+  BASELINE_CONFIRM,
   SEND_OFF,
   TEST_ALERT_TO,
   alertEnabled,
@@ -19,6 +20,7 @@ import {
   buildTestAutoMatchAlert,
   flipReport,
   planAlertDispatch,
+  planBaselineSend,
   type AlertInput,
   type AlertSentRow,
   type AutoMatchAlert,
@@ -114,18 +116,35 @@ export async function syncAutoMatchAlertsSafely(o: AutomatchOpts = {}): Promise<
   }
 }
 
+export type DeliveredAlert = {
+  agent: string;
+  listingTitle: string;
+  ageDays: number | null;
+  requestId: string;
+  listingKey: string;
+  ok: boolean;
+  id: string | null;
+};
+
 export async function deliverAlerts(
   alerts: AutoMatchAlert[],
   o: { env: Env; now: Date; store: PeriskopeStore; fetch?: SendFetch },
-): Promise<{ sent: number; failed: number }> {
+): Promise<{ sent: number; failed: number; results: DeliveredAlert[] }> {
   const apiKey = resendApiKey(o.env);
-  if (!apiKey) return { sent: 0, failed: alerts.length };
+  if (!apiKey) {
+    return {
+      sent: 0,
+      failed: alerts.length,
+      results: alerts.map((a) => ({ agent: a.toName, listingTitle: a.listingTitle, ageDays: a.ageDays, requestId: a.requestId, listingKey: a.listingKey, ok: false, id: null })),
+    };
+  }
   const fetchImpl = o.fetch ?? fetch;
   const from = alertFromHeader(o.env);
   const replyTo = alertReplyTo(o.env);
   const at = o.now.toISOString();
   let sent = 0;
   let failed = 0;
+  const results: DeliveredAlert[] = [];
   for (const a of alerts) {
     const result = await sendResendEmail(
       resendInputOf(a, { from, replyTo, idempotencyKey: alertIdempotencyKey(a.requestId, a.listingKey) }),
@@ -134,12 +153,70 @@ export async function deliverAlerts(
     if (result.ok) {
       o.store.markAutomatchAlertSent({ requestId: a.requestId, listingKey: a.listingKey, at, kind: "sent" });
       sent += 1;
+      results.push({ agent: a.toName, listingTitle: a.listingTitle, ageDays: a.ageDays, requestId: a.requestId, listingKey: a.listingKey, ok: true, id: result.id });
     } else {
       console.error(JSON.stringify({ automatchAlert: "send-failed", retryable: result.retryable, status: result.status, error: result.error, requestId: a.requestId }));
       failed += 1;
+      results.push({ agent: a.toName, listingTitle: a.listingTitle, ageDays: a.ageDays, requestId: a.requestId, listingKey: a.listingKey, ok: false, id: null });
     }
   }
-  return { sent, failed };
+  return { sent, failed, results };
+}
+
+export type BaselinePreview = { agent: string; listingTitle: string; ageDays: number | null; subject: string };
+export type BaselineSendResult = {
+  dryRun: boolean;
+  wouldSend: number;
+  sent: number;
+  failed: number;
+  results: Array<BaselinePreview & { id?: string | null; ok?: boolean }>;
+  error?: string;
+};
+
+/**
+ * One-shot send of matches already recorded as suppressed (the go-live baseline). New unrecorded matches
+ * are not sent and are not marked. dryRun previews only. A live send requires confirm === BASELINE_CONFIRM,
+ * marks each successful send as sent so it can never go again, and returns Resend ids plus agent names only.
+ */
+export async function sendBaselineAutoMatchAlerts(
+  o: AutomatchOpts & { fetch?: SendFetch; dryRun?: boolean; confirm?: string } = {},
+): Promise<BaselineSendResult> {
+  const env = o.env ?? runtimeEnv();
+  const root = o.root ?? periskopeRoot(env);
+  const now = o.now ?? new Date();
+  const loaded = await loadAutoMatchAlerts({ ...o, env, root, now });
+  const store = new PeriskopeStore(root);
+  const toSend = planBaselineSend(loaded.alerts, store.automatchAlertSentRows());
+  const preview: BaselinePreview[] = toSend.map((a) => ({
+    agent: a.toName,
+    listingTitle: a.listingTitle,
+    ageDays: a.ageDays,
+    subject: a.subject,
+  }));
+  if (o.dryRun) {
+    return { dryRun: true, wouldSend: toSend.length, sent: 0, failed: 0, results: preview };
+  }
+  if (o.confirm !== BASELINE_CONFIRM) {
+    return {
+      dryRun: false,
+      wouldSend: toSend.length,
+      sent: 0,
+      failed: 0,
+      results: preview,
+      error: `Refused: --send-baseline requires --dry-run or --confirm ${BASELINE_CONFIRM}. Nothing was sent.`,
+    };
+  }
+  if (!hasResendKey(env)) {
+    return { dryRun: false, wouldSend: toSend.length, sent: 0, failed: toSend.length, results: preview, error: "RESEND_API_KEY is not set" };
+  }
+  const r = await deliverAlerts(toSend, { env, now, store, fetch: o.fetch });
+  return {
+    dryRun: false,
+    wouldSend: toSend.length,
+    sent: r.sent,
+    failed: r.failed,
+    results: r.results.map((row, i) => ({ ...preview[i], ok: row.ok, id: row.id })),
+  };
 }
 
 export type TestSendResult = { ok: true; id: string } | { ok: false; error: string; status?: number | null };
@@ -148,12 +225,12 @@ export type TestSendResult = { ok: true; id: string } | { ok: false; error: stri
  * One [TEST] alert to TEST_ALERT_TO only, with no CC or BCC. Works while AUTOMATCH_ALERT_ENABLED is off. Does not
  * record a sent-key for the fake listing. Never logs the API key.
  */
-export async function sendTestAutoMatchAlert(o: { env?: Env; now?: Date; fetch?: SendFetch; baseUrl?: string } = {}): Promise<TestSendResult> {
+export async function sendTestAutoMatchAlert(o: { env?: Env; now?: Date; fetch?: SendFetch; baseUrl?: string; agedDays?: number } = {}): Promise<TestSendResult> {
   const env = o.env ?? runtimeEnv();
   const now = o.now ?? new Date();
   const apiKey = resendApiKey(env);
   if (!apiKey) return { ok: false, error: "RESEND_API_KEY is not set" };
-  const alert = buildTestAutoMatchAlert(now, { fromName: alertAttribution(env).fromName, fromEmail: alertFromAddress(env), baseUrl: o.baseUrl });
+  const alert = buildTestAutoMatchAlert(now, { fromName: alertAttribution(env).fromName, fromEmail: alertFromAddress(env), baseUrl: o.baseUrl, agedDays: o.agedDays });
   const result = await sendResendEmail(
     resendInputOf(alert, {
       from: alertFromHeader(env),
@@ -211,4 +288,4 @@ export async function automatchAlertTestSendRoute(o: AutomatchOpts & { fetch?: S
   return Response.json({ ok: false, error: result.error }, { status, headers: { "cache-control": "no-store" } });
 }
 
-export { SEND_OFF, TEST_ALERT_TO, alertKey };
+export { BASELINE_CONFIRM, SEND_OFF, TEST_ALERT_TO, alertKey };

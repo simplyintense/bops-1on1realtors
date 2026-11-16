@@ -17,8 +17,14 @@ import {
   ALERT_REPLY_TO_DEFAULT,
   TEST_ALERT_TO,
   ALERT_SEND_EXISTING_FLAG,
+  AGED_LEAD_DAYS,
+  BASELINE_CONFIRM,
   HOT_MATCH_LINE,
   REPLY_LINE,
+  agedLeadLine,
+  isAgedLead,
+  planBaselineSend,
+  requestAgeDays,
   MILES_FROM_NAME,
   OFFICE_TO,
   SEND_OFF,
@@ -211,6 +217,43 @@ test("the subject names the type, beds, area and price, and leaves out unknown p
   assert.equal(testSub, "[TEST] 1on1 Auto-Match Alert: townhouse · 3 bed · Maraval · TT$3.7M");
 });
 
+test("a request older than 14 calendar days in AST gets an older-lead line and subject, and a newer one does not", () => {
+  assert.equal(AGED_LEAD_DAYS, 14);
+  assert.equal(requestAgeDays("2026-11-15T18:15:00.000Z", NOW), 0);
+  assert.equal(requestAgeDays("2026-11-01T18:15:00.000Z", NOW), 14);
+  assert.equal(requestAgeDays("2026-10-31T18:15:00.000Z", NOW), 15);
+  assert.equal(isAgedLead(14), false);
+  assert.equal(isAgedLead(15), true);
+  assert.equal(
+    agedLeadLine(32),
+    "Heads up: this request is from 32 days ago, so it's an older lead, but still worth a quick call to see if they're still looking.",
+  );
+  const fresh = buildAutoMatchAlert(ROW(), BASE_OPTS);
+  assert.equal(fresh.ageDays, 0);
+  assert.doesNotMatch(fresh.subject, /older lead/i);
+  assert.doesNotMatch(fresh.text, /Heads up: this request is from/);
+  assert.doesNotMatch(fresh.html, /Heads up: this request is from/);
+  const onThreshold = buildAutoMatchAlert(ROW({}, { postedAt: "2026-11-01T18:15:00.000Z", lastSeenAt: "2026-11-01T18:15:00.000Z" }), BASE_OPTS);
+  assert.equal(onThreshold.ageDays, 14);
+  assert.doesNotMatch(onThreshold.subject, /older lead/i);
+  assert.doesNotMatch(onThreshold.text, /Heads up:/);
+  const aged = buildAutoMatchAlert(ROW({}, { postedAt: "2026-10-14T18:15:00.000Z", lastSeenAt: "2026-10-14T18:15:00.000Z" }), BASE_OPTS);
+  assert.equal(aged.ageDays, 32);
+  assert.equal(aged.subject, "1on1 Auto-Match Alert: older lead · townhouse · 3 bed · Maraval · TT$3.7M");
+  const agedLine = agedLeadLine(32);
+  assert.ok(aged.text.includes(agedLine));
+  assert.ok(aged.html.includes(escapeHtml(agedLine)));
+  assert.match(aged.text, /A contact mentioned this property on WhatsApp on Wed 14 Oct at 2:15 PM AST/);
+  assert.doesNotMatch(`${aged.from}\n${aged.subject}\n${aged.text}\n${aged.html}`, /Bops|bop\.1on1realtors\.com|\/realty\/desk/i);
+  const testAged = buildTestAutoMatchAlert(NOW, { baseUrl: BASE, agedDays: 32 });
+  assert.equal(testAged.to, TEST_ALERT_TO);
+  assert.match(testAged.subject, /^\[TEST\] 1on1 Auto-Match Alert: older lead · /);
+  assert.match(testAged.text, /from 32 days ago/);
+  assert.deepEqual(testAged.cc, []);
+  assert.deepEqual(testAged.bcc, []);
+  assert.equal(wordsOf(aged.text), wordsOf(alertTextFromHtml(aged.html)));
+});
+
 test("every alert gets a unique subject so Gmail will not thread them together", () => {
   const used = new Set<string>();
   const a = alertSubject(ROW(), { used });
@@ -334,6 +377,7 @@ test("the text and the HTML say the same words (whitespace collapsed), and the H
     [ROW({}, { currency: "USD", budget: 650_000 }, { currency: "USD", price: 650_000 })],
     [ROW({}, {}, { agentId: null, agentName: null, url: null, price: null })],
     [ROW({}, { postedAt: "2026-11-13T18:15:00.000Z", lastSeenAt: "2026-11-13T18:15:00.000Z" })],
+    [ROW({}, { postedAt: "2026-10-14T18:15:00.000Z", lastSeenAt: "2026-10-14T18:15:00.000Z" })],
   ];
   const allowed = new Set(["html", "body", "p", "h3", "ul", "li", "a", "br", "strong"]);
   for (const rows of cases) {
@@ -361,7 +405,26 @@ test("sending stays off unless AUTOMATCH_ALERT_ENABLED is 1 or true; --send is p
     counts: true,
     out: "a.html",
     txt: "a.txt",
+    sendBaseline: false,
+    dryRun: false,
+    confirm: null,
+    aged: null,
   });
+  assert.deepEqual(parseAlertArgs(["--send-baseline", "--dry-run"]), {
+    send: false,
+    test: false,
+    testSend: false,
+    counts: false,
+    out: null,
+    txt: null,
+    sendBaseline: true,
+    dryRun: true,
+    confirm: null,
+    aged: null,
+  });
+  assert.equal(parseAlertArgs(["--send-baseline", "--confirm", BASELINE_CONFIRM]).confirm, BASELINE_CONFIRM);
+  assert.equal(parseAlertArgs(["--test-send", "--aged"]).aged, 32);
+  assert.equal(parseAlertArgs(["--test-send", "--aged", "21"]).aged, 21);
 });
 
 test("the CLI refuses --send with exit code 2 and writes nothing to stdout, even with the flag on", () => {
@@ -413,6 +476,42 @@ test("dispatch is idempotent: each match is emailed at most once, and flipping t
   const backfill = planAlertDispatch([a, b, c], seeded, { enabled: true, sendExisting: true });
   assert.equal(backfill.send.length, 3, "an explicit backlog send covers suppressed and new keys");
   assert.equal(alertKey(a), `${RID_A}|${KEY_A}`);
+});
+
+test("the one-shot baseline plan emails only previously suppressed rows, and leaves new and already-sent matches alone", () => {
+  const a = buildAutoMatchAlert(ROW(), BASE_OPTS);
+  const b = buildAutoMatchAlert(ROW({ listingKey: KEY_B, score: 82 }, { postId: RID_B }, { title: "GLENCOE FLAT", url: URL_B, area: "Glencoe", type: "apartment", beds: 2, price: 8000 }), BASE_OPTS);
+  const c = buildAutoMatchAlert(ROW({ listingKey: "url:https://1on1realtors.com/property/new", score: 80 }, { postId: "cccccccccccccccccccccccc", area: "Cascade" }, { title: "NEW HILL", url: "https://1on1realtors.com/property/new", area: "Cascade", type: "house", beds: 4, price: 2_500_000 }), BASE_OPTS);
+  assert.deepEqual(planBaselineSend([a, b, c], []), []);
+  const seeded = [
+    { requestId: a.requestId, listingKey: a.listingKey, at: NOW.toISOString(), kind: "suppressed" as const },
+    { requestId: b.requestId, listingKey: b.listingKey, at: NOW.toISOString(), kind: "sent" as const },
+  ];
+  const baseline = planBaselineSend([a, b, c], seeded);
+  assert.equal(baseline.length, 1);
+  assert.equal(baseline[0].requestId, a.requestId);
+  const live = planAlertDispatch([a, b, c], seeded, { enabled: true, sendExisting: false });
+  assert.equal(live.send.length, 1);
+  assert.equal(live.send[0].requestId, c.requestId, "new matches still go through the ordinary plan, not the baseline");
+  assert.equal(live.skip.length, 2);
+});
+
+test("the CLI refuses --send-baseline without --dry-run or the confirm token, and writes nothing to stdout", () => {
+  const cli = new URL("../cli/automatch-alert.ts", import.meta.url).pathname;
+  const run = (args: string[]) =>
+    spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", cli, ...args], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+    });
+  const missing = run(["--send-baseline"]);
+  assert.equal(missing.status, 2);
+  assert.equal(missing.stdout, "");
+  assert.match(missing.stderr, /requires --dry-run or --confirm SEND-BASELINE/);
+  assert.match(missing.stderr, /Nothing was sent/);
+  const wrong = run(["--send-baseline", "--confirm", "yes"]);
+  assert.equal(wrong.status, 2);
+  assert.equal(wrong.stdout, "");
+  assert.match(wrong.stderr, /Nothing was sent/);
 });
 
 test("the portable Auto-Match Alert builder has no fetch and no mail transport", () => {

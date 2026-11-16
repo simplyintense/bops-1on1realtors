@@ -1,5 +1,5 @@
 import { digestRows, escapeHtml, publicBaseUrl, DEFAULT_PUBLIC_URL } from "./admin-digest.ts";
-import { mentionedOnWhatsApp } from "./ast-time.ts";
+import { dayKeyAst, mentionedOnWhatsApp } from "./ast-time.ts";
 import { askLine, firstNameOf, leadCardId, leadMessage, listingPriceText, waUrlFor, type LeadInput } from "./automatch-leads.ts";
 import type { Env } from "./env.ts";
 import { isUsd } from "./fx.ts";
@@ -89,6 +89,13 @@ export const SEND_OFF = "Sending Auto-Match Alert is off. This command only rend
 export const WA_LABEL = "WhatsApp, with the message filled in (opens in your own browser):";
 export const NO_WA = "No usable WhatsApp number on this ask, so there's no link.";
 export const REPLY_LINE = "Reply to this email to let admin know how it went.";
+
+/** A request older than this many calendar days (AST) is flagged as an older lead. */
+export const AGED_LEAD_DAYS = 14;
+
+/** Confirm token required by the one-shot CLI that emails previously suppressed baseline matches. */
+export const BASELINE_CONFIRM = "SEND-BASELINE";
+
 const NO_PRICE = "no price listed";
 const NO_LINK = "no link on file";
 const NOTE_USD = "this ask was in US$; the TT$ figure is the fixed-rate equivalent.";
@@ -123,6 +130,9 @@ export type AutoMatchAlert = {
   deskUrl: string;
   mentioned: string;
   message: string;
+  /** Calendar days in AST from when the request was posted, or null when the time is unreadable. */
+  ageDays: number | null;
+  listingTitle: string;
 };
 
 export type AlertBuildOpts = {
@@ -245,13 +255,64 @@ export function allowedRecipient(to: string, allowlist: readonly string[]): bool
   return allowlist.includes(to.trim().toLowerCase());
 }
 
-/** The command-line flags: --out, --txt, --test, --send. Pure: the argv comes in. */
-export function parseAlertArgs(argv: readonly string[]): { send: boolean; test: boolean; testSend: boolean; counts: boolean; out: string | null; txt: string | null } {
+/** The command-line flags: --out, --txt, --test, --send, --send-baseline, --dry-run, --confirm, --aged. Pure: the argv comes in. */
+export type AlertArgs = {
+  send: boolean;
+  test: boolean;
+  testSend: boolean;
+  counts: boolean;
+  out: string | null;
+  txt: string | null;
+  sendBaseline: boolean;
+  dryRun: boolean;
+  confirm: string | null;
+  /** Set when --aged is present: a number of days, or 32 when the flag has no value. */
+  aged: number | null;
+};
+
+export function parseAlertArgs(argv: readonly string[]): AlertArgs {
   const value = (name: string): string | null => {
     const i = argv.indexOf(`--${name}`);
     return i >= 0 && argv[i + 1] !== undefined && !argv[i + 1].startsWith("--") ? argv[i + 1] : null;
   };
-  return { send: argv.includes("--send"), test: argv.includes("--test"), testSend: argv.includes("--test-send"), counts: argv.includes("--counts"), out: value("out"), txt: value("txt") };
+  const agedFlag = argv.includes("--aged");
+  const agedRaw = value("aged");
+  const aged = agedFlag ? (agedRaw != null && /^\d+$/.test(agedRaw) ? Number(agedRaw) : 32) : null;
+  return {
+    send: argv.includes("--send"),
+    test: argv.includes("--test"),
+    testSend: argv.includes("--test-send"),
+    counts: argv.includes("--counts"),
+    out: value("out"),
+    txt: value("txt"),
+    sendBaseline: argv.includes("--send-baseline"),
+    dryRun: argv.includes("--dry-run"),
+    confirm: value("confirm"),
+    aged,
+  };
+}
+
+/**
+ * Calendar-day age of a request in AST, from the posted (or last-seen) time to `now`.
+ * Null when the time is unreadable. A request posted today is 0.
+ */
+export function requestAgeDays(iso: string, now: Date): number | null {
+  const posted = dayKeyAst(iso);
+  const today = dayKeyAst(now);
+  if (!posted || !today) return null;
+  const [py, pm, pd] = posted.split("-").map(Number);
+  const [ty, tm, td] = today.split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(py, pm - 1, pd)) / 86_400_000);
+}
+
+export function isAgedLead(ageDays: number | null): boolean {
+  return ageDays != null && ageDays > AGED_LEAD_DAYS;
+}
+
+/** The heads-up line used when a request is older than AGED_LEAD_DAYS. */
+export function agedLeadLine(days: number): string {
+  const unit = days === 1 ? "day" : "days";
+  return `Heads up: this request is from ${days} ${unit} ago, so it's an older lead, but still worth a quick call to see if they're still looking.`;
 }
 
 const postedOf = (r: LeadInput): string => r.ask.postedAt ?? r.ask.lastSeenAt;
@@ -269,12 +330,12 @@ export function alertPriceText(l: LeadInput["listing"], listingType: "sale" | "r
  * "1on1 Auto-Match Alert: townhouse · 3 bed · Maraval · TT$3.7M". Unknown parts are left out. A [TEST] prefix is optional.
  * When the detail parts would be empty, the short listing title is used so the subject is never a bare product name.
  */
-export function alertSubject(r: LeadInput, o: { test?: boolean; used?: Set<string> } = {}): string {
+export function alertSubject(r: LeadInput, o: { test?: boolean; used?: Set<string>; aged?: boolean } = {}): string {
   const type = (r.listing.type ?? r.ask.type ?? "").trim();
   const beds = r.listing.beds ?? r.ask.beds;
   const area = (r.listing.area ?? r.ask.area ?? "").trim();
   const price = alertPriceText(r.listing, r.ask.listingType);
-  const parts = [type, beds != null ? `${beds} bed` : "", area, price ?? ""].filter((p) => p !== "");
+  const parts = [o.aged ? "older lead" : "", type, beds != null ? `${beds} bed` : "", area, price ?? ""].filter((p) => p !== "");
   if (!parts.length) parts.push(shortListingTitle(r.listing));
   let core = `${ALERT_NAME}: ${parts.join(" · ")}`;
   const used = o.used;
@@ -316,16 +377,20 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
   const waUrl = waUrlFor(r.ask.senderPhone, message);
   const deskUrl = `${o.baseUrl}/realty/desk#${leadCardId(requestId, r.listingKey)}`;
   const mentioned = mentionedOnWhatsApp(postedOf(r), o.now);
+  const ageDays = requestAgeDays(postedOf(r), o.now);
+  const aged = isAgedLead(ageDays);
   const fromName = o.fromName ?? ALERT_NAME;
   const fromEmail = o.fromEmail ?? null;
   const { to, toName } = recipient(r, o.officeEmail ?? OFFICE_TO);
-  const subject = alertSubject(r, { test: o.test, used: o.usedSubjects });
-  const listing = { title: shortListingTitle(r.listing), price: listingPriceText(r.listing, r.ask.listingType), url: r.listing.url };
+  const subject = alertSubject(r, { test: o.test, used: o.usedSubjects, aged });
+  const listingTitle = shortListingTitle(r.listing);
+  const listing = { title: listingTitle, price: listingPriceText(r.listing, r.ask.listingType), url: r.listing.url };
   const ask = askLine(r.ask);
   const usd = isUsd(r.ask.currency);
   const cc = [...(o.cc ?? parseAddressList(ALERT_CC_DEFAULT))];
   const bcc = [...(o.bcc ?? parseAddressList(ALERT_BCC_DEFAULT))];
-  const view = { toName, mentioned, listing, ask, usd, score: r.score, message, phoneText, tel, waUrl };
+  const agedLine = aged && ageDays != null ? agedLeadLine(ageDays) : null;
+  const view = { toName, mentioned, agedLine, listing, ask, usd, score: r.score, message, phoneText, tel, waUrl };
   return {
     to,
     toName,
@@ -345,6 +410,8 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
     deskUrl,
     mentioned,
     message,
+    ageDays,
+    listingTitle,
   };
 }
 
@@ -359,6 +426,7 @@ export function buildAutoMatchAlerts(rows: readonly AlertInput[], o: AlertBuildO
 type RenderView = {
   toName: string;
   mentioned: string;
+  agedLine: string | null;
   listing: { title: string; price: string | null; url: string | null };
   ask: string;
   usd: boolean;
@@ -372,6 +440,7 @@ type RenderView = {
 function renderText(v: RenderView): string {
   const { hello, body } = introOf(v.toName);
   const out: string[] = [hello, "", body, ""];
+  if (v.agedLine) out.push(v.agedLine, "");
   if (v.mentioned) out.push(v.mentioned, "");
   out.push(v.listing.title, "");
   out.push(`Price: ${v.listing.price ?? NO_PRICE}`);
@@ -413,6 +482,7 @@ function renderHtml(v: RenderView): string {
     "<html><body>",
     `<p>${e(hello)}</p>`,
     `<p>${e(body)}</p>`,
+    v.agedLine ? `<p>${e(v.agedLine)}</p>` : "",
     v.mentioned ? `<p>${e(v.mentioned)}</p>` : "",
     `<p><strong>${e(v.listing.title)}</strong></p>`,
     `<ul>${items}</ul>`,
@@ -497,6 +567,15 @@ export function planAlertDispatch(
   return { send, suppress, skip };
 }
 
+/**
+ * The one-shot baseline send: only matches already recorded as suppressed.
+ * Unrecorded (new) matches and already-sent keys are left alone, so this never changes how new matches are handled.
+ */
+export function planBaselineSend(alerts: readonly AutoMatchAlert[], sent: readonly AlertSentRow[]): AutoMatchAlert[] {
+  const byKey = new Map(sent.map((r) => [alertKey(r), r]));
+  return alerts.filter((a) => byKey.get(alertKey(a))?.kind === "suppressed");
+}
+
 /** What a flag flip would do right now, with sendExisting off: how many would go immediately vs only later new ones. */
 export function flipReport(alerts: readonly AutoMatchAlert[], sent: readonly AlertSentRow[]): { existing: number; wouldSendImmediately: number; wouldSuppress: number; alreadyRecorded: number } {
   const off = planAlertDispatch(alerts, sent, { enabled: false, sendExisting: false });
@@ -527,8 +606,8 @@ export function alertOptsFromEnv(env: Env, now: Date, extra: { statuses: readonl
  * A one-off test alert: fake details, subject prefixed with [TEST], To TEST_ALERT_TO only, and no CC or BCC.
  * Used by the owners' test-send action and the CLI, and it works while live sending is off.
  */
-export function buildTestAutoMatchAlert(now: Date, o: { baseUrl?: string; fromName?: string; fromEmail?: string | null } = {}): AutoMatchAlert {
-  const posted = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+export function buildTestAutoMatchAlert(now: Date, o: { baseUrl?: string; fromName?: string; fromEmail?: string | null; agedDays?: number } = {}): AutoMatchAlert {
+  const posted = new Date(now.getTime() - (o.agedDays != null ? o.agedDays * 86_400_000 : 60 * 60 * 1000)).toISOString();
   const row: AlertInput = {
     score: 90,
     reason: "Test alert: invented people and a 555 number only",

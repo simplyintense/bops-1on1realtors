@@ -176,11 +176,15 @@ test("deliverAlerts marks a key sent only after a 2xx, retries after a 5xx, and 
   store.recordAutomatchAlertSent([{ requestId: SAMPLE.requestId, listingKey: SAMPLE.listingKey, at: NOW.toISOString(), kind: "suppressed" }]);
   const fail = mockFetch(() => jsonResponse(500, { message: "unavailable" }));
   const first = await deliverAlerts([SAMPLE], { env, now: NOW, store, fetch: fail.fetch });
-  assert.deepEqual(first, { sent: 0, failed: 1 });
+  assert.equal(first.sent, 0);
+  assert.equal(first.failed, 1);
+  assert.equal(first.results[0]?.ok, false);
   assert.equal(store.automatchAlertSentRows()[0]?.kind, "suppressed", "a failed send must not be marked sent");
   const ok = mockFetch(() => jsonResponse(200, { id: "msg_live_1" }));
   const second = await deliverAlerts([SAMPLE], { env, now: NOW, store, fetch: ok.fetch });
-  assert.deepEqual(second, { sent: 1, failed: 0 });
+  assert.equal(second.sent, 1);
+  assert.equal(second.failed, 0);
+  assert.deepEqual(second.results.map((r) => ({ agent: r.agent, id: r.id, ok: r.ok })), [{ agent: "Dana Holder", id: "msg_live_1", ok: true }]);
   const rows = store.automatchAlertSentRows();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].kind, "sent");
@@ -190,6 +194,21 @@ test("deliverAlerts marks a key sent only after a 2xx, retries after a 5xx, and 
   assert.deepEqual(body.bcc, ["miles@simplyintense.com"]);
   const headers = new Headers(ok.calls[0].init.headers);
   assert.equal(headers.get("Idempotency-Key"), alertIdempotencyKey(SAMPLE.requestId, SAMPLE.listingKey));
+});
+
+test("an aged test send still goes only to Miles, includes the older-lead line, and has no CC or BCC", async () => {
+  const { fetch, calls } = mockFetch(() => jsonResponse(200, { id: "msg_test_aged" }));
+  const env = { RESEND_API_KEY: FAKE_KEY };
+  const result = await sendTestAutoMatchAlert({ env, now: NOW, fetch, baseUrl: BASE, agedDays: 32 });
+  assert.deepEqual(result, { ok: true, id: "msg_test_aged" });
+  const body = JSON.parse(String(calls[0].init.body)) as { to: string[]; cc?: string[]; bcc?: string[]; subject: string; text: string; html: string };
+  assert.deepEqual(body.to, [TEST_ALERT_TO]);
+  assert.ok(!("cc" in body));
+  assert.ok(!("bcc" in body));
+  assert.match(body.subject, /^\[TEST\] 1on1 Auto-Match Alert: older lead · /);
+  assert.match(body.text, /Heads up: this request is from 32 days ago/);
+  assert.match(body.html, /Heads up: this request is from 32 days ago/);
+  assert.doesNotMatch(`${body.subject}\n${body.text}\n${body.html}`, /Bops|bop\.1on1realtors\.com|\/realty\/desk/i);
 });
 
 test("the CLI --test-send without a key exits 1, prints no body, and never mentions a secret value", () => {
