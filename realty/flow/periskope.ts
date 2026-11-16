@@ -236,9 +236,26 @@ function timestampOf(raw: unknown): string | null {
 
 export const isGroupChat = (chatId: string) => chatId.endsWith(GROUP_SUFFIX);
 
-/** The number in a WhatsApp id ("18685550201@c.us") or a typed number, as +1868…; null if it isn't a phone. */
+/** WhatsApp ids that carry a phone number. Others (e.g. "@lid" linked-device ids, "@g.us" groups) are not phones. */
+const PHONE_JID = /@(c\.us|s\.whatsapp\.net)$/i;
+/** E.164 allows at most 15 digits; 8 is the shortest real international number we accept. */
+const E164_MIN = 8;
+const E164_MAX = 15;
+
+/**
+ * The number in a WhatsApp id ("18685550201@c.us") or a typed number, as +1868…; null if it isn't a phone. A phone
+ * WhatsApp id is always the full international number without "+", so one of 8 to 15 digits that the typed-number
+ * rules don't cover (e.g. a UK "447700900123@c.us") is read as +<digits>. T&T forms keep the typed-number rules.
+ */
 export function phoneOf(raw: string): string | null {
-  return normalizePhone((raw.split("@")[0] ?? "").trim());
+  const t = raw.trim();
+  const at = t.indexOf("@");
+  const id = (at >= 0 ? t.slice(0, at) : t).trim();
+  if (at >= 0 && !PHONE_JID.test(t)) return null;
+  const typed = normalizePhone(id);
+  if (typed) return typed;
+  if (at >= 0 && /^\d+$/.test(id) && id.length >= E164_MIN && id.length <= E164_MAX && !id.startsWith("0")) return `+${id}`;
+  return null;
 }
 
 /** True if the text is or contains a phone number. Used to keep adminOkBy a name or role only. */

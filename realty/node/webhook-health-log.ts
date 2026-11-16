@@ -18,7 +18,9 @@ export type HealthEvent =
   | { type: "alert_failed"; kind: AlertKind; code: string }
   | { type: "alert_skipped"; kind: AlertKind; reason: string }
   | { type: "reconnect"; ok: boolean; action: string; code?: string }
-  | { type: "gap_report"; apiMessages: number; missing: number; chats: number };
+  | { type: "gap_report"; apiMessages: number; missing: number; chats: number }
+  | { type: "subscription"; state: "subscribed" | "paused" | "missing" | "unknown"; prev: string | null; code?: string }
+  | { type: "reconnect_deferred"; reason: string };
 
 const AST_STAMP = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Port_of_Spain",

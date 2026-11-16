@@ -13,7 +13,7 @@ import type { GapReport } from "./webhook-gap.ts";
 
 export const OWNER_ALERT_TO = "miles@simplyintense.com";
 
-export type AlertKind = "down" | "up" | "reconnect";
+export type AlertKind = "down" | "up" | "reconnect" | "unsubscribed";
 
 export type AlertInput = {
   kind: AlertKind;
@@ -46,6 +46,11 @@ export function buildWebhookAlert(a: AlertInput): { subject: string; text: strin
     subject = "Bops: Periskope webhook is delivering again";
     lines.push(`Delivering again. Last delivery: ${when(a.lastAcceptedAt)}`);
     lines.push(`Down since: ${when(a.incidentSince)}`);
+  } else if (a.kind === "unsubscribed") {
+    subject = "Bops: Periskope unsubscribed the webhook, auto-resubscribe attempted";
+    lines.push("The subscription check found our webhook unsubscribed in Periskope (they pause an endpoint they count as failing).");
+    lines.push(`Auto-resubscribe: ${a.reconnect ?? "no result"}`);
+    lines.push(`Last delivery: ${when(a.lastAcceptedAt)}`);
   } else {
     subject = "Bops: Periskope webhook auto-resubscribe attempt";
     lines.push(`Auto-resubscribe attempt: ${a.reconnect ?? "no result"}`);
