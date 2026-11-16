@@ -365,6 +365,7 @@ export class PeriskopeStore {
   }
 
   addLead(row: LeadRow): void {
+    if (this.leads().some((r) => r.messageId === row.messageId)) return;
     this.add("leads", row);
   }
 
@@ -399,6 +400,7 @@ export class PeriskopeStore {
   }
 
   addLive(row: Omit<LiveRow, "requestId">): void {
+    if (this.storedLive().some((r) => r.messageId === row.messageId)) return;
     this.add("live", row);
   }
 

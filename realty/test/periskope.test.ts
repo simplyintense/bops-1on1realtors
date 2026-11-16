@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { existsSync, mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -257,6 +257,41 @@ test("a second delivery of the same message_id is 200 and does not create anothe
   assert.equal(second.status, 200);
   assert.match(String(second.body.result), /already seen/);
   assert.equal(w.store().market().filter((r) => r.item.kind === "listing").length, 1);
+});
+
+test("addLead and addLive keep the first row for a messageId", () => {
+  const store = world().store();
+  store.addLead({ leadId: "L-a", messageId: "m-same", senderPhone: "+18685550201", receivedAt: "2026-11-13T20:00:00.000Z" });
+  store.addLead({ leadId: "L-b", messageId: "m-same", senderPhone: "+18685550201", receivedAt: "2026-11-13T20:00:00.000Z" });
+  store.addLead({ leadId: "L-c", messageId: "m-other", senderPhone: "+18685550201", receivedAt: "2026-11-13T20:00:00.000Z" });
+  assert.deepEqual(store.leads().map((r) => r.leadId), ["L-a", "L-c"]);
+  const live = { chatId: CHAT, senderPhone: "+18685550201", receivedAt: "2026-11-13T20:00:00.000Z", request: { intent: "rent" as const, area: "Westmoorings", beds: 2, propertyType: "apartment", priceMin: null, priceMax: 8000, currency: "TTD" as const, monthly: true }, status: "pending" as const, matchedAt: null, matches: [] };
+  store.addLive({ ...live, messageId: "m-live" });
+  store.addLive({ ...live, messageId: "m-live", status: "matched" });
+  store.addLive({ ...live, messageId: "m-live-2" });
+  assert.deepEqual(store.live().map((r) => r.messageId), ["m-live", "m-live-2"]);
+  assert.equal(store.live()[0].status, "pending");
+});
+
+test("a buyer request that cannot be stored leaves no lead or live row, and a retry stores it once", async () => {
+  const w = world();
+  await withConsent(w);
+  mkdirSync(w.root, { recursive: true });
+  const posts = join(w.root, "posts.jsonl");
+  writeFileSync(posts, "", { mode: 0o000 });
+  chmodSync(posts, 0o000);
+  const payload = envelope({}, { body: REQUEST_TEXT, message_id: "m-locked" });
+  await assert.rejects(() => w.post(payload));
+  chmodSync(posts, 0o600);
+  assert.equal(w.store().leads().filter((r) => r.messageId === "m-locked").length, 0);
+  assert.equal(w.store().live().filter((r) => r.messageId === "m-locked").length, 0);
+  assert.ok(!w.store().isSeen("m-locked"));
+  const r = await w.post(payload);
+  assert.equal(r.status, 200);
+  assert.match(String(r.body.result), /buyer request taken as L/);
+  assert.equal(w.store().leads().filter((r) => r.messageId === "m-locked").length, 1);
+  assert.equal(w.store().live().filter((r) => r.messageId === "m-locked").length, 1);
+  assert.ok(w.store().post("m-locked"));
 });
 
 /* ---------------- Flow and outbox ---------------- */

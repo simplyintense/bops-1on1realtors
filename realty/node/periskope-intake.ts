@@ -342,21 +342,23 @@ async function act(d: Decision, c: Ctx): Promise<Reply> {
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "other", at: d.post.sentAt });
       return reply(200, { result: "dropped: not a buyer request or a co-broke listing" });
     case "cobroke_listing":
-      if (d.item) await queueMarket(c, d.item);
       await keepPost(c, d.post);
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "cobroke_listing", at: d.post.sentAt });
+      if (d.item) await queueMarket(c, d.item);
       return reply(200, { result: d.item ? "listing recorded for market-ingest" : "listing noted (not enough fields for market-ingest)" });
     case "buyer_request": {
+      // Store the post first. A later write failure must not leave a lead or live row (Periskope retries a 500,
+      // and a partial write was creating duplicates). Seen is marked before matching so a slow or failed match
+      // never makes Periskope deliver the message twice.
+      await keepPost(c, d.post);
+      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at: d.post.sentAt });
       // With a CRM the request also enters the lead flow (routing, timeouts, dry-run messages only); without one, or if the
       // CRM can't be reached, it is still stored and matched.
       const lead = c.crm ? await receive(d.inquiry, c, c.crm).catch(() => null) : null;
       if (lead) c.store.addLead({ leadId: lead.id, messageId: d.messageId, senderPhone: d.phone, receivedAt: d.post.sentAt });
       const request = liveRequestOf(d.facts);
       c.store.addLive({ messageId: d.messageId, chatId: d.chatId, senderPhone: d.phone, receivedAt: d.post.sentAt, request, status: "pending", matchedAt: null, matches: [] });
-      await keepPost(c, d.post);
-      c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at: d.post.sentAt });
       if (d.item) await queueMarket(c, d.item);
-      // Seen is marked first, so a slow or failed match never makes Periskope deliver the message twice.
       const [m, ours, strong] = await Promise.all([matchOnArrival(request, d.messageId, at, c.market), oursFor(request, c), strongFor(request, c)]);
       c.store.updateLive(d.messageId, { status: m.status, matches: m.matches, ours, matchedAt: c.now.toISOString() });
       for (const hit of strong) c.store.addAlert(alertOf(d, request, hit));
