@@ -38,10 +38,10 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
       <p className="rt-muted mt-1 text-sm">{webhookStatusLabel(readWebhookStatus(periskopeRoot()))}</p>
 
       <ul className={`mt-8 grid gap-4 ${owner ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
-        <Tile href="/realty/market" title="Online search" cta="Search online">
+        <Tile href="/realty/market" title="Online search" cta="Search online" tour="desk-search">
           Other agencies&apos; listings for an area, with filters. Read-only.
         </Tile>
-        <Tile href="https://1on1realtors.com/agent/dashboard" external title="1on1 CRM · Agent portal" cta="Open the agent portal">
+        <Tile href="https://1on1realtors.com/agent/dashboard" external title="1on1 CRM · Agent portal" cta="Open the agent portal" tour="desk-portal">
           The 1on1 Realtors agent portal on 1on1realtors.com. Opens in a new tab.
         </Tile>
         {owner ? (
@@ -62,7 +62,7 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
         ) : null}
       </ul>
 
-      <section className="mt-12" aria-labelledby="leads-heading">
+      <section className="mt-12" aria-labelledby="leads-heading" data-tour="desk-leads">
         <h2 id="leads-heading" className="text-2xl font-semibold">
           Automatch leads
         </h2>
@@ -75,7 +75,7 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
         </div>
       </section>
 
-      <section className="mt-12" aria-labelledby="recommendations-heading">
+      <section className="mt-12" aria-labelledby="recommendations-heading" data-tour="desk-recs">
         <h2 id="recommendations-heading" className="text-2xl font-semibold">
           Top recommendations for you
         </h2>
@@ -96,12 +96,15 @@ function Tile({
   title,
   cta,
   external,
+  tour,
   children,
 }: {
   href: string;
   title: string;
   cta: string;
   external?: boolean;
+  /** The guided tour's spotlight id, when the tour points at this tile. */
+  tour?: string;
   children: ReactNode;
 }) {
   const body = (
@@ -114,11 +117,11 @@ function Tile({
   return (
     <li>
       {external ? (
-        <a href={href} target="_blank" rel="noopener noreferrer" className="rt-card rt-tile h-full">
+        <a href={href} target="_blank" rel="noopener noreferrer" className="rt-card rt-tile h-full" data-tour={tour}>
           {body}
         </a>
       ) : (
-        <Link href={href} className="rt-card rt-tile h-full">
+        <Link href={href} className="rt-card rt-tile h-full" data-tour={tour}>
           {body}
         </Link>
       )}

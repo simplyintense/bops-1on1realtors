@@ -114,7 +114,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
 
       {sourceNav}
 
-      <nav aria-label="Tabs" className="mt-3 flex flex-wrap gap-2">
+      <nav aria-label="Tabs" className="mt-3 flex flex-wrap gap-2" data-tour="search-tabs">
         {TABS.map((t) => (
           <Link key={t.tab} href={hrefWith(raw, { kind: t.tab, offset: undefined })} className="rt-chip" aria-pressed={tab === t.tab}>
             {t.label}
@@ -122,7 +122,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         ))}
       </nav>
 
-      <form method="get" action="/realty/search" className="mt-6 grid gap-3 sm:grid-cols-4">
+      <form method="get" action="/realty/search" className="mt-6 grid gap-3 sm:grid-cols-4" data-tour="search-filters">
         <input type="hidden" name="kind" value={tab} />
         <input name="q" defaultValue={val("q")} placeholder="Keywords" className="rt-field" aria-label="Keywords" />
         <input name="area" defaultValue={val("area")} placeholder="Area" className="rt-field" aria-label="Area" />

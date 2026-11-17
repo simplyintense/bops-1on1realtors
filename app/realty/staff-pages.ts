@@ -18,6 +18,11 @@ export const STAFF_PAGES = [
 
 export type StaffPage = (typeof STAFF_PAGES)[number];
 
+/** The data-tour id of a nav link (the guided tour spotlights it): nav-desk, nav-market, ... and nav-home for "/". */
+export function navTourId(href: string): string {
+  return href === "/" ? "nav-home" : `nav-${href.split("/").filter(Boolean).pop()}`;
+}
+
 /** The entries this viewer may see, in nav order. */
 export function visibleStaffPages(viewer: { owner: boolean; teacher: boolean }): StaffPage[] {
   return STAFF_PAGES.filter((p) => (viewer.owner || !p.ownerOnly) && (viewer.teacher || !p.teacherOnly));

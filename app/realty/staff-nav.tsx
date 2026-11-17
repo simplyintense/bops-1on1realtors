@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { visibleStaffPages } from "./staff-pages";
+import { navTourId, visibleStaffPages } from "./staff-pages";
 
 /**
  * The staff pages' one top nav: in the realty layout's header, and in the header of the Bops chat app at / for a signed-in staff
@@ -16,7 +16,7 @@ export function StaffNav({ owner, teacher }: { owner: boolean; teacher: boolean 
       {visibleStaffPages({ owner, teacher }).map((p) => {
         const current = pathname === p.href || pathname.startsWith(`${p.href}/`);
         return (
-          <Link key={p.href} href={p.href} aria-current={current ? "page" : undefined}>
+          <Link key={p.href} href={p.href} aria-current={current ? "page" : undefined} data-tour={navTourId(p.href)}>
             {p.label}
           </Link>
         );

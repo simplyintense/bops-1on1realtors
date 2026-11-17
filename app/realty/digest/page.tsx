@@ -62,7 +62,7 @@ export default async function RealtyDigest() {
         </div>
       ) : null}
 
-      <section className="mt-10" aria-labelledby="digest-requests">
+      <section className="mt-10" aria-labelledby="digest-requests" data-tour="digest-requests">
         <h2 id="digest-requests" className="text-2xl font-semibold">
           Last 24 hours
         </h2>
@@ -75,7 +75,7 @@ export default async function RealtyDigest() {
         </div>
       </section>
 
-      <section className="mt-12" aria-labelledby="digest-replay">
+      <section className="mt-12" aria-labelledby="digest-replay" data-tour="digest-replay">
         <h2 id="digest-replay" className="text-2xl font-semibold">
           Replay sample messages
         </h2>

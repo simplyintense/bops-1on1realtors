@@ -35,7 +35,7 @@ export default async function AutoMatchAlertPage() {
         </div>
       ) : (
         <>
-          <p className="rt-muted mt-4 text-sm">
+          <p className="rt-muted mt-4 text-sm" data-tour="alerts-summary">
             {loaded.alerts.length} match{loaded.alerts.length === 1 ? "" : "es"} · would send {loaded.plan.send.length} ·
             hold {loaded.plan.suppress.length} as the baseline · already recorded {loaded.plan.skip.length}. On flip,{" "}
             {loaded.flip.wouldSendImmediately} would go immediately. Enabled: {loaded.enabled ? "yes" : "no"}. Transport:{" "}
@@ -43,7 +43,7 @@ export default async function AutoMatchAlertPage() {
           </p>
           <TestSendButton />
           {loaded.alerts.length ? (
-            <ol className="mt-8 grid gap-8">
+            <ol className="mt-8 grid gap-8" data-tour="alerts-emails">
               {loaded.alerts.map((a) => (
                 <li key={`${a.requestId}-${a.listingKey}`} className="rt-card grid gap-3 p-4">
                   <p className="text-sm">
