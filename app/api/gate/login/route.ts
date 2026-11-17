@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { GATE_STATE_COOKIE, STATE_SECONDS, gateConfig, googleAuthUrl, randomState, safeNext, signValue } from "@/lib/gate";
+import { clientIp, loginRateLimiter } from "@/lib/gate-rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,9 @@ export async function GET(request: Request) {
   const cfg = gateConfig();
   if (!cfg) return new NextResponse("Not found", { status: 404 });
   if (cfg === "misconfigured") return new NextResponse("Sign-in isn't set up on this server yet.", { status: 503 });
+  if (!loginRateLimiter.allow(clientIp(request.headers))) {
+    return new NextResponse("Too many sign-in attempts from this address. Wait a few minutes and try again.", { status: 429, headers: { "retry-after": "600", "cache-control": "no-store" } });
+  }
   const next = safeNext(new URL(request.url).searchParams.get("next"));
   const state = randomState();
   const res = NextResponse.redirect(googleAuthUrl(cfg, state));

@@ -30,25 +30,24 @@ test("the full nav for an owner who teaches: the new order and labels, with Requ
   assert.ok(!ENTRIES.some((p) => p.label === "Requests" || p.href === "/realty/requests"), "the Requests entry is removed");
 });
 
-test("an agent (neither owner nor teacher) sees the desk, online search and Bops home", () => {
-  assert.deepEqual(labels({ owner: false, teacher: false }), ["Desk", "Online search", "Bops home"]);
+test("an agent (neither owner nor teacher) sees the desk and online search only: no Bops home", () => {
+  assert.deepEqual(labels({ owner: false, teacher: false }), ["Desk", "Online search"]);
 });
 
-test("Bops home is at / and listed for every signed-in viewer, whatever their owner and teacher flags", () => {
-  for (const owner of [true, false]) {
-    for (const teacher of [true, false]) {
-      const home = visibleStaffPages({ owner, teacher }).find((p) => p.label === "Bops home");
-      assert.equal(home?.href, "/", `owner ${owner}, teacher ${teacher}`);
-    }
+test("Bops home is at / and listed for owners only: an agent is sent to the desk from /", () => {
+  for (const teacher of [true, false]) {
+    const home = visibleStaffPages({ owner: true, teacher }).find((p) => p.label === "Bops home");
+    assert.equal(home?.href, "/", `owner, teacher ${teacher}`);
+    assert.equal(visibleStaffPages({ owner: false, teacher }).some((p) => p.label === "Bops home"), false, `agent, teacher ${teacher}`);
   }
   const home = STAFF_PAGES.find((p) => p.label === "Bops home");
-  assert.equal(home?.ownerOnly, false);
+  assert.equal(home?.ownerOnly, true);
   assert.equal(home?.teacherOnly, false);
 });
 
 test("an owner who doesn't teach sees no Teach Bops; a teacher who isn't an owner sees no owner pages", () => {
   assert.deepEqual(labels({ owner: true, teacher: false }), ["Desk", "1on1 CRM Automatch", "Supply & Demand", "All posts", "Online search", "Digest", "Auto-Match Alert", "Bops home"]);
-  assert.deepEqual(labels({ owner: false, teacher: true }), ["Desk", "Online search", "Teach Bops", "Bops home"]);
+  assert.deepEqual(labels({ owner: false, teacher: true }), ["Desk", "Online search", "Teach Bops"]);
 });
 
 test("gating flags on the entries match the labels: owner pages are owner-only, Teach Bops is teacher-only, the rest open", () => {

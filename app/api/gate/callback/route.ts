@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { GATE_COOKIE, GATE_STATE_COOKIE, SESSION_SECONDS, callbackUrl, emailAllowed, emailFromIdToken, gateConfig, makeSession, readValue, safeNext } from "@/lib/gate";
+import { GATE_COOKIE, GATE_STATE_COOKIE, SESSION_SECONDS, callbackUrl, gateConfig, identityAllowed, idTokenIdentity, makeSession, readValue, safeNext } from "@/lib/gate";
+import { callbackRateLimiter, clientIp } from "@/lib/gate-rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -9,11 +10,18 @@ const page = (status: number, text: string) =>
     { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
   );
 
+const tooMany = () =>
+  new NextResponse("Too many sign-in attempts from this address. Wait a few minutes and try again.", {
+    status: 429,
+    headers: { "content-type": "text/plain; charset=utf-8", "retry-after": "600", "cache-control": "no-store" },
+  });
+
 /** Google's redirect back: checks the state, swaps the code for an ID token, checks the allowlist, sets the session. */
 export async function GET(request: NextRequest) {
   const cfg = gateConfig();
   if (!cfg) return new NextResponse("Not found", { status: 404 });
   if (cfg === "misconfigured") return new NextResponse("Sign-in isn't set up on this server yet.", { status: 503 });
+  if (!callbackRateLimiter.allow(clientIp(request.headers))) return tooMany();
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const st = await readValue("state", request.cookies.get(GATE_STATE_COOKIE)?.value, cfg.secret);
@@ -30,11 +38,11 @@ export async function GET(request: NextRequest) {
     });
     if (r.ok) idToken = ((await r.json()) as { id_token?: string }).id_token ?? "";
   } catch {}
-  const email = idToken ? emailFromIdToken(idToken, cfg.clientId) : null;
-  if (!email) return page(400, "Google didn't confirm an email address. Please try again.");
-  if (!emailAllowed(email, cfg.allowed)) return page(403, "This Google account isn't on the 1on1 Realtors team list. Ask Miles to add it.");
+  const who = idToken ? idTokenIdentity(idToken, cfg.clientId) : null;
+  if (!who) return page(400, "Google didn't confirm an email address. Please try again.");
+  if (!identityAllowed(who, cfg.allowed)) return page(403, "This Google account isn't on the 1on1 Realtors team list. Ask Miles to add it.");
   const res = NextResponse.redirect(new URL(safeNext(typeof st.next === "string" ? st.next : null), cfg.publicUrl));
-  res.cookies.set(GATE_COOKIE, await makeSession(email, cfg), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: SESSION_SECONDS });
+  res.cookies.set(GATE_COOKIE, await makeSession(who.email, cfg), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: SESSION_SECONDS });
   res.cookies.set(GATE_STATE_COOKIE, "", { path: "/api/gate/", maxAge: 0 });
   return res;
 }

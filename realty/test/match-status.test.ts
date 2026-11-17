@@ -7,6 +7,7 @@ import { GATE_COOKIE, gateConfig, makeSession } from "../../lib/gate.ts";
 import { digestOf, liveDesk, type LiveRequest } from "../flow/live-match.ts";
 import { applyStatus, followUpsOf, listingKey, parseStatusPost, type StatusRow } from "../flow/match-status.ts";
 import type { MatchItem } from "../flow/recommendations.ts";
+import { NOT_CONNECTED, type CrmSeam } from "../flow/crm-seam.ts";
 import { setMatchFollowUp } from "../node/match-status.ts";
 import { purgeExpiredPeriskope } from "../node/periskope-intake.ts";
 import { PeriskopeStore, requestIdOf } from "../node/periskope-store.ts";
@@ -52,15 +53,19 @@ function seeded() {
 const set = (store: PeriskopeStore, requestId: string, m: MatchItem, status: StatusRow["status"] | null, by = AGENT, at = "2026-11-13T19:00:00.000Z") =>
   store.setMatchStatus({ requestId, listingKey: listingKey(m), status, by, at });
 
+/** The seeded requests come from this phone, which is AGENT's WhatsApp number in the CRM: so they are AGENT's own requests on the desk. */
+const AGENT_PHONE = "+18685550101";
+const SEAM: CrmSeam = { ...NOT_CONNECTED, connected: true, agents: async () => [{ id: 7, name: "Kerry", email: AGENT, phone: AGENT_PHONE }] };
+
 /** A staff request to the route, signed in as `email` (or signed out with null). */
-const post = async (body: unknown, email: string | null, env: Record<string, string> = GATE, root?: string) =>
+const post = async (body: unknown, email: string | null, env: Record<string, string> = GATE, root?: string, seam: CrmSeam = SEAM) =>
   setMatchFollowUp(
     new Request("https://bops.example/api/realty/match-status", {
       method: "POST",
       headers: { "content-type": "application/json", ...(email ? { cookie: `${GATE_COOKIE}=${await makeSession(email, cfg)}` } : {}) },
       body: typeof body === "string" ? body : JSON.stringify(body),
     }),
-    { env, root, now: () => NOW },
+    { env, root, now: () => NOW, seam },
   );
 
 test("a listing's identity is its url, or its title and source when there's no url; the same title from two agencies is two listings", () => {

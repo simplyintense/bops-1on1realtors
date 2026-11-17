@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { DEMO_PAGE, demoRoute, GATE_COOKIE, GATE_OPEN_PATHS, gateConfig, publicDemo, readSession } from "@/lib/gate";
+import { DEMO_PAGE, demoRoute, GATE_COOKIE, GATE_OPEN_PATHS, gateConfig, gateVerdict, HOME_AFTER_SIGN_IN, publicDemo, readSession, sameSiteWrite } from "@/lib/gate";
 
 /**
  * Who may call Bops' API. The server answers on every address the Mac has, but only the app on this
@@ -71,7 +71,11 @@ const HOSTED = !!process.env.BOPS_DATABASE_URL;
 /** A name the app is served under: this Mac's loopback, or a hosted server's own. */
 const ours = (name: string) => LOOPBACK.has(name) || PUBLIC.has(name) || (HOSTED && !PUBLIC.size);
 
-/** The login gate (lib/gate.ts): a response to send instead, or null to go on. */
+/**
+ * The login gate (lib/gate.ts): a response to send instead, or null to go on. Signed out: an API call gets 401, a page goes to
+ * the sign-in. Owners get everything, as before. An agent (or a teacher, for the teach page) gets only what agentMayReach allows:
+ * an API call gets 403, a page goes to the desk (gateVerdict).
+ */
 async function gate(request: NextRequest): Promise<NextResponse | null> {
   const cfg = gateConfig();
   if (!cfg) return null;
@@ -79,11 +83,21 @@ async function gate(request: NextRequest): Promise<NextResponse | null> {
   if (GATE_OPEN_PATHS.has(path)) return null;
   const api = path.startsWith("/api/");
   if (cfg === "misconfigured") return new NextResponse("Sign-in isn't set up on this server yet.", { status: 503 });
-  if (await readSession(request.cookies.get(GATE_COOKIE)?.value, cfg)) return null;
-  if (api) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
-  const login = new URL("/api/gate/login", cfg.publicUrl);
-  login.searchParams.set("next", path + request.nextUrl.search);
-  return NextResponse.redirect(login);
+  const email = await readSession(request.cookies.get(GATE_COOKIE)?.value, cfg);
+  switch (gateVerdict({ path, method: request.method, email })) {
+    case "pass":
+      return null;
+    case "sign-in": {
+      if (api) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+      const login = new URL("/api/gate/login", cfg.publicUrl);
+      login.searchParams.set("next", path + request.nextUrl.search);
+      return NextResponse.redirect(login);
+    }
+    case "forbidden":
+      return NextResponse.json({ error: "Not allowed." }, { status: 403 });
+    case "desk":
+      return NextResponse.redirect(new URL(HOME_AFTER_SIGN_IN, cfg.publicUrl));
+  }
 }
 
 /** Public demo mode (lib/gate.ts): only the demo page; other pages go to it, other API calls are refused. */
@@ -114,6 +128,11 @@ export async function proxy(request: NextRequest) {
     } catch {}
     // (A sandboxed page, like the ones bots make, sends "null": not the app either.)
     if (from.toLowerCase() !== host.toLowerCase() && !PUBLIC.has(hostname(from))) return new NextResponse("Not allowed", { status: 403 });
+  }
+  // With the login gate on, a write that rides the session cookie must come from this site (lib/gate.ts sameSiteWrite).
+  // Not the paths that prove themselves (webhooks, the tunnel: server-to-server, no Origin); they have their own secrets.
+  if (gateConfig() && !GATE_OPEN_PATHS.has(path) && !TAILNET_PATHS.has(path) && !TUNNEL_PATHS.has(path) && !sameSiteWrite({ method: request.method, origin, secFetchSite: request.headers.get("sec-fetch-site"), ours: (h) => h === host.toLowerCase() || PUBLIC.has(hostname(h)) })) {
+    return NextResponse.json({ error: "Not allowed." }, { status: 403 });
   }
   const token = process.env.BOPS_UI_TOKEN;
   const method = request.method.toUpperCase();

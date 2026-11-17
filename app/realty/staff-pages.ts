@@ -2,7 +2,7 @@
  * The staff pages' nav entries, as plain data so a test can check labels, order and gating without rendering React
  * (app/realty/staff-nav.tsx renders them). Owners' pages are listed only for owners, and the teach page only for teachers;
  * the page checks themselves are on the server (viewer.ts). "Bops home" is the Bops chat app at / (the old home), listed for
- * every signed-in staff member: the nav is the one top nav on every staff-facing page, / included.
+ * owners only (an agent is sent to the desk from /): the nav is the one top nav on every staff-facing page, / included.
  */
 export const STAFF_PAGES = [
   { href: "/realty/desk", label: "Desk", ownerOnly: false, teacherOnly: false },
@@ -13,7 +13,7 @@ export const STAFF_PAGES = [
   { href: "/realty/digest", label: "Digest", ownerOnly: true, teacherOnly: false },
   { href: "/realty/alerts", label: "Auto-Match Alert", ownerOnly: true, teacherOnly: false },
   { href: "/realty/learn", label: "Teach Bops", ownerOnly: false, teacherOnly: true },
-  { href: "/", label: "Bops home", ownerOnly: false, teacherOnly: false },
+  { href: "/", label: "Bops home", ownerOnly: true, teacherOnly: false },
 ] as const;
 
 export type StaffPage = (typeof STAFF_PAGES)[number];

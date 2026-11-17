@@ -109,6 +109,96 @@ export function safeNext(next: string | null | undefined): string {
   return next;
 }
 
+/* ---------------- Who may reach what (owners, teachers, agents) ---------------- */
+
+/**
+ * With the gate on, an owner (ownerAllowed) reaches everything, as before. Any other signed-in person is an agent: they reach
+ * only the pages and APIs listed here, which are the desk, online search and the guided tour. A teacher (teachAllowed) also
+ * reaches the teach page and its APIs. Everything else is refused by the proxy (proxy.ts): an API call gets 403, a page a
+ * redirect to the desk. Listed by path, not by prefix, so a new route is closed until someone adds it here.
+ */
+
+/** A page an agent may open, with everything under it. */
+export const AGENT_PAGES = ["/realty/desk", "/realty/market"] as const;
+/** The teach page, for a teacher only (teachAllowed). */
+export const TEACHER_PAGES = ["/realty/learn"] as const;
+
+type ApiRule = { methods: readonly string[]; match: (path: string) => boolean };
+
+/** The APIs the desk, online search and the guided tour call (desk/follow-up-buttons.tsx, desk-tour.tsx, photo-thumbs.tsx). */
+export const AGENT_APIS: readonly ApiRule[] = [
+  // The desk's follow-up buttons: the route only writes what the agent may see on their own desk (realty/node/match-status.ts).
+  { methods: ["POST"], match: (p) => p === "/api/realty/match-status" },
+  // The guided tour marks itself seen (realty/node/tour-seen.ts).
+  { methods: ["POST"], match: (p) => p === "/api/realty/tour" },
+  // Listing photos: an unguessable hash per photo (realty/node/listing-media.ts); the thumbs are the same photos, smaller.
+  { methods: ["GET", "HEAD"], match: (p) => /^\/api\/realty\/media\/[^/]+(?:\/thumb)?$/.test(p) },
+];
+
+/** The teach page's APIs (the routes check teacherAccess themselves). */
+export const TEACHER_APIS: readonly ApiRule[] = [
+  { methods: ["POST"], match: (p) => p === "/api/realty/learn" },
+  { methods: ["POST"], match: (p) => p === "/api/realty/learn/questions" },
+];
+
+/** Files from public/ (a logo, icons, fonts), and the favicon: they carry nothing of the team's. Never under /api/. */
+export function isStaticAsset(path: string): boolean {
+  if (path.startsWith("/api/") || path.includes("..")) return false;
+  if (path === "/favicon" || path === "/favicon.ico") return true;
+  // Only a file at the top level or directly under /realty/ (where public/ files live), so a dynamic page like
+  // /realty/posts/x.png can't pass as a file.
+  return /^\/(?:realty\/)?[^/]+\.(?:png|jpe?g|webp|gif|svg|ico|woff2?|ttf|otf|css|txt|webmanifest)$/i.test(path);
+}
+
+const under = (path: string, base: string) => path === base || path.startsWith(`${base}/`);
+
+/** Whether a signed-in agent (or a teacher, with `teacher`) may reach this path with this method. Owners are checked by the caller. */
+export function agentMayReach(path: string, method: string, opts: { teacher?: boolean } = {}): boolean {
+  const m = method.toUpperCase();
+  const read = m === "GET" || m === "HEAD";
+  if (!path.startsWith("/api/")) {
+    if (isStaticAsset(path)) return read;
+    if (!read) return false;
+    if (AGENT_PAGES.some((base) => under(path, base))) return true;
+    return !!opts.teacher && TEACHER_PAGES.some((base) => under(path, base));
+  }
+  const rules = opts.teacher ? [...AGENT_APIS, ...TEACHER_APIS] : AGENT_APIS;
+  return rules.some((r) => r.methods.includes(m) && r.match(path));
+}
+
+/**
+ * What the gate does with one request, once it's on and the path isn't open (proxy.ts): "pass" (an owner; or an agent, or a
+ * teacher for the teach page, to a path they may reach), "sign-in" (no session: an API call gets 401, a page the sign-in),
+ * "forbidden" (an agent's API call to anything else: 403) or "desk" (an agent's page elsewhere: the desk). `email` is the
+ * signed-in address (readSession), or null.
+ */
+export function gateVerdict(i: { path: string; method: string; email: string | null; env?: Env }): "pass" | "sign-in" | "forbidden" | "desk" {
+  if (!i.email) return "sign-in";
+  if (ownerAllowed(i.email, i.env)) return "pass";
+  if (agentMayReach(i.path, i.method, { teacher: teachAllowed(i.email, i.env) })) return "pass";
+  return i.path.startsWith("/api/") ? "forbidden" : "desk";
+}
+
+/**
+ * CSRF for the cookie-bearing writes (proxy.ts, with the gate on): a state-changing request must come from this site. A browser
+ * sends Origin on a POST, so that Origin's host must be one of ours; with no Origin (an old browser, or a same-site form), only
+ * Sec-Fetch-Site: same-origin passes. A sandboxed page sends "null" for Origin, and that's refused.
+ */
+export function sameSiteWrite(i: { method: string; origin: string | null; secFetchSite: string | null; ours: (host: string) => boolean }): boolean {
+  const m = i.method.toUpperCase();
+  if (m === "GET" || m === "HEAD" || m === "OPTIONS") return true;
+  if (i.origin !== null) {
+    let host = "";
+    try {
+      host = new URL(i.origin).host;
+    } catch {
+      return false;
+    }
+    return !!host && i.ours(host.toLowerCase());
+  }
+  return i.secFetchSite === "same-origin";
+}
+
 /* ---------------- Signed values ---------------- */
 
 const enc = new TextEncoder();
@@ -192,11 +282,11 @@ export function googleAuthUrl(cfg: GateConfig, state: string): string {
 }
 
 /**
- * The email in an ID token this server got straight from Google's token endpoint over TLS (OpenID
- * Connect Core 3.1.3.7 lets a client skip the signature check then), after checking who issued it, for
- * whom, that it's current and that Google verified the address. null if any of that fails.
+ * Who an ID token is for: the verified email and the Google Workspace domain (`hd`, absent for a consumer account). Taken
+ * straight from Google's token endpoint over TLS (OpenID Connect Core 3.1.3.7 lets a client skip the signature check then), so
+ * this checks who issued it, for whom, that it's current, and that Google verified the address. null if any of that fails.
  */
-export function emailFromIdToken(idToken: string, clientId: string, now = Date.now()): string | null {
+export function idTokenIdentity(idToken: string, clientId: string, now = Date.now()): { email: string; hd: string | null } | null {
   const part = idToken.split(".")[1];
   const raw = part ? unb64url(part) : null;
   if (!raw) return null;
@@ -207,10 +297,28 @@ export function emailFromIdToken(idToken: string, clientId: string, now = Date.n
     return null;
   }
   if (c.iss !== "https://accounts.google.com" && c.iss !== "accounts.google.com") return null;
-  if (c.aud !== clientId) return null;
+  if (typeof c.aud !== "string" || c.aud !== clientId) return null;
   if (typeof c.exp !== "number" || c.exp * 1000 <= now) return null;
   if (c.email_verified !== true && c.email_verified !== "true") return null;
-  return typeof c.email === "string" ? c.email.toLowerCase() : null;
+  if (typeof c.email !== "string" || !c.email) return null;
+  const hd = typeof c.hd === "string" && c.hd ? c.hd.trim().toLowerCase() : null;
+  return { email: c.email.toLowerCase(), hd };
+}
+
+/** The email in an ID token (idTokenIdentity), or null. */
+export function emailFromIdToken(idToken: string, clientId: string, now = Date.now()): string | null {
+  return idTokenIdentity(idToken, clientId, now)?.email ?? null;
+}
+
+/**
+ * Whether a verified Google identity may sign in. An exact-email entry matches that address only (Google verified it). A
+ * whole-domain entry ("@1on1realtors.com") matches only when Google says the account belongs to that Workspace domain (`hd`),
+ * so a consumer account on the same name can't pass.
+ */
+export function identityAllowed(who: { email: string; hd: string | null }, allowed: string[]): boolean {
+  const e = who.email.trim().toLowerCase();
+  const domain = e.slice(e.lastIndexOf("@"));
+  return allowed.some((a) => (a.startsWith("@") ? a === domain && who.hd === a.slice(1) : a === e));
 }
 
 export function randomState(): string {
