@@ -431,3 +431,12 @@ export function digestOf(rows: readonly LiveEntry[], now: Date, hours = 24, stat
     cards: liveCards(recent, 50, { statuses }),
   };
 }
+
+/**
+ * Whether a pair (a request and a listing) is on this person's desk: the cards liveDesk built for them (their own requests, and
+ * the matches on listings they hold). Used to refuse a status for a match the desk wouldn't show them (realty/node/match-status.ts).
+ */
+export function deskHolds(desk: LiveDesk, requestId: string, listing: string): boolean {
+  const cards = [...(desk.yours.status === "ok" ? desk.yours.cards : []), ...desk.onListings];
+  return cards.some((c) => c.requestId === requestId && [...c.matches, ...c.ours].some((m) => listingKey(m) === listing));
+}

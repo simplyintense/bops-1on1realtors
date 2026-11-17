@@ -10,7 +10,7 @@ function signOut() {
     '<!doctype html><meta name="viewport" content="width=device-width"><title>Bops</title><body style="font-family:system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem"><p>You are signed out.</p><p><a href="/api/gate/login">Sign in again</a></p></body>',
     { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
   );
-  res.cookies.set(GATE_COOKIE, "", { path: "/", maxAge: 0 });
+  res.cookies.set(GATE_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 0 });
   return res;
 }
 

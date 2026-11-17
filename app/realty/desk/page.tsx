@@ -8,6 +8,7 @@ import { readWebhookStatus, webhookStatusLabel } from "@/realty/node/webhook-sta
 import { viewer } from "../viewer";
 import { LeadCards } from "./lead-cards";
 import { RecommendationsPanel } from "./recommendations-panel";
+import { leadsSectionCopy, showFeedStatus } from "./copy";
 
 /**
  * The staff desk: the home for signed-in staff. The login gate covers every /realty page, and the public demo redirects
@@ -29,13 +30,14 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
   // Never throws out of the page: a failure is the panel's error state.
   const recs = await staffRecommendations({ email, showHidden }).catch(() => null);
   const leads = await staffLeads({ email, showHidden }).catch(() => null);
+  const feedStatus = showFeedStatus(owner) ? webhookStatusLabel(readWebhookStatus(periskopeRoot())) : null;
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
       <p className="rt-eyebrow">Staff only</p>
       <h1 className="mt-2 text-3xl font-semibold">1on1 Realtors staff desk</h1>
       <p className="rt-muted mt-3">Tools for the 1on1 Realtors team. Nothing on these pages sends a message or writes to the CRM.</p>
-      <p className="rt-muted mt-1 text-sm">{webhookStatusLabel(readWebhookStatus(periskopeRoot()))}</p>
+      {feedStatus ? <p className="rt-muted mt-1 text-sm">{feedStatus}</p> : null}
 
       <ul className={`mt-8 grid gap-4 ${owner ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
         <Tile href="/realty/market" title="Online search" cta="Search online" tour="desk-search">
@@ -53,7 +55,7 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
               Owners only. The WhatsApp supply and demand, and the online buyer-request feed. Read-only.
             </Tile>
             <Tile href="/realty/posts" title="All posts" cta="See all posts">
-              Owners only. Stored WhatsApp group posts, with the original text next to what Bops parsed.
+              Owners only. Stored WhatsApp group posts, with the original text next to what the desk parsed.
             </Tile>
             <Tile href="/realty/digest" title="Daily digest" cta="Open the digest">
               Owners only. The last day&apos;s WhatsApp requests and their matches, and a sample replay.
@@ -67,11 +69,10 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
           Automatch leads
         </h2>
         <p className="rt-muted mt-2 text-sm">
-          Strong matches (75 and above) for the listings you hold in the 1on1 CRM: who asked, the listing, and a suggested message. Owners see every card; a
-          listing with no agent is the office&apos;s.
+          {leadsSectionCopy(owner)}
         </p>
         <div className="mt-4">
-          <LeadCards view={leads} showHidden={showHidden} toggleHref={showHidden ? "/realty/desk" : "/realty/desk?hidden=1"} />
+          <LeadCards view={leads} owner={owner} showHidden={showHidden} toggleHref={showHidden ? "/realty/desk" : "/realty/desk?hidden=1"} />
         </div>
       </section>
 

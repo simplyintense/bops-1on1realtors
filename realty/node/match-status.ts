@@ -1,6 +1,10 @@
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import { listingKey, parseStatusPost, type FeedbackContext } from "../flow/match-status.ts";
 import { exclusive, staffAccess, staffEmail, type Reply } from "./periskope-intake.ts";
+import { ownerAllowed } from "../../lib/gate.ts";
+import { deskHolds, liveDesk } from "../flow/live-match.ts";
+import { crmSeamFromEnv } from "./crm-shared.ts";
+import type { CrmSeam } from "../flow/crm-seam.ts";
 import { leadAccess } from "./automatch-leads.ts";
 import type { AutomatchOpts, AutomatchRow } from "./automatch.ts";
 import { defaultIntakeRoot } from "./requests.ts";
@@ -12,14 +16,15 @@ import { PeriskopeStore } from "./periskope-store.ts";
  * sends, never writes to the CRM and never calls out. The pair must be on the desk now: a live request with that listing as one
  * of its matches, as before. Or it's an Automatch lead (a strong row, realty/node/automatch-leads.ts), and then only an owner or
  * the agent who holds that listing may set its outcome (403 otherwise). So a status can't be keyed to anything nobody may see.
- * Writes are idempotent (realty/flow/match-status.ts). An outcome may carry a reason and a note (the agents' feedback,
+ * An agent (not an owner) may set a live match only if the desk shows it to them (liveDesk: their own requests, and the matches on
+ * listings they hold), not any match on the desk. Writes are idempotent (realty/flow/match-status.ts). An outcome may carry a reason and a note (the agents' feedback,
  * agent-feedback.ts). For an Automatch lead the route also keeps what the pair was (its areas and the listing's fingerprint), so
  * the learning rules can apply later; that's read from the same lead lookup, never from the CRM write path.
  *   POST { requestId, listingKey, status, reason?, note? }  → 200 { requestId, listingKey, status, changed, … }
  *                                            400 bad body · 403 a lead that isn't yours · 404 not on the desk · 401/403/503 from staffAccess
  */
 
-export type FollowOptions = Omit<AutomatchOpts, "now"> & { env?: Env; root?: string; now?: () => Date };
+export type FollowOptions = Omit<AutomatchOpts, "now"> & { env?: Env; root?: string; now?: () => Date; seam?: CrmSeam };
 
 export async function setMatchFollowUp(request: Request, o: FollowOptions = {}): Promise<Reply> {
   const env = o.env ?? runtimeEnv();
@@ -37,8 +42,14 @@ export async function setMatchFollowUp(request: Request, o: FollowOptions = {}):
   const by = await staffEmail(request, env);
   const at = (o.now?.() ?? new Date()).toISOString();
   const root = o.root ?? defaultIntakeRoot();
-  const live = new PeriskopeStore(root).live().find((r) => r.requestId === post.requestId);
-  const onDesk = !!live && [...live.matches, ...(live.ours ?? [])].some((m) => listingKey(m) === post.listingKey);
+  const rows = new PeriskopeStore(root).live();
+  const live = rows.find((r) => r.requestId === post.requestId);
+  let onDesk = !!live && [...live.matches, ...(live.ours ?? [])].some((m) => listingKey(m) === post.listingKey);
+  if (onDesk && !ownerAllowed(by, env)) {
+    // An agent: only a match in the desk view built for them (the same scoping the desk page uses).
+    const agents = await (o.seam ?? crmSeamFromEnv(env)).agents().catch(() => []);
+    onDesk = deskHolds(liveDesk({ email: by, owner: false, agents, rows, showHidden: true }), post.requestId, post.listingKey);
+  }
   // The lead (an Automatch strong row) is needed to refuse a pair that isn't on the desk, and to keep what the pair was when a
   // reason is given (only then does the learning rules read it).
   const withReason = post.status !== null && post.reason !== undefined;

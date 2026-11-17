@@ -81,7 +81,7 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
           Every strong match (75 and above): who asked, the listing and its agent (or the office), a suggested message, and the outcome buttons.
         </p>
         <div className="mt-4">
-          <LeadCards view={leads} showHidden={showHidden} toggleHref={showHidden ? "/realty/automatch" : "/realty/automatch?hidden=1"} />
+          <LeadCards view={leads} owner showHidden={showHidden} toggleHref={showHidden ? "/realty/automatch" : "/realty/automatch?hidden=1"} />
         </div>
       </section>
 

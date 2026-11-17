@@ -4,6 +4,7 @@ import { REASON_LABEL } from "@/realty/flow/match-status.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { Notice } from "../notice";
 import { FollowUpButtons } from "./follow-up-buttons";
+import { leadLabel } from "./copy";
 
 /**
  * Automatch lead cards (realty/flow/automatch-leads.ts): one per strong match (75 and above) that this person may see. Shared by
@@ -17,7 +18,7 @@ import { FollowUpButtons } from "./follow-up-buttons";
  * the browser scrolls to it natively, and scroll-margin keeps it clear of the top bar.
  */
 
-export function LeadCards({ view, showHidden, toggleHref, error }: { view: LeadsView | null; showHidden: boolean; toggleHref: string; error?: string }) {
+export function LeadCards({ view, owner, showHidden, toggleHref, error }: { view: LeadsView | null; owner: boolean; showHidden: boolean; toggleHref: string; error?: string }) {
   if (!view) return <Notice tone="error">{error ?? "Lead cards couldn't load right now. The rest of the page still works."}</Notice>;
   return (
     <div className="grid gap-3">
@@ -30,7 +31,7 @@ export function LeadCards({ view, showHidden, toggleHref, error }: { view: Leads
       {view.cards.length ? (
         <ol className="grid gap-4">
           {view.cards.map((c) => (
-            <LeadCard key={`${c.requestId}-${c.listingKey}`} c={c} />
+            <LeadCard key={`${c.requestId}-${c.listingKey}`} c={c} owner={owner} />
           ))}
         </ol>
       ) : (
@@ -40,11 +41,11 @@ export function LeadCards({ view, showHidden, toggleHref, error }: { view: Leads
   );
 }
 
-function LeadCard({ c }: { c: LeadCardView }) {
+function LeadCard({ c, owner }: { c: LeadCardView; owner: boolean }) {
   return (
     <li id={leadCardId(c.requestId, c.listingKey)} className="rt-card grid scroll-mt-24 gap-3 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rt-eyebrow">Lead · score {c.score}</span>
+        <span className="rt-eyebrow">{leadLabel(owner, c.score)}</span>
         {c.stale ? <span className="rt-chip" aria-label="No outcome two hours after the match">Stale</span> : null}
         <span className="rt-muted text-xs">Matched {dateAst(c.matchedAt)}</span>
       </div>

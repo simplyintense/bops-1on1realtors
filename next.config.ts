@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { SECURITY_HEADER_GROUPS } from "./lib/security-headers";
 import { join } from "node:path";
 import type { NextConfig } from "next";
 
@@ -26,6 +27,11 @@ const nextConfig: NextConfig = {
   // with the default (true) Next writes rendered pages to .next/server/route-cache there: one added
   // file breaks the app's seal, and macOS then calls Bops "damaged" and offers to move it to the Trash.
   experimental: { isrFlushToDisk: false },
+  // Security headers on every response (lib/security-headers.ts).
+  async headers() {
+    return SECURITY_HEADER_GROUPS;
+  },
+
   // Files the server reads or runs by path at runtime, which the build's tracing can't see:
   // the scripts it copies onto bots' computers (vm/), the browser tools it hands Codex
   // (lib/server/local.ts, sessions.ts), the page recorder it injects (lib/server/mirror.ts) and
