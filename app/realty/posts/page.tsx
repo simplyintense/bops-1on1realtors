@@ -32,7 +32,7 @@ export default async function PostsPage() {
       {posts.length === 0 ? (
         <p className="rt-muted mt-8">No posts stored yet.</p>
       ) : (
-        <ul className="mt-8 divide-y">
+        <ul className="mt-8 divide-y" data-tour="posts-list">
           {posts.map((p) => (
             <li key={p.requestId} className="py-3">
               <Link href={`/realty/posts/${p.requestId}`} className="block hover:underline">

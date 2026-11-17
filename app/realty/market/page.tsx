@@ -41,11 +41,15 @@ export default async function MarketSearchPage({ searchParams }: { searchParams:
       <h1 className="mt-2 text-3xl font-semibold">Online search</h1>
       <p className="rt-muted mt-3">Other agencies&apos; listings from the market. Nothing is saved, sent or written to the CRM.</p>
 
-      {strip ? <StatsStrip {...strip} /> : null}
+      {strip ? (
+        <div data-tour="market-stats">
+          <StatsStrip {...strip} />
+        </div>
+      ) : null}
 
       <Filters c={c} />
 
-      <section className="mt-8">
+      <section className="mt-8" data-tour="market-results">
         {!result ? <Notice>Nothing searched yet. Set the filters above and search.</Notice> : <Results result={result} c={c} />}
       </section>
     </main>
@@ -55,7 +59,7 @@ export default async function MarketSearchPage({ searchParams }: { searchParams:
 function Filters({ c }: { c: DeskCriteria }) {
   const field = "rt-field mt-1";
   return (
-    <form action="/realty/market" method="get" className="rt-card mt-6 grid gap-4 p-4 sm:grid-cols-2">
+    <form action="/realty/market" method="get" className="rt-card mt-6 grid gap-4 p-4 sm:grid-cols-2" data-tour="market-filters">
       <label className="text-sm font-medium sm:col-span-2">
         Area
         <input name="area" defaultValue={c.area} placeholder="e.g. Westmoorings" className={field} />

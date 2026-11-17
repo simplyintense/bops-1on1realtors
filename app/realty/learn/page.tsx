@@ -35,7 +35,7 @@ export default async function LearnPage() {
         word the same way in every post from now on. Times are AST.
       </p>
 
-      <h2 className="mt-10 text-xl font-semibold">Open questions</h2>
+      <h2 className="mt-10 text-xl font-semibold" data-tour="learn-questions">Open questions</h2>
       <p className="rt-muted mt-2 text-sm">
         Policy questions for the owner, not posts. An answer is recorded here and changes nothing in matching.
       </p>
@@ -57,7 +57,7 @@ export default async function LearnPage() {
         ))}
       </ol>
 
-      <h2 className="mt-12 text-xl font-semibold">Open ({queue.total})</h2>
+      <h2 className="mt-12 text-xl font-semibold" data-tour="learn-queue">Open ({queue.total})</h2>
       {queue.rows.length === 0 ? <p className="rt-muted mt-3">Nothing waiting. No posts need an explanation.</p> : null}
       <ol className="mt-4 grid gap-4">
         {queue.rows.map((r) => (

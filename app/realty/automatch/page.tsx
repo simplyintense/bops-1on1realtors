@@ -73,7 +73,7 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
         </div>
       ) : null}
 
-      <section className="mt-8" aria-labelledby="lead-cards-heading">
+      <section className="mt-8" aria-labelledby="lead-cards-heading" data-tour="automatch-leads">
         <h2 id="lead-cards-heading" className="text-2xl font-semibold">
           Lead cards
         </h2>
@@ -85,7 +85,7 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
         </div>
       </section>
 
-      <section className="mt-8" aria-label="Pairs">
+      <section className="mt-8" aria-label="Pairs" data-tour="automatch-pairs">
         {shown.length ? (
           <ol className="grid gap-4">
             {shown.map((r, i) => (
