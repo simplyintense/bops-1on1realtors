@@ -7,7 +7,7 @@ import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "..
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
-import { syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
+import { INTAKE_ALERT_GAP_MS, syncAutoMatchAlertsCoalesced, syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
 import { aliasesOf } from "../flow/knowledge.ts";
 import { CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
 import { liveRequestOf, matchOnArrival, matchOurListings, type LiveRequest } from "../flow/live-match.ts";
@@ -85,6 +85,12 @@ export type IntakeOptions = {
   areasRoot?: string;
   /** The market client for live matching (match_buyer). Unset: from ONEON1_MARKET_SEARCH_* (null when they aren't set). */
   market?: ToolCaller | null;
+  /**
+   * The Auto-Match sync after an ingest: "inline" (await a full run), "coalesced" (at most one run every few minutes, the
+   * production default) or "skip" (the caller runs one itself, as the poller does once per poll). Unset: inline when a test
+   * injects `now` or `root`, else coalesced.
+   */
+  alertSync?: "inline" | "coalesced" | "skip";
   /** Where our own listings come from for live matching. Unset: the same CRM as `crm`. Null: no listings of ours. */
   ours?: Pick<CrmSource, "listings"> | null;
   /**
@@ -257,9 +263,20 @@ export function webhookBackgroundIdle(): Promise<unknown> {
   return lastBackground.then(() => exclusive(() => undefined));
 }
 
+/**
+ * The Auto-Match sync after an intake. In production it's coalesced (syncAutoMatchAlertsCoalesced: at most one run per
+ * few minutes) so a busy WhatsApp group can't starve the server's CPU. Tests that inject `now` or `root` run it inline.
+ */
+function syncIntakeAlerts(o: IntakeOptions, a: { env: Env; root: string; now?: Date }): Promise<void> {
+  const mode = o.alertSync ?? (o.now !== undefined || o.root !== undefined ? "inline" : "coalesced");
+  if (mode === "skip") return Promise.resolve();
+  if (mode === "inline") return syncAutoMatchAlertsSafely(a);
+  return syncAutoMatchAlertsCoalesced({ env: a.env, root: a.root }, INTAKE_ALERT_GAP_MS);
+}
+
 async function processQueued(o: IntakeOptions, env: Env, root: string, id: string): Promise<Reply | null> {
   const result = await exclusive(async () => (await drainInbox(context(o), id)).reply);
-  await syncAutoMatchAlertsSafely({ env, root, now: context(o).now });
+  await syncIntakeAlerts(o, { env, root, now: context(o).now });
   return result;
 }
 
@@ -375,7 +392,7 @@ function logGroupName(name: string | null): string | null {
 export async function ingestEvent(payload: unknown, o: IntakeOptions = {}): Promise<Reply> {
   const c = context(o);
   const result = await exclusive(() => ingest(JSON.stringify(payload), c));
-  await syncAutoMatchAlertsSafely({ env: c.env, root: c.root, now: c.now });
+  await syncIntakeAlerts(o, { env: c.env, root: c.root, now: c.now });
   return result;
 }
 

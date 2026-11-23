@@ -122,6 +122,44 @@ export async function syncAutoMatchAlertsSafely(o: AutomatchOpts = {}): Promise<
   }
 }
 
+/**
+ * The intake (one call per WhatsApp message) asks for an Auto-Match sync after every delivery. A full run re-scores every
+ * request against every listing, and on the hosted shared-CPU machine one every few seconds used up the CPU allowance:
+ * Fly then throttled the machine, the health check timed out and sign-in pages answered 503 or hung (Nov 23). So the
+ * intake's calls are coalesced: at most one run at a time, at most one per INTAKE_ALERT_GAP_MS, and a call that lands
+ * inside the gap schedules one trailing run so nothing is missed. The poller (every 10 minutes) still calls
+ * syncAutoMatchAlertsSafely directly.
+ */
+export const INTAKE_ALERT_GAP_MS = 3 * 60_000;
+const coalesce = globalThis as unknown as { __bopsAlertCoalesce?: { running: boolean; lastAt: number; timer: ReturnType<typeof setTimeout> | null; next: AutomatchOpts | null } };
+export function syncAutoMatchAlertsCoalesced(o: AutomatchOpts = {}, gapMs = INTAKE_ALERT_GAP_MS): Promise<void> {
+  if (gapMs <= 0) return syncAutoMatchAlertsSafely(o);
+  const c = (coalesce.__bopsAlertCoalesce ??= { running: false, lastAt: 0, timer: null, next: null });
+  const { now: _ignored, ...rest } = o;
+  c.next = rest;
+  const fire = async () => {
+    c.timer = null;
+    if (c.running || !c.next) return;
+    const opts = c.next;
+    c.next = null;
+    c.running = true;
+    c.lastAt = Date.now();
+    try {
+      await syncAutoMatchAlertsSafely(opts);
+    } finally {
+      c.running = false;
+      if (c.next && !c.timer) schedule();
+    }
+  };
+  const schedule = () => {
+    const wait = Math.max(0, c.lastAt + gapMs - Date.now());
+    c.timer = setTimeout(() => void fire(), wait);
+    (c.timer as { unref?: () => void }).unref?.();
+  };
+  if (!c.running && !c.timer) schedule();
+  return Promise.resolve();
+}
+
 export type DeliveredAlert = {
   agent: string;
   listingTitle: string;
