@@ -129,6 +129,8 @@ type ApiRule = { methods: readonly string[]; match: (path: string) => boolean };
 export const AGENT_APIS: readonly ApiRule[] = [
   // The desk's follow-up buttons: the route only writes what the agent may see on their own desk (realty/node/match-status.ts).
   { methods: ["POST"], match: (p) => p === "/api/realty/match-status" },
+  // "Not a lead" on a desk card: the route only marks what the agent may see on their own desk (realty/node/not-a-lead.ts).
+  { methods: ["POST"], match: (p) => p === "/api/realty/not-a-lead" },
   // The guided tour marks itself seen (realty/node/tour-seen.ts).
   { methods: ["POST"], match: (p) => p === "/api/realty/tour" },
   // Listing photos: an unguessable hash per photo (realty/node/listing-media.ts); the thumbs are the same photos, smaller.

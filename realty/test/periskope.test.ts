@@ -727,6 +727,63 @@ test("listing signals such as NEW TO THE MARKET and FOR RENT OR SALE are supply,
   assert.equal(categoryOf(interpret(stillLooking), stillLooking).category, "buyer_request");
 });
 
+test("a headline ad with a pipe, PROPERTY FEATURES, PRICING and HOA fee is supply, even with 'Looking for' in its copy", () => {
+  const townhouse = [
+    "🏠 BRAND NEW TOWNHOUSES FOR SALE | AMBA TOWNHOUSES, FREEPORT",
+    "",
+    "Looking for a modern home with space, comfort and convenience? These brand-new townhouses in Freeport offer contemporary living with practical features for the entire family.",
+    "",
+    "PROPERTY FEATURES",
+    "",
+    "* 3 bedrooms",
+    "* Master bedroom with ensuite and walk-in closet",
+    "* 2.5 bathrooms",
+    "* Tiled floors throughout",
+    "* Air-conditioned",
+    "* Kitchen with double sinks and walk-in pantry",
+    "* Upper-floor foyer — ideal for a TV room or home office",
+    "* Separate laundry room",
+    "* Balcony off the master bedroom",
+    "* Water tank and pump",
+    "* Parking for 2 vehicles",
+    "",
+    "PRICING",
+    "",
+    "* End units: TT$1.55 million",
+    "* Middle units: TT$1.5 million",
+    "",
+    "HOA Fee: TT$400",
+    "",
+    "Location: Amba Townhouses, Freeport",
+  ].join("\n");
+  assert.equal(listingSignals(townhouse), true);
+  const i = interpret(townhouse);
+  assert.equal(i.kind, "cobroke_listing");
+  assert.equal(i.facts.beds, 3);
+  assert.equal(categoryOf(i, townhouse).category, "listing_for_sale");
+  for (const headline of [
+    "TOWNHOUSES FOR SALE – Freeport, 3 bed, TT$1.5m",
+    "🏡 APARTMENTS FOR RENT - Westmoorings TT$8,000",
+    "FOR SALE — Maraval, 3 bed, TT$2m",
+    "🏠 BRAND NEW HOUSES FOR SALE | Freeport, TT$1.2m",
+  ]) assert.equal(listingSignals(headline), true, headline);
+  assert.equal(listingSignals("Looking for a modern home?\n\nPROPERTY FEATURES\n* 3 bedrooms\nTT$1.5m"), true);
+});
+
+test("genuine requests with 'for sale' or 'for rent' mid-sentence stay buyer or rental requests", () => {
+  const cases: [string, string][] = [
+    ["Client looking for a 2 bed house in Maraval under 1.2M", "buyer_request"],
+    ["looking for a 3 bed townhouse for sale in Freeport, budget 1.5m", "buyer_request"],
+    ["Client needs a 3 bed house for sale in Maraval, 2m budget", "buyer_request"],
+    ["seeking 2 bed apartment for rent in Westmoorings up to 8,000", "rental_request"],
+    ["Looking for a 3 bed townhouse for sale - budget 1.5m", "buyer_request"],
+  ];
+  for (const [body, category] of cases) {
+    assert.equal(listingSignals(body), false, body);
+    assert.equal(categoryOf(interpret(body), body).category, category, body);
+  }
+});
+
 test("demand phrases, bare millions as TT$, and central locations parse as a buyer request", () => {
   const raffy = "Good day agents. In search for a one bedroom apartment in central locations. 1m budget. Raffy";
   const i = interpret(raffy);

@@ -23,6 +23,8 @@ import {
   BASELINE_CONFIRM,
   HOT_MATCH_LINE,
   REPLY_LINE,
+  OFFICE_REPLY_LINE,
+  alertFooter,
   agedLeadLine,
   isAgedLead,
   oneShotAgentStatus,
@@ -338,14 +340,21 @@ test("the opening says when the message was received: the long weekday, the cale
   assert.match(office.text, /^Hi,\n\nBased on a message received on WhatsApp on Sunday 15 Nov at 2:15 PM AST/);
 });
 
-test("the contact block: the name, the phone as a tel: link, when it was received, and the exact quoted message (trimmed only)", () => {
+test("the contact block: the name, the phone as a tel: link, the WhatsApp link, when it was received, and the exact quoted message (trimmed only)", () => {
   const a = buildAutoMatchAlert(ROW({}, { originalText: "  Need a 3 bed townhouse in Maraval,\n budget 2.5m  " }), BASE_OPTS);
-  assert.ok(a.text.includes("Contact\nName: Dana Tester\nPhone: +1 868 555 0100\nReceived: Sun 15 Nov, 2:15 PM AST\nTheir WhatsApp message:\n“Need a 3 bed townhouse in Maraval,\n budget 2.5m”\n"));
+  assert.ok(a.text.includes("Contact\nName: Dana Tester\nPhone: +1 868 555 0100\nMessage on WhatsApp, with the message filled in:\nhttps://wa.me/18685550100?text="));
+  assert.ok(a.text.includes("\nReceived: Sun 15 Nov, 2:15 PM AST\nTheir WhatsApp message:\n“Need a 3 bed townhouse in Maraval,\n budget 2.5m”\n"));
+  assert.ok(a.html.includes(`<h3>Contact</h3>`) && a.html.indexOf(`href="${a.waUrl}"`) < a.html.indexOf("<h3>The match</h3>"), "the WhatsApp link is in the Contact block, above the match");
+  assert.ok(a.html.includes(`<p>Message on WhatsApp, with the message filled in: <a href="${a.waUrl}">here</a></p>`));
   assert.ok(a.html.includes("<p>Phone: <a href=\"tel:+18685550100\">+1 868 555 0100</a></p>"));
   assert.ok(a.html.includes("<p>“Need a 3 bed townhouse in Maraval,<br> budget 2.5m”</p>"));
   const noName = buildAutoMatchAlert(ROW({}, { senderName: "+1 868 555 0100", originalText: "3 bed" }), BASE_OPTS);
   assert.doesNotMatch(noName.text, /Name:/, "a phone number is not shown as a name");
   assert.doesNotMatch(noName.html, /Name:/);
+  const noSender = buildAutoMatchAlert(ROW({}, { senderName: null }), BASE_OPTS);
+  assert.doesNotMatch(noSender.text, /Name:/);
+  assert.doesNotMatch(noSender.html, /Name:/);
+  assert.ok(noSender.text.includes("Contact\nPhone: +1 868 555 0100\n"), "the Contact block still starts with the phone when there is no name");
   const noText = buildAutoMatchAlert(ROW({}, { originalText: null }), BASE_OPTS);
   assert.ok(noText.text.includes("Their WhatsApp message:\nNo message text is on file for this ask, so there is nothing to quote.\n"));
   assert.ok(noText.html.includes("No message text is on file for this ask, so there is nothing to quote."));
@@ -455,8 +464,10 @@ test("the subject, from, reply-to and the footer are unchanged, and the body has
   const a = buildAutoMatchAlert(ROW({}, { originalText: "3 bed townhouse in Maraval" }), { ...BASE_OPTS, fromName: ALERT_NAME, fromEmail: "alerts@1on1realtors.com" });
   assert.equal(a.subject, "1on1 Auto-Match Alert: townhouse · 3 bed · Maraval · TT$3.7M");
   assert.equal(a.from, "1on1 Auto-Match Alert <alerts@1on1realtors.com>");
-  assert.ok(a.text.endsWith("Reply to this email to let admin know how it went.\n"));
-  assert.ok(a.html.includes("<p>Reply to this email to let admin know how it went.</p>"));
+  assert.equal(a.to, OFFICE_TO, "no agent email on the default row: the office is the recipient");
+  assert.ok(a.text.endsWith(`${OFFICE_REPLY_LINE}\n`));
+  assert.ok(a.html.includes(`<p>${OFFICE_REPLY_LINE}</p>`));
+  assert.doesNotMatch(`${a.text}\n${a.html}`, /let admin know/);
   assert.doesNotMatch(`${a.text}\n${a.html}`, /hot or live match|Here is a strong match for a listing you hold|A contact mentioned/);
   assert.equal(HOT_MATCH_LINE.length > 0, true, "the constant stays exported for other callers");
 });
@@ -467,7 +478,7 @@ test("the contact's direct number is a readable E.164-style line with a tel: lin
   assert.equal(a.tel, "tel:+18685550100");
   assert.ok(a.waUrl?.startsWith("https://wa.me/18685550100?text="));
   assert.match(a.text, /Call: \+1 868 555 0100 \(tel:\+18685550100\)/);
-  assert.match(a.text, /WhatsApp, with the message filled in:\nhttps:\/\/wa\.me\/18685550100\?text=/);
+  assert.match(a.text, /Message on WhatsApp, with the message filled in:\nhttps:\/\/wa\.me\/18685550100\?text=/);
   assert.match(a.html, /<a href="tel:\+18685550100">\+1 868 555 0100<\/a>/);
   assert.ok(a.html.includes(`<a href="${a.waUrl}">here</a>`));
   assert.equal(a.html.includes(`>${a.waUrl}<`), false, "the raw wa.me URL is not visible HTML text");
@@ -480,9 +491,28 @@ test("the contact's direct number is a readable E.164-style line with a tel: lin
   assert.equal(none.waUrl, null);
   assert.doesNotMatch(none.text, /Call:|tel:/);
   assert.doesNotMatch(none.html, /tel:/);
-  assert.match(none.text, /No usable WhatsApp number on this ask, so there's no link\./);
+  assert.match(none.text, /Contact\nName: Dana Tester\nNo usable WhatsApp number on this ask, so there's no link\.\n/, "the Contact block says there is no link");
+  assert.match(none.html, /<h3>Contact<\/h3>[\s\S]*<p>No usable WhatsApp number on this ask, so there(?:'|&#39;)s no link\.<\/p>/);
   assert.doesNotMatch(none.text, /wa\.me/);
   assert.doesNotMatch(none.html, /wa\.me/);
+});
+
+test("the footer: the office is told to use the link above, a named agent is invited to reply to the office; no footer says 'let admin know'", () => {
+  assert.equal(alertFooter(true), OFFICE_REPLY_LINE);
+  assert.equal(alertFooter(false), REPLY_LINE);
+  const agent = buildAutoMatchAlert({ ...ROW({}, { originalText: "3 bed" }), agentEmail: "dana@1on1.example" }, BASE_OPTS);
+  assert.equal(agent.to, "dana@1on1.example");
+  assert.ok(agent.text.endsWith("Reply to this email to let the office know how it went.\n"), "a named agent");
+  assert.ok(agent.html.includes("<p>Reply to this email to let the office know how it went.</p>"));
+  for (const office of [buildAutoMatchAlert(ROW({}, {}, { agentId: null, agentName: null }), BASE_OPTS)]) {
+    assert.equal(office.to.toLowerCase(), OFFICE_TO);
+    assert.ok(office.text.endsWith(`${OFFICE_REPLY_LINE}\n`), office.to);
+    assert.ok(office.html.includes(`<p>${OFFICE_REPLY_LINE}</p>`));
+    assert.doesNotMatch(`${office.text}\n${office.html}`, /let admin know|let the office know/);
+  }
+  const nameless = buildAutoMatchAlert(ROW({}, { originalText: "3 bed" }, { agentId: null, agentName: null }), { ...BASE_OPTS, officeEmail: "office@1on1realtors.com" });
+  assert.equal(nameless.to, "office@1on1realtors.com");
+  assert.ok(nameless.text.endsWith(`${OFFICE_REPLY_LINE}\n`), "the configured office address is the office too");
 });
 
 test("an unassigned listing, or one with no agent email, goes to the office address", () => {

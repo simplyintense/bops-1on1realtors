@@ -7,6 +7,7 @@ import { Notice } from "../notice";
 import { ContactBlock } from "../contact-block";
 import { hasContact } from "@/realty/flow/listing-contact.ts";
 import { FollowUpButtons } from "./follow-up-buttons";
+import { NotALeadButton } from "./not-a-lead-button";
 
 /**
  * "Top recommendations for you" on the desk. It renders the view the server built (realty/node/requests.ts DeskView): the
@@ -125,6 +126,7 @@ export function Cards({ cards, oursOnly = false, detail = false }: { cards: Live
               <MatchList items={c.matches} follow={followOf(c, detail)} />
             </div>
           ) : null}
+          {!detail ? <NotALeadButton requestId={c.requestId} /> : null}
         </li>
       ))}
     </ul>

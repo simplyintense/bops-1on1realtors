@@ -24,10 +24,11 @@ import type { StatusRow } from "./match-status.ts";
  *
  * Per alert, in order: an opening line (the posted day and time in AST, "Based on a message received on WhatsApp on Tuesday 10
  * Nov at 5:30 PM AST …"), the older-lead heads-up when it applies, a Contact block (the sender's name, the tap-to-call number,
- * when it was received, and the contact's own WhatsApp message quoted exactly), the match (listing, price, a plain-words fit
- * line, a generic caveat when the message names an extra need, and a link to the public listing), and an optional suggested
- * reply with the public link, the tap-to-call number and the wa.me link. The group name is never in the input or the body, and
- * the body never links to the Desk or to bop.1on1realtors.com: only a public 1on1realtors.com listing is linked.
+ * the "Message on WhatsApp" link, when it was received, and the contact's own WhatsApp message quoted exactly), the match (listing,
+ * price, a plain-words fit line, a generic caveat when the message names an extra need, and a link to the public listing), an
+ * optional suggested reply with the public link and the tap-to-call number, and a footer that says how to reply (see alertFooter).
+ * The group name is never in the input or the body, and the body never links to the Desk or to bop.1on1realtors.com: only a
+ * public 1on1realtors.com listing is linked.
  *
  * Portable: no node:*, no next, no bare process.
  */
@@ -96,9 +97,17 @@ export const HOT_MATCH_LINE =
 
 export const SEND_OFF = "Sending Auto-Match Alert is off. This command only renders a preview; nothing was sent.";
 
-export const WA_LABEL = "WhatsApp, with the message filled in:";
+export const WA_LABEL = "Message on WhatsApp, with the message filled in:";
 export const NO_WA = "No usable WhatsApp number on this ask, so there's no link.";
-export const REPLY_LINE = "Reply to this email to let admin know how it went.";
+/** The footer for an agent: the reply goes to the office. */
+export const REPLY_LINE = "Reply to this email to let the office know how it went.";
+/** The footer when the alert went to the office itself: the reply is the WhatsApp or phone link in the Contact block. */
+export const OFFICE_REPLY_LINE = "Use the WhatsApp or phone link above to reach the sender.";
+
+/** The footer line for this recipient: the office is told how to reach the sender, an agent is asked to reply to the office. */
+export function alertFooter(isOffice: boolean): string {
+  return isOffice ? OFFICE_REPLY_LINE : REPLY_LINE;
+}
 
 /** A request older than this many calendar days (AST) is flagged as an older lead. */
 export const AGED_LEAD_DAYS = 14;
@@ -486,6 +495,8 @@ export function extraNeedsCaveat(originalText: string | null | undefined): strin
 }
 
 
+const sameAddress = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+
 function recipient(r: AlertInput, office: string): { to: string; toName: string } {
   if (r.listing.agentId == null) return { to: office, toName: OFFICE_NAME };
   const email = (r.agentEmail ?? "").trim();
@@ -512,6 +523,7 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
   const fromName = o.fromName ?? ALERT_NAME;
   const fromEmail = o.fromEmail ?? null;
   const { to, toName } = recipient(r, o.officeEmail ?? OFFICE_TO);
+  const isOffice = sameAddress(to, o.officeEmail ?? OFFICE_TO) || sameAddress(to, OFFICE_TO);
   const subject = alertSubject(r, { test: o.test, used: o.usedSubjects, aged });
   const listingTitle = shortListingTitle(r.listing);
   const cc = [...(o.cc ?? parseAddressList(ALERT_CC_DEFAULT))];
@@ -533,6 +545,7 @@ export function buildAutoMatchAlert(r: AlertInput, o: AlertBuildOpts & { usedSub
     publicUrl: publicListingUrl(r.listing.url),
     message,
     waUrl,
+    footer: alertFooter(isOffice),
   };
   return {
     to,
@@ -586,6 +599,7 @@ type RenderView = {
   /** The suggested reply (leadMessage), with the public link inside it when there is one. */
   message: string;
   waUrl: string | null;
+  footer: string;
 };
 
 const quoteText = (s: string): string => `“${s}”`;
@@ -607,6 +621,8 @@ function renderText(v: RenderView): string {
   out.push("Contact");
   if (v.senderName) out.push(`Name: ${v.senderName}`);
   if (v.phoneText) out.push(`Phone: ${v.phoneText}`);
+  if (v.waUrl) out.push(WA_LABEL, v.waUrl);
+  else out.push(NO_WA);
   if (v.received) out.push(`Received: ${v.received}`);
   out.push("Their WhatsApp message:", v.originalText ? quoteText(v.originalText) : NO_MESSAGE_TEXT, "");
   out.push("The match", `${v.listing.title} · ${v.listing.price ?? NO_PRICE}`);
@@ -620,9 +636,7 @@ function renderText(v: RenderView): string {
   if (parts && v.publicUrl) out.push(parts.before, v.publicUrl, parts.after);
   else out.push(v.message);
   if (v.phoneText && v.tel) out.push(`Call: ${v.phoneText} (${v.tel})`);
-  if (v.waUrl) out.push(WA_LABEL, v.waUrl);
-  else out.push(NO_WA);
-  out.push("", REPLY_LINE, "");
+  out.push("", v.footer, "");
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
 
@@ -643,6 +657,7 @@ function renderHtml(v: RenderView): string {
     "<h3>Contact</h3>",
     v.senderName ? `<p>Name: ${e(v.senderName)}</p>` : "",
     v.phoneText && v.tel ? `<p>Phone: <a href="${e(v.tel)}">${e(v.phoneText)}</a></p>` : "",
+    v.waUrl ? `<p>${e(WA_LABEL)} <a href="${e(v.waUrl)}">here</a></p>` : `<p>${e(NO_WA)}</p>`,
     v.received ? `<p>Received: ${e(v.received)}</p>` : "",
     "<p>Their WhatsApp message:</p>",
     `<p>${v.originalText ? br(quoteText(v.originalText)) : e(NO_MESSAGE_TEXT)}</p>`,
@@ -657,8 +672,7 @@ function renderHtml(v: RenderView): string {
     "<h3>Suggested reply (optional)</h3>",
     reply,
     v.phoneText && v.tel ? `<p>Call: <a href="${e(v.tel)}">${e(v.phoneText)}</a> (${e(v.tel)})</p>` : "",
-    v.waUrl ? `<p>${e(WA_LABEL)} <a href="${e(v.waUrl)}">here</a></p>` : `<p>${e(NO_WA)}</p>`,
-    `<p>${e(REPLY_LINE)}</p>`,
+    `<p>${e(v.footer)}</p>`,
     "</body></html>",
   ]
     .filter((line) => line !== "")

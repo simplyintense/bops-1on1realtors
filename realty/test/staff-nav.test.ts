@@ -7,13 +7,15 @@ import { STAFF_PAGES, visibleStaffPages } from "../../app/realty/staff-pages.ts"
  * viewer sees. The owner and teacher checks are the layout's (viewer.ts); this only checks the list those flags select.
  */
 
-const ENTRIES: readonly { label: string; href: string }[] = STAFF_PAGES;
+const ENTRIES: readonly { label: string; href: string; external?: true }[] = STAFF_PAGES;
+const PUBLIC_SITE = "https://1on1realtors.com";
 
 const labels = (viewer: { owner: boolean; teacher: boolean }) => visibleStaffPages(viewer).map((p) => p.label);
 
 test("the full nav for an owner who teaches: the new order and labels, with Requests gone and Bops home last", () => {
   assert.deepEqual(labels({ owner: true, teacher: true }), [
     "Desk",
+    "Public site",
     "1on1 CRM Automatch",
     "Supply & Demand",
     "All posts",
@@ -25,13 +27,13 @@ test("the full nav for an owner who teaches: the new order and labels, with Requ
   ]);
   assert.deepEqual(
     visibleStaffPages({ owner: true, teacher: true }).map((p) => p.href),
-    ["/realty/desk", "/realty/automatch", "/realty/search", "/realty/posts", "/realty/market", "/realty/digest", "/realty/alerts", "/realty/learn", "/"],
+    ["/realty/desk", PUBLIC_SITE, "/realty/automatch", "/realty/search", "/realty/posts", "/realty/market", "/realty/digest", "/realty/alerts", "/realty/learn", "/"],
   );
   assert.ok(!ENTRIES.some((p) => p.label === "Requests" || p.href === "/realty/requests"), "the Requests entry is removed");
 });
 
 test("an agent (neither owner nor teacher) sees the desk and online search only: no Bops home", () => {
-  assert.deepEqual(labels({ owner: false, teacher: false }), ["Desk", "Online search"]);
+  assert.deepEqual(labels({ owner: false, teacher: false }), ["Desk", "Public site", "Online search"]);
 });
 
 test("Bops home is at / and listed for owners only: an agent is sent to the desk from /", () => {
@@ -46,22 +48,34 @@ test("Bops home is at / and listed for owners only: an agent is sent to the desk
 });
 
 test("an owner who doesn't teach sees no Teach Bops; a teacher who isn't an owner sees no owner pages", () => {
-  assert.deepEqual(labels({ owner: true, teacher: false }), ["Desk", "1on1 CRM Automatch", "Supply & Demand", "All posts", "Online search", "Digest", "Auto-Match Alert", "Bops home"]);
-  assert.deepEqual(labels({ owner: false, teacher: true }), ["Desk", "Online search", "Teach Bops"]);
+  assert.deepEqual(labels({ owner: true, teacher: false }), ["Desk", "Public site", "1on1 CRM Automatch", "Supply & Demand", "All posts", "Online search", "Digest", "Auto-Match Alert", "Bops home"]);
+  assert.deepEqual(labels({ owner: false, teacher: true }), ["Desk", "Public site", "Online search", "Teach Bops"]);
 });
 
 test("gating flags on the entries match the labels: owner pages are owner-only, Teach Bops is teacher-only, the rest open", () => {
   const byLabel = Object.fromEntries(STAFF_PAGES.map((p) => [p.label, p]));
   for (const label of ["1on1 CRM Automatch", "Supply & Demand", "All posts", "Digest", "Auto-Match Alert"]) assert.equal(byLabel[label].ownerOnly, true, label);
   assert.equal(byLabel["Teach Bops"].teacherOnly, true);
-  for (const label of ["Desk", "Online search"]) {
+  for (const label of ["Desk", "Public site", "Online search"]) {
     assert.equal(byLabel[label].ownerOnly, false, label);
     assert.equal(byLabel[label].teacherOnly, false, label);
   }
 });
 
-test("every entry is a /realty page or Bops home at /, and the old URLs are still listed where they were", () => {
-  for (const p of STAFF_PAGES) assert.ok(p.href.startsWith("/realty/") || p.href === "/", p.href);
+test("the Public site entry is external, not owner-only, and sits right after Desk", () => {
+  for (const viewer of [{ owner: true, teacher: true }, { owner: false, teacher: false }]) {
+    const nav = visibleStaffPages(viewer);
+    const site = nav.find((p) => p.label === "Public site");
+    assert.equal(site?.href, PUBLIC_SITE);
+    assert.equal(site?.external, true);
+    assert.equal(site?.ownerOnly, false);
+    assert.equal(nav[1]?.label, "Public site", "directly after Desk");
+  }
+  assert.equal(STAFF_PAGES.filter((p) => p.external).length, 1, "the only external entry");
+});
+
+test("every entry is a /realty page, Bops home at /, or the one external public site link", () => {
+  for (const p of STAFF_PAGES) assert.ok(p.external ? p.href === PUBLIC_SITE : p.href.startsWith("/realty/") || p.href === "/", p.href);
   assert.ok(!ENTRIES.some((p) => p.label === "Back to Bops"), "Back to Bops is now the Bops home entry, not a one-off link");
   const hrefs = STAFF_PAGES.map((p) => p.href);
   assert.ok(hrefs.includes("/realty/market"), "online search keeps /realty/market");

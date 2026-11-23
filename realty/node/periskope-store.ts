@@ -397,6 +397,12 @@ export class PeriskopeStore {
     return this.storedLive().map((r) => ({ ...r, requestId: requestIdOf(r.messageId) }));
   }
 
+  /** The live requests the desk and digest show: not those marked not a lead (a kind override with status ignored). */
+  liveShown(): LiveRow[] {
+    const ignored = new Set(this.kindOverrides().filter((o) => o.status === "ignored").map((o) => o.messageId));
+    return this.live().filter((r) => !ignored.has(r.messageId));
+  }
+
   private storedLive(): Omit<LiveRow, "requestId">[] {
     return this.rows<Omit<LiveRow, "requestId">>("live");
   }

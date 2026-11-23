@@ -87,7 +87,7 @@ test("role filtering: an agent sees only Desk and Online search; owners get thei
 test("steps navigate: each step has a page, pages come in nav order, and each page starts with its nav link", () => {
   for (const [name, role] of Object.entries(ROLES)) {
     const steps = buildTourSteps(role);
-    const navOrder = visibleStaffPages(role).filter((p) => p.href !== "/").map((p) => p.href);
+    const navOrder = visibleStaffPages(role).filter((p) => p.href !== "/" && !p.external).map((p) => p.href);
     const seq = steps.flatMap((s) => (s.page ? [s.page] : []));
     const grouped = [...new Set(seq)];
     assert.deepEqual(grouped, navOrder, `${name}: pages in nav order, each grouped together`);
