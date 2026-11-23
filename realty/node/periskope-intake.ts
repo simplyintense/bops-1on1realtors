@@ -7,7 +7,7 @@ import { forgetLeadsIn, LeadFlow, timeoutMsFromEnv, type FlowSnapshot } from "..
 import { businessHoursFromEnv } from "../flow/hours.ts";
 import { ackSenderFromEnv } from "../flow/messages.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
-import { INTAKE_ALERT_GAP_MS, syncAutoMatchAlertsCoalesced, syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
+import { hasPendingInbound, INTAKE_ALERT_GAP_MS, noteInboundRequest, runFullAutoMatchSync, syncAutoMatchAlertsCoalesced } from "./automatch-alert.ts";
 import { aliasesOf } from "../flow/knowledge.ts";
 import { CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
 import { liveRequestOf, matchOnArrival, matchOurListings, type LiveRequest } from "../flow/live-match.ts";
@@ -264,13 +264,15 @@ export function webhookBackgroundIdle(): Promise<unknown> {
 }
 
 /**
- * The Auto-Match sync after an intake. In production it's coalesced (syncAutoMatchAlertsCoalesced: at most one run per
+ * The Auto-Match sync after an intake. It runs only when a new inbound buyer request was stored (hasPendingInbound); the
+ * hourly run belongs to the poller. In production it's coalesced (syncAutoMatchAlertsCoalesced: at most one run per
  * few minutes) so a busy WhatsApp group can't starve the server's CPU. Tests that inject `now` or `root` run it inline.
  */
 function syncIntakeAlerts(o: IntakeOptions, a: { env: Env; root: string; now?: Date }): Promise<void> {
   const mode = o.alertSync ?? (o.now !== undefined || o.root !== undefined ? "inline" : "coalesced");
   if (mode === "skip") return Promise.resolve();
-  if (mode === "inline") return syncAutoMatchAlertsSafely(a);
+  if (!hasPendingInbound()) return Promise.resolve();
+  if (mode === "inline") return runFullAutoMatchSync(a);
   return syncAutoMatchAlertsCoalesced({ env: a.env, root: a.root }, INTAKE_ALERT_GAP_MS);
 }
 
@@ -448,6 +450,7 @@ async function act(d: Decision, c: Ctx): Promise<Reply> {
       // never makes Periskope deliver the message twice.
       await keepPost(c, d.post);
       c.store.markSeen({ id: d.messageId, senderPhone: d.phone, kind: "buyer_request", at: d.post.sentAt });
+      noteInboundRequest();
       // With a CRM the request also enters the lead flow (routing, timeouts, dry-run messages only); without one, or if the
       // CRM can't be reached, it is still stored and matched.
       const lead = c.crm ? await receive(d.inquiry, c, c.crm).catch(() => null) : null;

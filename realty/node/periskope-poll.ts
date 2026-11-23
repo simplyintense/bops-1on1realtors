@@ -17,7 +17,7 @@ import { exclusive, flushWebhookInbox } from "./periskope-intake.ts";
 import { checkSubscription, checkWebhookHealth, SUBSCRIPTION_CHECK_MS } from "./webhook-health.ts";
 import { GAP_EVERY_MS, runGapReport } from "./webhook-gap.ts";
 import { sweepMedia } from "./listing-media.ts";
-import { syncAutoMatchAlertsSafely } from "./automatch-alert.ts";
+import { fullSyncDue, runFullAutoMatchSync } from "./automatch-alert.ts";
 import { startDailySummaryScheduler, tickDailySummarySafely } from "./daily-summary.ts";
 import { syncFromJsonl, type SyncResult } from "./search-store.ts";
 
@@ -291,9 +291,12 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
   try {
     await exclusive(() => sweepMedia(new PeriskopeStore(root), at));
   } catch {}
-  // Seed or dispatch Auto-Match Alerts (never sends while AUTOMATCH_ALERT_ENABLED is off). Never fail the poll for it.
+  // Seed or dispatch Auto-Match Alerts (never sends while AUTOMATCH_ALERT_ENABLED is off). The full re-score runs only when a
+  // new inbound buyer request arrived since the last run, or 60+ minutes have passed since the last full run (so new or
+  // changed CRM listings still alert older requests). Never fail the poll for it.
   try {
-    await syncAutoMatchAlertsSafely({ root, env, now: at });
+    if (fullSyncDue(at.getTime())) await runFullAutoMatchSync({ root, env, now: at });
+    else console.log(JSON.stringify({ automatchAlert: "skipped", reason: "no new inbound requests" }));
   } catch {}
   // Morning daily summary (no-op while DAILY_SUMMARY_ENABLED is off). Never fail the poll for it.
   try {
