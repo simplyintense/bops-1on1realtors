@@ -178,7 +178,8 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
   const store = new PeriskopeStore(root);
   const cursor = loadCursor(root);
   const fetcher = opts.fetcher ?? getJson;
-  const intake = { root, env, now: () => at, crm: opts.crm };
+  // The poll runs one Auto-Match sync itself at the end, so each ingested message doesn't run its own (CPU, Nov 23).
+  const intake = { root, env, now: () => at, crm: opts.crm, alertSync: "skip" as const };
   const groups: PollGroupResult[] = [];
   let fetched = 0;
   let added = 0;
@@ -227,7 +228,7 @@ export async function pollOnce(opts: PollOptions = {}): Promise<PollResult> {
       startTime,
       phoneId,
       fetcher,
-      opts: { root, env, now: () => at, crm: opts.crm },
+      opts: { root, env, now: () => at, crm: opts.crm, alertSync: "skip" },
     });
     if (!listed.ok) {
       groups.push(emptyGroup(g.chatId, g.chatName, listed.error));

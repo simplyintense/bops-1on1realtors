@@ -71,6 +71,9 @@ const HOSTED = !!process.env.BOPS_DATABASE_URL;
 /** A name the app is served under: this Mac's loopback, or a hosted server's own. */
 const ours = (name: string) => LOOPBACK.has(name) || PUBLIC.has(name) || (HOSTED && !PUBLIC.size);
 
+/** Friendly sign-in addresses that go straight to Google sign-in. */
+const LOGIN_ALIASES = new Set(["/login", "/signin", "/sign-in"]);
+
 /**
  * The login gate (lib/gate.ts): a response to send instead, or null to go on. Signed out: an API call gets 401, a page goes to
  * the sign-in. Owners get everything, as before. An agent (or a teacher, for the teach page) gets only what agentMayReach allows:
@@ -83,6 +86,8 @@ async function gate(request: NextRequest): Promise<NextResponse | null> {
   if (GATE_OPEN_PATHS.has(path)) return null;
   const api = path.startsWith("/api/");
   if (cfg === "misconfigured") return new NextResponse("Sign-in isn't set up on this server yet.", { status: 503 });
+  // Friendly sign-in addresses (the launch email and agents' bookmarks): straight to Google sign-in, landing on the desk.
+  if (LOGIN_ALIASES.has(path.replace(/\/+$/, "").toLowerCase())) return NextResponse.redirect(new URL("/api/gate/login", cfg.publicUrl));
   const email = await readSession(request.cookies.get(GATE_COOKIE)?.value, cfg);
   switch (gateVerdict({ path, method: request.method, email })) {
     case "pass":
