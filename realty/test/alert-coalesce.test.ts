@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 test("the poller's ingest skips the per-message Auto-Match sync and runs one per poll", () => {
   const src = readFileSync(new URL("../node/periskope-poll.ts", import.meta.url), "utf8");
   assert.match(src, /opts: \{ root, env, now: \(\) => at, crm: opts\.crm, alertSync: "skip" \}/);
-  assert.match(src, /await syncAutoMatchAlertsSafely\(\{ root, env, now: at \}\)/);
+  assert.match(src, /if \(fullSyncDue\(at\.getTime\(\)\)\) await runFullAutoMatchSync\(\{ root, env, now: at \}\)/);
 });
 
 test("the webhook path coalesces Auto-Match syncs by default in production", () => {

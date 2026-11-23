@@ -123,17 +123,61 @@ export async function syncAutoMatchAlertsSafely(o: AutomatchOpts = {}): Promise<
 }
 
 /**
- * The intake (one call per WhatsApp message) asks for an Auto-Match sync after every delivery. A full run re-scores every
+ * Gate on the full re-score. A full run only happens when a NEW inbound buyer request was stored since the last run
+ * (noteInboundRequest, called by the intake), or when 60+ minutes have passed since the last full run (the poller's
+ * guaranteed run, so new or changed CRM listings still alert older requests). Process-wide, like the coalescer below.
+ */
+export const FULL_RUN_EVERY_MS = 60 * 60_000;
+type AutoMatchGate = { pendingInbound: boolean; lastFullAt: number; fullRuns: number };
+const gateHolder = globalThis as unknown as { __bopsAutoMatchGate?: AutoMatchGate };
+const gate = (): AutoMatchGate => (gateHolder.__bopsAutoMatchGate ??= { pendingInbound: false, lastFullAt: 0, fullRuns: 0 });
+
+export function noteInboundRequest(): void {
+  gate().pendingInbound = true;
+}
+
+export function hasPendingInbound(): boolean {
+  return gate().pendingInbound;
+}
+
+export function fullSyncDue(nowMs: number): boolean {
+  const g = gate();
+  return g.pendingInbound || nowMs - g.lastFullAt >= FULL_RUN_EVERY_MS;
+}
+
+/**
+ * One full re-score. Clears the pending flag before the run, so a request that arrives mid-run sets it again and gets the
+ * next run. Never throws (syncAutoMatchAlertsSafely).
+ */
+export async function runFullAutoMatchSync(o: AutomatchOpts = {}): Promise<void> {
+  const g = gate();
+  g.pendingInbound = false;
+  g.lastFullAt = o.now?.getTime() ?? Date.now();
+  g.fullRuns += 1;
+  await syncAutoMatchAlertsSafely(o);
+}
+
+/** A copy of the gate, for tests. */
+export function autoMatchGateState(): AutoMatchGate {
+  return { ...gate() };
+}
+
+export function resetAutoMatchGateForTests(): void {
+  gateHolder.__bopsAutoMatchGate = { pendingInbound: false, lastFullAt: 0, fullRuns: 0 };
+}
+
+/**
+ * The intake (one call per WhatsApp message) asks for an Auto-Match sync after every stored buyer request. A full run re-scores every
  * request against every listing, and on the hosted shared-CPU machine one every few seconds used up the CPU allowance:
  * Fly then throttled the machine, the health check timed out and sign-in pages answered 503 or hung (Nov 23). So the
  * intake's calls are coalesced: at most one run at a time, at most one per INTAKE_ALERT_GAP_MS, and a call that lands
- * inside the gap schedules one trailing run so nothing is missed. The poller (every 10 minutes) still calls
- * syncAutoMatchAlertsSafely directly.
+ * inside the gap schedules one trailing run so nothing is missed. Each run goes through runFullAutoMatchSync, so the
+ * poller's hourly run and the intake share one gate. The poller (every 10 minutes) gates its own call on fullSyncDue.
  */
 export const INTAKE_ALERT_GAP_MS = 3 * 60_000;
 const coalesce = globalThis as unknown as { __bopsAlertCoalesce?: { running: boolean; lastAt: number; timer: ReturnType<typeof setTimeout> | null; next: AutomatchOpts | null } };
 export function syncAutoMatchAlertsCoalesced(o: AutomatchOpts = {}, gapMs = INTAKE_ALERT_GAP_MS): Promise<void> {
-  if (gapMs <= 0) return syncAutoMatchAlertsSafely(o);
+  if (gapMs <= 0) return runFullAutoMatchSync(o);
   const c = (coalesce.__bopsAlertCoalesce ??= { running: false, lastAt: 0, timer: null, next: null });
   const { now: _ignored, ...rest } = o;
   c.next = rest;
@@ -145,7 +189,7 @@ export function syncAutoMatchAlertsCoalesced(o: AutomatchOpts = {}, gapMs = INTA
     c.running = true;
     c.lastAt = Date.now();
     try {
-      await syncAutoMatchAlertsSafely(opts);
+      await runFullAutoMatchSync(opts);
     } finally {
       c.running = false;
       if (c.next && !c.timer) schedule();
