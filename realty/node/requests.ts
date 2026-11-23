@@ -72,7 +72,7 @@ export async function staffRecommendations(o: Opts & { email: string | null; lis
     caller,
   });
   const store = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot());
-  const live = liveDesk({ email: o.email, owner: recs.owner, agents, rows: store.live(), statuses: store.matchStatuses(), showHidden: o.showHidden });
+  const live = liveDesk({ email: o.email, owner: recs.owner, agents, rows: store.liveShown(), statuses: store.matchStatuses(), showHidden: o.showHidden });
   return { ...recs, live, crm: crm.status, crmText: crm.status === "ok" ? null : crm.text };
 }
 
@@ -82,5 +82,5 @@ export async function staffDigest(o: { email: string | null; env?: Env; intakeRo
   if (!ownerAllowed(o.email, env)) return { owner: false };
   const store = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot());
   const crm = await (o.seam ?? crmSeamFromEnv(env)).listings();
-  return { owner: true, digest: digestOf(store.live(), o.now ?? new Date(), 24, store.matchStatuses()), crmText: crm.status === "ok" ? null : crm.text };
+  return { owner: true, digest: digestOf(store.liveShown(), o.now ?? new Date(), 24, store.matchStatuses()), crmText: crm.status === "ok" ? null : crm.text };
 }

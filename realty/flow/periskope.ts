@@ -366,8 +366,12 @@ const STRONG_DEMAND = /\b(looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in sea
 const SUPPLY = /\b(co-?broke|50\/50|just listed|for sale|available)\b/i;
 
 /** Seller/listing merchandising: these posts are supply even if marketing copy also says "seeking". */
-const LISTING_PHRASES = /new\s+to\s+the\s+market|exclusive\s+listing|for\s+sale\s*[-–—]|for\s+rent\s+or\s+sale|for\s+sale\s+or\s+rent|asking\s*(?:price)?\s*[:$]|asking\s+\$/i;
-const HEADLINE_LISTING = /(?:^|\n)\s*(?:\p{Extended_Pictographic}|[✨🔥🏙️📍🏡🏠🔑*\s]){0,12}(?:for\s+sale|for\s+rent|apartment\s+for|house\s+for|townhouse\s+for|penthouse\s+for|unit\s+for\s+(?:sale|rent))\b/iu;
+const LISTING_PHRASES = /new\s+to\s+the\s+market|exclusive\s+listing|for\s+rent\s+or\s+sale|for\s+sale\s+or\s+rent|asking\s*(?:price)?\s*[:$]|asking\s+\$|property\s+features|\bhoa\s*(?:fees?|dues|:)|(?:^|\n)\s*\W*pricing\s*:?\s*(?:\n|$)/i;
+/**
+ * A headline on one line: "FOR SALE |", "TOWNHOUSES FOR SALE – …", "BRAND NEW APARTMENTS FOR RENT - …", "FOR SALE Maraval".
+ * Checked only when the text does not open as a request (DEMAND_OPENING), so a request's mid-sentence "for sale" is not an ad.
+ */
+const HEADLINE_LISTING = /^[\s\p{Extended_Pictographic}\uFE0F*•·]{0,12}(?:brand\s+new\s+)?(?:(?:[\p{L}\d'’&,.-]+\s+){0,4}?for\s+(?:sale|rent)\s*(?:[|–—-]|$)|(?:(?:townhouse|apartment|house|penthouse|villa|unit|condo)s?\s+)?for\s+(?:sale|rent)\b|(?:townhouse|apartment|house|penthouse|unit)\s+for\b)/iu;
 const DEMAND_OPENING = /^(?:still\s+)?(?:looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|anyone (?:have|has|got)|client\s+needs?|needs?\s+(?:a|an)|wanted)\b/i;
 
 function hasPriceCue(body: string): boolean {

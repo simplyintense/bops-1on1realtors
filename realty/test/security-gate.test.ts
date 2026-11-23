@@ -83,6 +83,8 @@ test("agents: the desk, online search and their APIs; every other API is refused
   assert.equal(await decide("/realty/deskish", "GET", `bops_gate=${agent}`), "desk", "a prefix isn't a path");
   assert.equal(await decide("/api/realty/match-status", "POST", `bops_gate=${agent}`), "pass");
   assert.equal(await decide("/api/realty/match-status", "GET", `bops_gate=${agent}`), "forbidden", "the follow-up route takes POST only");
+  assert.equal(await decide("/api/realty/not-a-lead", "POST", `bops_gate=${agent}`), "pass");
+  assert.equal(await decide("/api/realty/not-a-lead", "GET", `bops_gate=${agent}`), "forbidden", "Not a lead takes POST only");
   assert.equal(await decide("/api/realty/tour", "POST", `bops_gate=${agent}`), "pass");
   assert.equal(await decide("/api/realty/media/3fa9c2d1e8b74f60", "GET", `bops_gate=${agent}`), "pass");
   assert.equal(await decide("/api/realty/media/3fa9c2d1e8b74f60/thumb", "GET", `bops_gate=${agent}`), "pass");
@@ -92,7 +94,7 @@ test("agents: the desk, online search and their APIs; every other API is refused
 
 test("owners reach every page and API, as before", async () => {
   const owner = await session(OWNER);
-  for (const path of [...SENSITIVE_APIS, ...AGENT_PAGES_THAT_ARE_NOT_THE_DESK, "/realty/desk", "/realty/learn", "/api/realty/match-status"]) {
+  for (const path of [...SENSITIVE_APIS, ...AGENT_PAGES_THAT_ARE_NOT_THE_DESK, "/realty/desk", "/realty/learn", "/api/realty/match-status", "/api/realty/not-a-lead"]) {
     assert.equal(await decide(path, "POST", `bops_gate=${owner}`), "pass", path);
   }
 });

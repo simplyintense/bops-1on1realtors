@@ -4,6 +4,7 @@ import { REASON_LABEL } from "@/realty/flow/match-status.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { Notice } from "../notice";
 import { FollowUpButtons } from "./follow-up-buttons";
+import { NotALeadButton } from "./not-a-lead-button";
 import { leadLabel } from "./copy";
 
 /**
@@ -102,6 +103,7 @@ function LeadCard({ c, owner }: { c: LeadCardView; owner: boolean }) {
           {c.follow.note ?? ""}
         </p>
       ) : null}
+      <NotALeadButton requestId={c.requestId} />
     </li>
   );
 }
