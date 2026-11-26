@@ -9,12 +9,19 @@ import { chat, getState, react } from "@/lib/server/store";
 import type { Tapback } from "@/lib/types";
 import { notReady } from "@/lib/server/ready";
 import { fromBopsWindow } from "@/lib/server/ui-token";
+import { ownerAllowed } from "@/lib/gate";
+import { isStaffChatOf } from "@/lib/staff-workspace";
+import { staffEmail } from "@/realty/node/periskope-intake.ts";
 
 /** The user texts a bot or a group. Replies, threads and hand-offs happen in the background. */
 export async function POST(request: Request, ctx: RouteContext<"/api/chats/[chatId]/messages">) {
   const unready = notReady();
   if (unready) return unready;
   const { chatId } = await ctx.params;
+  // A staff member writes only to their own chat (lib/staff-workspace.ts), and never with images, app context or a picked agent: those are the owner's.
+  const who = await staffEmail(request);
+  const staff = !ownerAllowed(who);
+  if (staff && !isStaffChatOf(chat(chatId), who)) return Response.json({ error: "Not allowed." }, { status: 403 });
   const { text, replyTo, images, lookingAt, agent, appNote, picks } = (await request.json()) as {
     text?: string;
     /** The agent picked in the message box for the threads this message starts (Message.agent): from the Bops window only. */
@@ -33,18 +40,19 @@ export async function POST(request: Request, ctx: RouteContext<"/api/chats/[chat
     picks?: unknown;
   };
   if (!chat(chatId)) return Response.json({ error: "no such chat" }, { status: 404 });
-  const pics = (images ?? []).filter((i) => uploadPath(i.id)).slice(0, 10);
+  const pics = staff ? [] : (images ?? []).filter((i) => uploadPath(i.id)).slice(0, 10);
   if (!text?.trim() && !pics.length) return Response.json({ error: "empty message" }, { status: 400 });
-  const picked = typeof agent === "string" && fromBopsWindow(request) ? agent : undefined;
-  const aboutApp = appNote === true && fromBopsWindow(request) && !sharedOpen() && appsOwnShown(getState());
+  const picked = !staff && typeof agent === "string" && fromBopsWindow(request) ? agent : undefined;
+  const aboutApp = !staff && appNote === true && fromBopsWindow(request) && !sharedOpen() && appsOwnShown(getState());
+  const looking = !staff && typeof lookingAt === "string" ? lookingAt : undefined;
   // A workspace whose chat goes through Bops Cloud: written there, and answered on the bot's computer (lib/server/cloud-chat.ts).
   const words = text?.trim() ?? "";
-  if (words && !sharedOpen() && sendsThroughCloud(chatId, { images: pics.length, lookingAt: typeof lookingAt === "string" ? lookingAt : undefined, appNote: aboutApp, picks: picks !== undefined })) {
+  if (words && !sharedOpen() && sendsThroughCloud(chatId, { images: pics.length, lookingAt: looking, appNote: aboutApp, picks: picks !== undefined })) {
     const how = await sendThroughCloud(chatId, words, replyTo);
     if (how === "sent") return Response.json({ ok: true });
-    if (how === "failed") return Response.json({ error: "That didn't reach Bops Cloud. Try again." }, { status: 502 });
+    if (how === "failed") return Response.json({ error: "That didn't reach the cloud. Try again." }, { status: 502 });
   }
-  void handleMessage(chatId, text?.trim() ?? "", replyTo, pics, undefined, undefined, undefined, undefined, typeof lookingAt === "string" ? lookingAt : undefined, undefined, picked, aboutApp, aboutApp ? picksOf(picks, text?.trim() ?? "") : undefined);
+  void handleMessage(chatId, text?.trim() ?? "", replyTo, pics, undefined, undefined, undefined, undefined, looking, undefined, picked, aboutApp, aboutApp ? picksOf(picks, text?.trim() ?? "") : undefined);
   return Response.json({ ok: true });
 }
 
@@ -61,6 +69,7 @@ const MAX_IDS = 5000;
 export async function DELETE(request: Request, ctx: RouteContext<"/api/chats/[chatId]/messages">) {
   const unready = notReady();
   if (unready) return unready;
+  if (!ownerAllowed(await staffEmail(request))) return Response.json({ error: "Owners only." }, { status: 403 });
   if (sharedOpen()) return Response.json({ error: "In a shared workspace, only its owner deletes messages." }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as { id?: unknown; ids?: unknown; all?: unknown };
   let r: Removed;
@@ -82,6 +91,7 @@ export async function DELETE(request: Request, ctx: RouteContext<"/api/chats/[ch
 export async function PATCH(request: Request) {
   const unready = notReady();
   if (unready) return unready;
+  if (!ownerAllowed(await staffEmail(request))) return Response.json({ error: "Owners only." }, { status: 403 });
   const { id, reaction } = (await request.json().catch(() => ({}))) as { id?: string; reaction?: { type?: Tapback; emoji?: string } | null };
   if (!id) return Response.json({ error: "which message?" }, { status: 400 });
   react(id, "owner", reaction ?? null);

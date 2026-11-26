@@ -76,7 +76,7 @@ const AI_DESK_PAGES = ["/", "/realty/desk", "/realty/automatch", "/realty/search
 /** Pages that are not AI Desk pages, and near-misses of them: an agent is sent to the desk. */
 const NOT_AI_DESK_PAGES = ["/realty-demo", "/realty/requests", "/realty/postsx", "/realty/automatchx", "/realty/digests", "/realty/learning", "/realty/alertsx", "/anything"];
 /** Owner-only mutation APIs and the owners' screens' APIs: an agent's call is 403, a GET or a POST. */
-const OWNER_ONLY_APIS = ["/api/realty/replay", "/api/realty/automatch-alert", "/api/realty/admin-digest", "/api/realty/posts", "/api/realty/posts/3fa9c2d1e8b74f60a1b2c3d4", "/api/realty/search/export", "/api/members", "/api/workspaces", "/api/vnc", "/api/call", "/api/state", "/api/routines", "/api/mail"];
+const OWNER_ONLY_APIS = ["/api/realty/replay", "/api/realty/automatch-alert", "/api/realty/admin-digest", "/api/realty/posts", "/api/realty/posts/3fa9c2d1e8b74f60a1b2c3d4", "/api/realty/search/export", "/api/members", "/api/workspaces", "/api/vnc", "/api/call", "/api/routines", "/api/mail"];
 
 test("agents: Supply & Demand and a stored post's page open to any signed-in staff; the owners' post list, the owners' APIs and the export stay closed", async () => {
   const agent = await session(AGENT);
@@ -121,6 +121,59 @@ test("agents: every AI Desk page opens (GET), and the owners' APIs are refused w
   assert.equal(await decide("/api/realty/learn", "POST", `bops_gate=${agent}`), "forbidden", "the teach API is for teachers");
 });
 
+/** The Bot Workspace's own state and sign-in status, and the chat routes a staff member may use (lib/gate.ts AGENT_APIS). */
+const WORKSPACE_READS = ["/api/state", "/api/auth/status"];
+const WORKSPACE_CHAT_WRITES = ["/api/chats", "/api/chats/stf_6162_6b65727279/messages", "/api/chats/stf_6162_6b65727279/read"];
+
+test("staff Bot Workspace: its page, state and sign-in status open to a signed-in agent; the chat is open by exact path; everything else stays closed", async () => {
+  const agent = await session(AGENT);
+  const at = (path: string, method = "GET") => decide(path, method, `bops_gate=${agent}`);
+  for (const path of ["/", ...WORKSPACE_READS]) assert.equal(await at(path), "pass", `GET ${path}`);
+  for (const path of WORKSPACE_READS) assert.equal(await at(path, "HEAD"), "pass", `HEAD ${path}`);
+  for (const path of WORKSPACE_CHAT_WRITES) assert.equal(await at(path, "POST"), "pass", `POST ${path}`);
+  // The state and sign-in status are read only; the owner's chat (colon id) and the chat-admin routes are not the staff's.
+  for (const path of ["/api/state", "/api/auth/status"]) assert.equal(await at(path, "POST"), "forbidden", `POST ${path}`);
+  assert.equal(await at("/api/chats/stf_6162_6b65727279/messages"), "forbidden", "a chat's messages are written with POST only");
+  assert.equal(await at("/api/chats/stf_6162_6b65727279/messages", "DELETE"), "forbidden", "no deleting messages");
+  assert.equal(await at("/api/chats/stf_6162_6b65727279/compact", "POST"), "forbidden", "compacting a chat is the owner's");
+  assert.equal(await at("/api/chats", "DELETE"), "forbidden", "deleting a group chat is the owner's");
+  assert.equal(await at("/api/chats/bot:wendy/messages", "POST"), "forbidden", "the owner's default bot chat (botChatId) is never the staff's");
+  assert.equal(await at("/api/chats/bot%3Awendy/messages", "POST"), "forbidden", "the same, encoded");
+  assert.equal(await at("/api/chats/..%2Fkeys/messages", "POST"), "forbidden", "no path tricks");
+  assert.equal(await at("/api/chats/stf_6162/messages/extra", "POST"), "forbidden", "one message route only");
+  assert.equal(await at("/api/chats-admin", "POST"), "forbidden", "a prefix isn't the chat route");
+  assert.equal(await at("/api/state/../keys", "GET"), "forbidden", "no traversal past the state route");
+  assert.equal(await at("/api/state/extra", "GET"), "forbidden");
+  assert.equal(await at("/api/auth/start", "POST"), "forbidden", "signing in to Orgo stays the owner's");
+  assert.equal(await at("/api/auth/status/extra", "GET"), "forbidden");
+  assert.equal(await at("/api/keys/reveal", "POST"), "forbidden", "keys stay the owner's");
+  assert.equal(await at("/api/bots", "POST"), "forbidden", "bots stay the owner's");
+  assert.equal(await at("/api/sessions/s1/terminal", "POST"), "forbidden", "terminals stay the owner's");
+  assert.equal(await at("/api/input", "POST"), "forbidden", "screen input stays the owner's");
+  assert.equal(await at("/api/uploads", "POST"), "forbidden", "uploads are not opened (no images from staff)");
+  assert.equal(await at("/api/view", "POST"), "forbidden", "presence is not opened");
+});
+
+test("signed out: the Bot Workspace, its state and sign-in status, and its chat APIs all fail closed (a sign-in, or a 401)", async () => {
+  assert.equal(await decide("/", "GET", ""), "sign-in");
+  for (const path of WORKSPACE_READS) assert.equal(await decide(path, "GET", ""), "sign-in", `GET ${path}`);
+  for (const path of WORKSPACE_CHAT_WRITES) assert.equal(await decide(path, "POST", ""), "sign-in", `POST ${path}`);
+  assert.equal(await decide("/api/state", "GET", "bops_gate=forged.value"), "sign-in", "a forged cookie");
+  // The first character of the payload: every bit of it is in the MAC, so a changed one never verifies (the last one of the signature can carry unused bits).
+  const good = await makeSession(OWNER, CFG);
+  const tampered = (good[0] === "A" ? "B" : "A") + good.slice(1);
+  assert.equal(await decide("/api/state", "GET", `bops_gate=${tampered}`), "sign-in", "a tampered session");
+});
+
+test("the owner keeps the Bot Workspace APIs; a teacher gets them too (as every staff member does), but not the owner's writes", async () => {
+  const owner = await session(OWNER);
+  for (const path of [...WORKSPACE_READS, ...WORKSPACE_CHAT_WRITES]) assert.equal(await decide(path, "POST", `bops_gate=${owner}`), "pass", `owner POST ${path}`);
+  const teacher = await session(TEACHER);
+  assert.equal(await decide("/api/state", "GET", `bops_gate=${teacher}`), "pass");
+  assert.equal(await decide("/api/state", "POST", `bops_gate=${teacher}`), "forbidden");
+  assert.equal(await decide("/api/bots", "POST", `bops_gate=${teacher}`), "forbidden");
+});
+
 test("owners reach every page and API, as before", async () => {
   const owner = await session(OWNER);
   for (const path of [...SENSITIVE_APIS, ...OWNER_ONLY_APIS, ...AI_DESK_PAGES, ...NOT_AI_DESK_PAGES, "/api/realty/match-status", "/api/realty/not-a-lead"]) {
@@ -162,6 +215,19 @@ test("agentMayReach: the desk is open and the root matches exactly, so the '/' t
   assert.equal(agentMayReach("/realty/learn", "POST"), false, "a page takes no POST");
   assert.equal(agentMayReach("/api/realty/learn", "POST"), false, "the teach API needs a teacher");
   assert.equal(agentMayReach("/api/realty/learn", "POST", { teacher: true }), true, "...and a teacher may POST it");
+  assert.equal(agentMayReach("/api/state", "GET"), true, "the Bot Workspace's state, redacted for staff");
+  assert.equal(agentMayReach("/api/state", "HEAD"), true);
+  assert.equal(agentMayReach("/api/state", "POST"), false, "the state is read only");
+  assert.equal(agentMayReach("/api/auth/status", "GET"), true, "the sign-in status");
+  assert.equal(agentMayReach("/api/auth/start", "POST"), false, "signing in to Orgo is the owner's");
+  assert.equal(agentMayReach("/api/chats", "POST"), true, "a staff member's own chat (made on first use)");
+  assert.equal(agentMayReach("/api/chats", "GET"), false);
+  assert.equal(agentMayReach("/api/chats/stf_6162_6b65727279/messages", "POST"), true, "a staff chat's messages");
+  assert.equal(agentMayReach("/api/chats/stf_6162_6b65727279/read", "POST"), true);
+  assert.equal(agentMayReach("/api/chats/bot:wendy/messages", "POST"), false, "the owner's chat id has a colon, so it isn't matched");
+  assert.equal(agentMayReach("/api/chats/stf_6162/messages", "GET"), false);
+  assert.equal(agentMayReach("/api/chats/stf_6162/messages", "DELETE"), false);
+  assert.equal(agentMayReach("/api/chats/stf_6162/compact", "POST"), false);
 });
 
 test("signed out: an API call is a sign-in (401), a page goes to the sign-in", async () => {

@@ -65,6 +65,7 @@ import { OwnerPhone, useOwnerPhone, usePhoneInfo, type OwnerNumber, type Pending
 import { LineLink } from "./line-link";
 import { EmailAddresses } from "./mail-address";
 import { bannerNumber, ReachBanner } from "./reach-banner";
+import { StaffProvider, useStaff } from "./staff";
 
 /*
  * Bops. Layout and values follow the Paper designs: a Messages list, a chat per bot (and group
@@ -107,26 +108,33 @@ function chime() {
  * use, the account is asked once which size its computer is (Pick your computer, computer-size.tsx), over
  * the app, as it opens.
  */
-export function BopsApp() {
+export function BopsApp({ staff = false }: { staff?: boolean }) {
   const state = useAppState();
   const [auth, recheck, retry] = useAuthStatus(state?.account?.signedInAt);
   useAnalytics(state);
-  const pick = useSizePick(auth && !auth.needsSignIn && !auth.cloudProblem ? state : null);
+  const pick = useSizePick(auth && !auth.needsSignIn && !auth.cloudProblem && !staff ? state : null);
   if (auth?.needsSignIn) return <SignIn onSignedIn={recheck} />;
   // Signed in, but their Bops (it lives in Bops Cloud) couldn't be loaded: nothing to show until it can.
   if (auth?.cloudProblem) return <CloudUnreachable onRetry={retry} />;
   return (
-    <>
+    <StaffProvider value={staff}>
       <Bops state={auth ? state : null} />
       {pick.view && <PickComputer view={pick.view} onDone={pick.done} />}
-    </>
+    </StaffProvider>
   );
 }
 
 /** A new tab's id, made when a tab opens (in a handler, never while rendering). */
 const tabId = () => `tab_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
+/** The chat to open for a bot: the one already in this window's state (a staff member's own, or the owner's default), else the owner's default id. */
+function chatIdOf(state: AppState, botId: string) {
+  return state.chats.find((c) => c.kind === "bot" && c.botIds[0] === botId)?.id ?? botChatId(botId);
+}
+
+
 function Bops({ state }: { state: AppState | null }) {
+  const staff = useStaff();
   // Empty until a chat is picked: the workspace's main bot's chat shows (see `chat` below).
   const [chatId, setChatId] = useState("");
   // What to put in a chat's message box once, to change and send (askBot; ChatView prefill): until it's in.
@@ -661,7 +669,7 @@ function Bops({ state }: { state: AppState | null }) {
     // (A bot's copy of it: that bot's chat, and its copy's Local.)
     const copy = copyBotOf(state, ws, name, botId);
     const who = copy ?? h?.botId;
-    if (who) openChat(botChatId(who));
+    if (who) openChat(chatIdOf(state, who));
     const at = `/api/hosted-apps/${encodeURIComponent(name)}/local`;
     const r = await post(at, { ws, action: "preview", start: true, ...(site ? { site } : {}), ...(copy ? { bot: copy } : {}) }).catch(() => null);
     const j = ((await r?.json().catch(() => null)) ?? {}) as { preview?: string; fallback?: string; error?: string };
@@ -837,7 +845,7 @@ function Bops({ state }: { state: AppState | null }) {
    * to change and send, never sent by itself, and the box focused.
    */
   const askBot = (botId: string, text?: string) => {
-    const id = botChatId(botId);
+    const id = chatIdOf(state, botId);
     openChat(id);
     if (state.chats.some((c) => c.id === id)) setPrefill({ chatId: id, text: text ?? "", at: Date.now() });
   };
@@ -849,7 +857,7 @@ function Bops({ state }: { state: AppState | null }) {
   };
   const openThread = (s: Session) => {
     const inView = s.chatId === chat.id || chat.botIds.includes(s.botId);
-    if (!inView) setChatId(state.chats.some((c) => c.id === s.chatId) ? s.chatId : botChatId(s.botId));
+    if (!inView) setChatId(state.chats.some((c) => c.id === s.chatId) ? s.chatId : chatIdOf(state, s.botId));
     setComposing(false);
     setFocus(false);
     setThreadId(s.id);
@@ -940,9 +948,9 @@ function Bops({ state }: { state: AppState | null }) {
   const slide = edgeDragged ? "" : SLIDE;
   // What a bot's right-click menu does, in the sidebar and on its rail (bot-menu.tsx).
   const botMenuActions: BotMenuActions = {
-    onChat: (id) => openChat(botChatId(id)),
+    onChat: (id) => openChat(chatIdOf(state, id)),
     onCall: (id) => {
-      openChat(botChatId(id));
+      openChat(chatIdOf(state, id));
       setCall(id);
     },
     onComputer: openComputer,
@@ -953,10 +961,10 @@ function Bops({ state }: { state: AppState | null }) {
       const nb = state.bots.find((x) => x.id === id);
       if (nb && !state.shared && readyAgents(nb, state).length > 1) {
         setComposing(false);
-        openChat(botChatId(id));
+        openChat(chatIdOf(state, id));
         return setNewThreadFor(id);
       }
-      openChat(botChatId(id));
+      openChat(chatIdOf(state, id));
       setTimeout(() => document.getElementById("composer")?.focus(), 60);
     },
   };
@@ -1134,7 +1142,7 @@ function Bops({ state }: { state: AppState | null }) {
                     const siteBot = siteBotOf(state, t.ws, t.name, t.site ?? t.name);
                     const ownBot = t.bot ?? (siteBot && !copyBotOf(state, t.ws, t.name, siteBot.id) ? siteBot.id : h?.botId);
                     const appBot = h && !h.lost ? state.bots.find((b) => b.id === ownBot) : undefined;
-                    const appChat = appBot && state.chats.some((c) => c.id === botChatId(appBot.id)) ? botChatId(appBot.id) : undefined;
+                    const appChat = appBot && state.chats.some((c) => c.id === chatIdOf(state, appBot.id)) ? chatIdOf(state, appBot.id) : undefined;
                     return (
                       <PreviewTab
                         key={t.id}
@@ -1361,7 +1369,8 @@ function Bops({ state }: { state: AppState | null }) {
             />
           </div>
         )}
-        {settings && (
+        {/* Settings is the owners' (keys, plan, logins, team, mail, phone): a staff member's Settings never opens (the server refuses them anyway). */}
+        {settings && !staff && (
           // Over a bot's settings page when it opened from there (its Plan and credit, its Org chart): Back goes back to it.
           <div className={`absolute inset-y-0 right-0 z-30 flex bg-white ${PAGE_SLIDE}`} style={{ left: sidebarWidth }}>
             {/* What opens from it goes where it goes, and the page gives way (an app's tab, a page on the web). */}
@@ -1404,7 +1413,7 @@ function Bops({ state }: { state: AppState | null }) {
             // Compact, it waits in the sidebar's corner over its footer; by the rail, just past it, so the rail's buttons stay clear.
             style={callHere && slotBox ? { left: slotBox.x, top: slotBox.y, transform: "translateX(-50%)" } : { left: sidebarOpen ? 12 : 84, bottom: 76 }}
           >
-            <CallBar bot={callBot} owner={state.owner?.name} compact={!(callHere && slotBox)} onOpen={() => openChat(botChatId(callBot.id))} onClose={() => setCall(null)} onSpeaking={callTalking.set} />
+            <CallBar bot={callBot} owner={state.owner?.name} compact={!(callHere && slotBox)} onOpen={() => openChat(chatIdOf(state, callBot.id))} onClose={() => setCall(null)} onSpeaking={callTalking.set} />
           </div>
         )}
         {/* What bots are doing on the user's Mac, live, in the corner (hidden while the Your Mac tab is open). */}
@@ -2254,13 +2263,15 @@ export function Settings({
  */
 function FirstLoad() {
   const [slow, setSlow] = useState(false);
-  const canRestart = useCanRestart();
+  const staff = useStaff();
+  // A staff member's screen says nothing of Bops, and can't restart the app (a restart is the owner's Mac's).
+  const canRestart = useCanRestart() && !staff;
   useEffect(() => {
     const t = setTimeout(() => setSlow(true), 20_000);
     return () => clearTimeout(t);
   }, []);
   return (
-    <BoppyLoading label="Loading Bops…">
+    <BoppyLoading label={staff ? "Loading…" : "Loading Bops…"}>
       {slow && (
         <div className="flex flex-col items-center gap-3">
           <span>This is taking longer than usual.</span>

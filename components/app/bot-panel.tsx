@@ -1,5 +1,6 @@
 "use client";
 
+import { useStaff } from "./staff";
 import { useEffect, useRef, useState } from "react";
 import { agentLabel, defaultAgent, isCli, paysLabel } from "@/lib/agents";
 import { appsStayLine, botChatId, brainRuns, live, MAIN_WORKSPACE, MAX_PERSONA_CHARS, settingsOf, sharesComputer, workBot, workspaceOf, type AgentKind, type AppState, type Bot, type BotSettings, type Session } from "@/lib/types";
@@ -244,6 +245,7 @@ function Details({
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const staff = useStaff();
   return (
     <section className="motion-fade-in relative flex min-h-0 min-w-0 flex-col items-center gap-3.5 overflow-y-auto px-6 pb-5 pt-6" style={{ backgroundImage: `linear-gradient(180deg, transparent 40%, #FFFFFF 100%), ${botWash(b)}`, backgroundSize: "100% 520px", backgroundRepeat: "no-repeat", backgroundColor: "#FFFFFF" }}>
       {expand}
@@ -386,7 +388,7 @@ function Details({
         </button>
       </div>
 
-      {!b.isMain && <DeleteBot bot={b} apps={appsStayLine(state, b)} />}
+      {!b.isMain && !staff && <DeleteBot bot={b} apps={appsStayLine(state, b)} />}
     </section>
   );
 }

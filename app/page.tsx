@@ -27,7 +27,7 @@ export default async function Home() {
         </header>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
-        <BopsApp />
+        <BopsApp staff={!owner} />
       </div>
     </div>
   );

@@ -730,6 +730,11 @@ export type Chat = {
   workspaceId?: string;
   /** What its bots no longer read whole, summed up (lib/server/chat-summary.ts). Unset: nothing yet. */
   summary?: ChatSummary;
+  /**
+   * The signed-in staff email this chat belongs to: a staff member's own chat with one bot (lib/staff-workspace.ts). Unset: the
+   * owner's, which staff never reach.
+   */
+  staff?: string;
 };
 
 /**
@@ -1580,6 +1585,8 @@ export type KeepDays = 30 | 90 | 365 | null;
 export type DeletedDays = 0 | 7 | 30;
 
 export type AppState = {
+  /** false for a signed-in staff member's view (lib/staff-workspace.ts staffState): their own chats only, nothing of the owner's. */
+  isOwner?: boolean;
   /** Who the bots work for. Empty until set in Settings. */
   owner?: Owner;
   bots: Bot[];

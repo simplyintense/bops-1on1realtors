@@ -22,6 +22,10 @@ import { giveAppsRead, retryHeldRenameOnStart, startProjectBinding } from "@/lib
 import { startMadeAppsSync } from "@/lib/server/made-apps-sync";
 import { startCrmSync } from "@/lib/server/crm-sync";
 import { startPrivacy } from "@/lib/server/privacy";
+import { ownerAllowed } from "@/lib/gate";
+import { staffEmail } from "@/realty/node/periskope-intake.ts";
+import { ensureStaffChat } from "@/lib/server/staff-chats";
+import { staffState } from "@/lib/staff-workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +43,8 @@ export const dynamic = "force-dynamic";
  * again (workspaces.ts retryDefaultRename), and everyone a workspace was shared with before Your Apps is given it at
  * Read, once (workspaces.ts giveAppsRead).
  * With a workspace shared with the user open, it's that workspace's state, read only (lib/server/shared.ts).
+ * A signed-in staff member (not an owner) gets only their own chats with the bots, and the bots' names (lib/staff-workspace.ts staffState),
+ * after the same start-up above; nothing of the owner's state, and never a shared workspace.
  */
 export async function GET(request: Request) {
   ensureCloud();
@@ -63,6 +69,15 @@ export async function GET(request: Request) {
     console.warn(`[state] Your Apps at Read: ${(e as Error).message}`);
   }
   const have = new URL(request.url).searchParams.get("v");
+  // A signed-in staff member (not an owner): their own chats with the bots and nothing else of the owner's (lib/staff-workspace.ts).
+  const who = await staffEmail(request);
+  if (!ownerAllowed(who)) {
+    if (!who) return Response.json({ error: "Sign in first." }, { status: 401 });
+    for (const b of getState().bots) ensureStaffChat(b.id, who);
+    const version = getVersion();
+    if (have !== null && Number(have) === version) return Response.json({ version });
+    return Response.json({ version, state: staffState(getState(), who) });
+  }
   // A workspace shared with the user is open: its state in place of their own workspace's, never theirs (lib/server/shared.ts).
   const shared = sharedForApp(getState());
   const version = shared?.version ?? getVersion();
@@ -86,5 +101,5 @@ function forApp(all: AppState): AppState {
   const mac = state.mac ? { ...state.mac, fullAccess: fullAccessOn() || undefined } : state.mac;
   const watches = watchesForApp(state.watches);
   const workspaces = state.workspaces?.map((w) => (w.orbitKey ? { ...w, orbitKey: undefined } : w));
-  return { ...state, mac, watches, workspaces, usage: undefined, bots: state.bots.map((b) => ({ ...b, appsKey: undefined })), screenStream: screenStreamWanted(), businessData: tregOn(), liveMoods: state.shared ? state.liveMoods : liveMoodsForApp(state) };
+  return { ...state, isOwner: true, mac, watches, workspaces, usage: undefined, bots: state.bots.map((b) => ({ ...b, appsKey: undefined })), screenStream: screenStreamWanted(), businessData: tregOn(), liveMoods: state.shared ? state.liveMoods : liveMoodsForApp(state) };
 }
