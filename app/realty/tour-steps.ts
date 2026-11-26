@@ -1,11 +1,13 @@
 import { navTourId, visibleStaffPages } from "./staff-pages.ts";
+import { SIDEBAR_DESK_HREFS } from "./sidebar-model.ts";
 
 /**
  * The guided tour of the staff pages, as plain data and plain functions (no React), so a test can check the steps, the
  * roles and the copy. The overlay that shows them is desk-tour.tsx; the "seen" store is realty/node/tour-seen.ts.
  *
- * The tour is: a welcome card, then for each nav page the viewer can see (in nav order) the nav link followed by that page's
- * key sections, then a closing card that points at the Start tour button. The Bops chat app at "/" is never in the tour.
+ * The tour is: a welcome card, then for each page the viewer can see (in nav order) the page's nav link (only when the sidebar
+ * shows that link, see SIDEBAR_DESK_HREFS) followed by the page's key sections, then a closing card that points at the Start
+ * tour button. The Bops chat app at "/" is never in the tour.
  */
 
 export const TOUR_SEEN_KEY = "desk-tour-seen"; // localStorage, only when there is no signed-in email (gate off)
@@ -116,7 +118,9 @@ export function buildTourSteps(viewer: { owner: boolean; teacher: boolean }): To
     const page = PAGES[p.href];
     if (p.href === "/" || !page) continue; // the Bops chat app is not part of the tour
     const slug = p.href.split("/").pop();
-    steps.push({ id: `${slug}:nav`, page: p.href, target: navTourId(p.href), card: "near", title: page.nav.title, text: page.nav.text });
+    if (SIDEBAR_DESK_HREFS.includes(p.href)) {
+      steps.push({ id: `${slug}:nav`, page: p.href, target: navTourId(p.href), card: "near", title: page.nav.title, text: page.nav.text });
+    }
     for (const s of page.sections) {
       steps.push({ id: `${slug}:${s.key}`, page: p.href, target: s.target, card: "near", title: s.title, text: s.text });
     }

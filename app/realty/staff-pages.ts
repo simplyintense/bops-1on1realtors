@@ -1,7 +1,8 @@
 /**
- * The staff desk's pages, as plain data so a test can check labels, order and gating without rendering React. The sidebar
- * (app/realty/sidebar-model.ts, rendered by staff-sidebar.tsx) and the Bops home's top nav (staff-nav.tsx) both read this list.
- * The 1on1 CRM's agent pages are not here: they are the CRM's own links (sidebar-model.ts CRM_LINKS).
+ * The staff desk's pages, as plain data so a test can check labels, order and gating without rendering React. The Bops home's
+ * top nav (staff-nav.tsx) and the guided tour read this list. The left sidebar is the CRM's own (sidebar-model.ts), so it shows
+ * only Market Search from here; the other pages stay reachable by URL. The 1on1 CRM's pages are not here: they are the CRM's
+ * own links in the sidebar model.
  *
  * Owners' pages are listed only for owners, and the teach page only for teachers; the page checks themselves are on the server
  * (viewer.ts). "Workspace" is the Bops chat app at / (the old home), listed for owners only (an agent is sent to the desk from /).
