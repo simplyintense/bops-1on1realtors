@@ -66,6 +66,7 @@ const CUR = String.raw`(?:(TT\$?|TTD|US\$?|USD|\$)\s?)`;
 const NUM = String.raw`(\d[\d,]*(?:\.\d+)?)\s?(k|m|mn|mil|mill|million|thousand)?\b`;
 const PERIOD = String.raw`(\s?(?:\/|per|a)\s?(?:month|mth|mo)\b|\s?monthly\b)?`;
 const RANGE = new RegExp(String.raw`${CUR}?${NUM}\s?(?:-|–|/|to|and)\s?${CUR}?${NUM}${PERIOD}`, "i");
+const RANGE_ALL = new RegExp(RANGE.source, "gi");
 const SINGLE = new RegExp(String.raw`${CUR}${NUM}${PERIOD}|\b(?:budget|max|maximum|up to|under|around|about)\s(?:is\s|of\s)?${CUR}?${NUM}${PERIOD}|${NUM}${PERIOD}?\s?(TTD|USD|TT|US)\b`, "i");
 
 function currencyOf(sym: string | undefined, text: string): "TTD" | "USD" {
@@ -86,17 +87,37 @@ function budgetOf(cur: string | undefined, num: string, mult: string | undefined
   return { min: null, max, currency: currencyOf(cur, text), period: monthly ? "month" : null, text: raw.trim() };
 }
 
+/** A range is money when the range itself has a currency or multiplier, or "budget"/"price"/"rent" sits right before it. */
+const BUDGET_WORD_BEFORE = /\b(?:budget|price|asking|rent|rental)\b[^\d\n]{0,12}$/i;
+
 export function findBudget(text: string): Budget | null {
-  const r = RANGE.exec(text);
-  // A range only counts with money around it ("2-3M", "$8k to $10k", "budget 2 to 3 million").
-  // Groups: 1 cur, 2 num, 3 mult, 4 cur, 5 num, 6 mult, 7 period. A range only counts with money
-  // around it ("2-3M", "$8k to $10k", "budget 2 to 3 million"), so "3-4 bedrooms" isn't one.
-  if (r && (r[1] || r[4] || r[3] || r[6] || /budget|price/i.test(text))) {
+  // PHONE (the phone finder above) marks spans like "332-4780", "868-719-5976", "(868) 719-5976", "+1 868 …".
+  const phones = [...text.matchAll(PHONE)].map((p): [number, number] => [p.index ?? 0, (p.index ?? 0) + p[0].length]);
+  for (const r of text.matchAll(RANGE_ALL)) {
+    const at = r.index ?? 0;
+    const end = at + r[0].length;
+    // A phone number is never a price, even when "price" is in the same message.
+    if (phones.some(([s, e]) => at < e && s < end)) continue;
+    // Groups: 1 cur, 2 num, 3 mult, 4 cur, 5 num, 6 mult, 7 period. "3-4 bedrooms" has neither.
+    if (!(r[1] || r[3] || r[4] || r[6]) && !BUDGET_WORD_BEFORE.test(text.slice(Math.max(0, at - 30), at))) continue;
     const unit = r[6] ?? r[3];
     const lo = amount(r[2], r[3] ?? unit);
     const hi = amount(r[5], r[6] ?? unit);
     if (hi >= 1000 && lo <= hi) {
-      return { min: lo, max: hi, currency: currencyOf(r[1] ?? r[4], text), period: r[7] ? "month" : null, text: r[0].trim() };
+      const range = { min: lo, max: hi, currency: currencyOf(r[1] ?? r[4], text), period: r[7] ? "month" as const : null, text: r[0].trim() };
+      // A bare uncurrencied range (even with "budget"/"price" before it) loses to an explicit $ / TT$ / US$ match in the same text.
+      const bare = !(r[1] || r[3] || r[4] || r[6]);
+      if (bare) {
+        const s = SINGLE.exec(text);
+        if (s) {
+          const [cur, num, mult, per] = s[2] ? [s[1], s[2], s[3], s[4]] : s[6] ? [s[5], s[6], s[7], s[8]] : [s[12], s[9], s[10], s[11]];
+          if (cur) {
+            const explicit = budgetOf(cur, num, mult, per, s[0], text, s.index);
+            if (explicit) return explicit;
+          }
+        }
+      }
+      return range;
     }
   }
   const s = SINGLE.exec(text);
