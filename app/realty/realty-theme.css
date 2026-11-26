@@ -22,6 +22,8 @@
   --accent-foreground: 270 70% 20%;
   --border: 270 15% 90%;
   --ring: 270 65% 30%;
+  /* The CRM's destructive red, for the sidebar's Logout. */
+  --destructive: 0 84.2% 60.2%;
   --radius: 1rem;
   /* The CRM's purple shadows (realtyf1on1inalsite src/index.css): cards and the tile hover. */
   --shadow-purple: 0 4px 20px rgba(74, 30, 104, 0.12);
@@ -88,44 +90,58 @@
   font-weight: 600;
 }
 
-/* Sidebar (staff-sidebar.tsx): the CRM sidebar's look. Colours are written as hsl(var(--token)) here, because the bops
- * Tailwind theme maps colour utilities to the raw token, which isn't a colour in these HSL tokens. */
-.rt-side {
-  background: hsl(var(--background));
-  border-right: 1px solid hsl(var(--border));
+/* The sidebar (staff-sidebar.tsx) uses the 1on1 CRM's own Tailwind classes, so it looks the same as the CRM's. Its colour
+ * utilities read the root tokens: globals.css is `@theme inline`, so bg-primary compiles to var(--primary), and a theme
+ * override of --color-primary never reaches it. This theme's tokens are bare HSL components, which those utilities can't use.
+ * So each colour the sidebar uses is pinned here, inside .realty-theme; the chat app at / is untouched. Rounded corners need no
+ * rule: rounded-lg is var(--radius), and this theme sets --radius to 1rem, as the CRM does. */
+.realty-theme .bg-background {
+  background-color: hsl(var(--background));
 }
 
-.rt-side-top {
-  background: hsl(var(--card));
-  border-bottom: 1px solid hsl(var(--border));
+.realty-theme .bg-muted {
+  background-color: hsl(var(--muted));
 }
 
-.rt-side-divider {
+.realty-theme .bg-primary {
+  background-color: hsl(var(--primary));
+}
+
+.realty-theme .border-border {
   border-color: hsl(var(--border));
 }
 
-.rt-side-link {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: hsl(var(--muted-foreground));
-  text-decoration: none;
-  transition: background-color 150ms ease, color 150ms ease;
-}
-
-.rt-side-link:hover {
-  background: hsl(var(--muted));
+.realty-theme .text-foreground {
   color: hsl(var(--foreground));
 }
 
-/* The current page: the CRM's bg-primary text-primary-foreground. */
-.rt-side-link[aria-current="page"] {
-  background: hsl(var(--primary));
+.realty-theme .text-muted-foreground {
+  color: hsl(var(--muted-foreground));
+}
+
+.realty-theme .text-primary-foreground {
   color: hsl(var(--primary-foreground));
+}
+
+.realty-theme .text-destructive {
+  color: hsl(var(--destructive));
+}
+
+.realty-theme .hover\:bg-muted:hover {
+  background-color: hsl(var(--muted));
+}
+
+.realty-theme .hover\:text-foreground:hover {
+  color: hsl(var(--foreground));
+}
+
+.realty-theme .hover\:bg-destructive\/10:hover {
+  background-color: color-mix(in oklab, hsl(var(--destructive)) 10%, transparent);
+}
+
+/* The CRM's sidebar heading has no tracking; the theme's headings above do. */
+.realty-theme aside h1 {
+  letter-spacing: normal;
 }
 
 /* Text */

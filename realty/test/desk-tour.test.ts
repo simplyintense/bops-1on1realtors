@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { GATE_COOKIE, gateConfig, makeSession } from "../../lib/gate.ts";
 import { visibleStaffPages, navTourId } from "../../app/realty/staff-pages.ts";
+import { SIDEBAR_DESK_HREFS } from "../../app/realty/sidebar-model.ts";
 import { buildTourSteps, parseTourState, shouldAutoStart, startTour, tourReducer, type TourStep } from "../../app/realty/tour-steps.ts";
 import { hasSeenTour, markTourSeen, TOUR_SEEN_FILE } from "../node/tour-seen.ts";
 import { INTAKE_GROUPS } from "../node/periskope-groups.ts";
@@ -84,7 +85,7 @@ test("role filtering: an agent sees only Desk and Online search; owners get thei
   assert.equal(both.length, 8, "every staff page except the chat app");
 });
 
-test("steps navigate: each step has a page, pages come in nav order, and each page starts with its nav link", () => {
+test("steps navigate: each step has a page, pages come in nav order, and a page starts with its nav link when the sidebar shows one", () => {
   for (const [name, role] of Object.entries(ROLES)) {
     const steps = buildTourSteps(role);
     const navOrder = visibleStaffPages(role).filter((p) => p.href !== "/").map((p) => p.href);
@@ -96,7 +97,11 @@ test("steps navigate: each step has a page, pages come in nav order, and each pa
     }
     for (const href of navOrder) {
       const first = steps.find((s) => s.page === href);
-      assert.equal(first?.target, navTourId(href), `${name}: ${href} starts on its nav link`);
+      if (SIDEBAR_DESK_HREFS.includes(href)) {
+        assert.equal(first?.target, navTourId(href), `${name}: ${href} starts on its sidebar link`);
+      } else {
+        assert.ok(!steps.some((s) => s.target === navTourId(href)), `${name}: ${href} has no sidebar link, so no nav step`);
+      }
     }
     const ids = steps.map((s) => s.id);
     assert.equal(new Set(ids).size, ids.length, `${name}: step ids are unique`);
@@ -152,9 +157,9 @@ test("every spotlight target is on a page: each data-tour id in the steps exists
   const appRealty = fileURLToPath(new URL("../../app/realty", import.meta.url));
   walk(appRealty);
   const source = files.map((f) => readFileSync(f, "utf8")).join("\n");
-  // The sidebar (the /realty pages) and the Bops home's top nav each put the nav's data-tour id on their links.
+  // The sidebar's Market Search link (the only desk link in the CRM's sidebar) and the Bops home's top nav each carry a nav id.
   const sidebarSource = readFileSync(join(appRealty, "staff-sidebar.tsx"), "utf8");
-  assert.ok(sidebarSource.includes("data-tour={link.tourId}"), "sidebar links carry their data-tour id");
+  assert.ok(sidebarSource.includes('data-tour="nav-search"'), "the sidebar's Market Search link carries its data-tour id");
   const navSource = readFileSync(join(appRealty, "staff-nav.tsx"), "utf8");
   assert.ok(navSource.includes("data-tour={navTourId(p.href)}"), "top nav links carry their data-tour id");
   const targets = new Set(Object.values(ROLES).flatMap((r) => buildTourSteps(r).map((s) => s.target)));
