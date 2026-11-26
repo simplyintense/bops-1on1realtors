@@ -3,8 +3,10 @@ import Link from "next/link";
 import { askBudgetLabel } from "@/realty/flow/automatch.ts";
 import { listingPriceLabel } from "@/realty/flow/live-match.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
-import { staffAutomatch, type AutomatchRow } from "@/realty/node/automatch.ts";
-import { staffLeads } from "@/realty/node/automatch-leads.ts";
+import { type AutomatchRow } from "@/realty/node/automatch.ts";
+import { staffAutomatchWithLeads } from "@/realty/node/automatch-leads.ts";
+import { CARD_PAGE_SIZE, hrefWithParams, pageWindow, slicePage, type QueryParams } from "@/realty/flow/pagination.ts";
+import { PaginationBar } from "../pagination-bar";
 import { Notice } from "../notice";
 import { LeadCards } from "../desk/lead-cards";
 import { viewer } from "../viewer";
@@ -21,10 +23,11 @@ export const metadata: Metadata = { title: "Automatch · 1on1 Realtors staff", r
 
 const beds = (n: number | null) => (n == null ? null : `${n} bed${n === 1 ? "" : "s"}`);
 
-export default async function Automatch({ searchParams }: { searchParams: Promise<{ band?: string | string[]; hidden?: string | string[] }> }) {
-  const { email, owner } = await viewer();
-  const view = await staffAutomatch({ email });
+export default async function Automatch({ searchParams }: { searchParams: Promise<QueryParams> }) {
+  const { email } = await viewer();
   const raw = await searchParams;
+  const showHidden = (Array.isArray(raw.hidden) ? raw.hidden[0] : raw.hidden) === "1";
+  const view = await staffAutomatchWithLeads({ email, showHidden });
   if (!("pairs" in view)) {
     return (
       <main className="mx-auto w-full max-w-6xl px-5 py-10">
@@ -33,10 +36,15 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
     );
   }
   const all = (Array.isArray(raw.band) ? raw.band[0] : raw.band) === "all";
-  const showHidden = (Array.isArray(raw.hidden) ? raw.hidden[0] : raw.hidden) === "1";
-  // Never throws out of the page: a failure is the section's error state.
-  const leads = await staffLeads({ email, showHidden }).catch(() => null);
+  const leads = view.leads;
   const shown = all ? view.pairs : view.pairs.filter((p) => p.band === "strong");
+  const leadWindow = pageWindow({ page: raw.leadsPage, pageSize: CARD_PAGE_SIZE, total: leads.cards.length });
+  const pairWindow = pageWindow({ page: raw.page, pageSize: CARD_PAGE_SIZE, total: shown.length });
+  const leadView = { ...leads, cards: slicePage(leads.cards, leadWindow) };
+  const pagePairs = slicePage(shown, pairWindow);
+  const hiddenToggle = hrefWithParams("/realty/automatch", raw, { hidden: showHidden ? undefined : "1", leadsPage: undefined });
+  const strongHref = hrefWithParams("/realty/automatch", raw, { band: undefined, page: undefined, leadsPage: undefined });
+  const allHref = hrefWithParams("/realty/automatch", raw, { band: "all", page: undefined, leadsPage: undefined });
 
   return (
     <main className="mx-auto w-full max-w-6xl px-5 py-10">
@@ -65,10 +73,10 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
       </ul>
 
       <nav aria-label="Score bands" className="mt-6 flex flex-wrap gap-2">
-        <Link href="/realty/automatch" className="rt-chip" aria-pressed={!all}>
+        <Link href={strongHref} className="rt-chip" aria-pressed={!all}>
           75 and above
         </Link>
-        <Link href="/realty/automatch?band=all" className="rt-chip" aria-pressed={all}>
+        <Link href={allHref} className="rt-chip" aria-pressed={all}>
           50 and above
         </Link>
       </nav>
@@ -87,17 +95,21 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
           Every strong match (75 and above): who asked, the listing and its agent (or the office), a suggested message, and the outcome buttons.
         </p>
         <div className="mt-4">
-          <LeadCards view={leads} owner={owner} showHidden={showHidden} toggleHref={showHidden ? "/realty/automatch" : "/realty/automatch?hidden=1"} />
+          <LeadCards view={leadView} owner={view.owner} showHidden={showHidden} toggleHref={hiddenToggle} />
+          {leadWindow.total ? <PaginationBar path="/realty/automatch" raw={raw} window={leadWindow} param="leadsPage" /> : null}
         </div>
       </section>
 
       <section className="mt-8" aria-label="Pairs" data-tour="automatch-pairs">
-        {shown.length ? (
-          <ol className="grid gap-4">
-            {shown.map((r, i) => (
-              <PairCard key={i} r={r} />
-            ))}
-          </ol>
+        {pagePairs.length ? (
+          <>
+            <ol className="grid gap-4">
+              {pagePairs.map((r, i) => (
+                <PairCard key={`${r.ask.postId ?? "ask"}-${r.listingKey}-${pairWindow.offset + i}`} r={r} />
+              ))}
+            </ol>
+            <PaginationBar path="/realty/automatch" raw={raw} window={pairWindow} />
+          </>
         ) : view.crmText ? null : (
           <Notice>{all ? "No pairs at 50 and above right now." : "No pairs at 75 and above right now. Try the 50 and above view."}</Notice>
         )}

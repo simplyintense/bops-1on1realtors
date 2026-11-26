@@ -929,17 +929,21 @@ export class SearchStore {
   }
 
   /** The needs-explanation queue, newest first, each with Bops's best guess at what the post means. */
-  openQueue(limit = 200): { total: number; rows: (SearchRow & { guess: string })[] } {
+  openQueue(limit = 200, offset = 0): { total: number; rows: (SearchRow & { guess: string })[] } {
     const terms = this.knownTerms();
-    const result = this.search({ kind: "vague", limit });
+    const result = this.search({ kind: "vague", limit, offset });
     return { total: result.total, rows: result.rows.map((r) => ({ ...r, guess: bestGuess(r.originalText ?? "", terms) })) };
   }
 
   /** Taught knowledge, newest first: the owner's past answers. */
-  taught(limit = 100): TaughtRow[] {
+  taughtCount(): number {
+    return Number(this.db.prepare("SELECT COUNT(*) AS n FROM knowledge WHERE source = 'taught'").get()?.n ?? 0);
+  }
+
+  taught(limit = 100, offset = 0): TaughtRow[] {
     return this.db
-      .prepare("SELECT kind, term, area, development, type, listing_type, note, taught_by, taught_at FROM knowledge WHERE source = 'taught' ORDER BY taught_at DESC, id DESC LIMIT ?")
-      .all(limit)
+      .prepare("SELECT kind, term, area, development, type, listing_type, note, taught_by, taught_at FROM knowledge WHERE source = 'taught' ORDER BY taught_at DESC, id DESC LIMIT ? OFFSET ?")
+      .all(limit, offset)
       .map((r) => ({
         kind: String(r.kind),
         term: str(r.term),

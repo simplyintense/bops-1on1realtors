@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { GATE_COOKIE, gateConfig, makeSession } from "../../lib/gate.ts";
 import type { PostRecord } from "../flow/periskope.ts";
-import { findPostView, listPostViews, postView, postsToCsv, dateAst } from "../node/group-posts.ts";
+import { findPostView, listPostPage, listPostViews, postView, postsToCsv, dateAst } from "../node/group-posts.ts";
 import { ownerAccess } from "../node/periskope-intake.ts";
 import { PeriskopeStore, requestIdOf } from "../node/periskope-store.ts";
 
@@ -97,4 +97,23 @@ test("dateAst reports Port of Spain time, and the CSV has a header plus one data
   assert.match(lines[0], /(?:^|,)development(?:$|,)/);
   assert.match(lines[1], /listing_for_sale/);
   assert.match(lines[1], /AREA Registered Agents/);
+});
+
+test("listPostPage returns one newest-first page and a total, without mutating the store list", () => {
+  const store = new PeriskopeStore(mkdtempSync(join(tmpdir(), "group-posts-page-")));
+  const older = { ...SAMPLE, messageId: "false_120363000000000000@g.us_old", sentAt: "2026-11-01T14:00:00.000Z" };
+  const mid = { ...SAMPLE, messageId: "false_120363000000000000@g.us_mid", sentAt: "2026-11-05T14:00:00.000Z" };
+  const newest = { ...SAMPLE, messageId: "false_120363000000000000@g.us_new", sentAt: "2026-11-10T14:00:00.000Z" };
+  store.addPost(older);
+  store.addPost(mid);
+  store.addPost(newest);
+  const first = listPostPage(store, false, { limit: 2, offset: 0 });
+  const second = listPostPage(store, false, { limit: 2, offset: 2 });
+  assert.equal(first.total, 3);
+  assert.deepEqual(first.rows.map((r) => r.sentAt), [newest.sentAt, mid.sentAt]);
+  assert.equal(second.total, 3);
+  assert.deepEqual(second.rows.map((r) => r.sentAt), [older.sentAt]);
+  assert.equal(listPostPage(store, false, { limit: 2, offset: 50 }).rows.length, 0);
+  assert.equal("originalText" in (first.rows[0] ?? {}), false, "agents still do not receive originalText");
+  assert.equal(store.posts().length, 3, "the store still holds every post");
 });

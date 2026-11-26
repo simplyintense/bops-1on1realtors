@@ -8,6 +8,8 @@ import { agentFeedbackSummary } from "@/realty/flow/agent-feedback.ts";
 import { viewer } from "../viewer";
 import { QuestionForm } from "./question-form";
 import { TeachForm } from "./teach-form";
+import { PAGE_SIZE, pageWindow, resolvePage, type QueryParams } from "@/realty/flow/pagination.ts";
+import { PaginationBar } from "../pagination-bar";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Teach · 1on1 Realtors staff", robots: { index: false, follow: false } };
@@ -18,10 +20,16 @@ export const metadata: Metadata = { title: "Teach · 1on1 Realtors staff", robot
  * answer teaches Bops (saved to the shared knowledge, so it applies to future posts too) and reports what changed. For owners
  * only (ownerAllowed): "What agents told us", the reasons agents gave for their outcomes on the lead cards.
  */
-export default async function LearnPage() {
+export default async function LearnPage({ searchParams }: { searchParams: Promise<QueryParams> }) {
   const { teacher, owner } = await viewer();
-  const { queue, past } = withSearchStore(periskopeRoot(), (store) => ({ queue: store.openQueue(200), past: store.taught(100) }));
-  const questions = listOpenQuestions(periskopeRoot());
+  const raw = await searchParams;
+  const root = periskopeRoot();
+  const { queue, queueWindow, past, pastWindow } = withSearchStore(root, (store) => {
+    const q = resolvePage(raw.page, PAGE_SIZE, (offset, limit) => store.openQueue(limit, offset));
+    const pastWindow = pageWindow({ page: raw.pastPage, pageSize: PAGE_SIZE, total: store.taughtCount() });
+    return { queue: q.rows, queueWindow: q.window, past: store.taught(pastWindow.pageSize, pastWindow.offset), pastWindow };
+  });
+  const questions = listOpenQuestions(root);
   const told = owner ? agentFeedbackSummary(new PeriskopeStore(periskopeRoot()).matchStatuses()) : null;
 
   return (
@@ -56,10 +64,10 @@ export default async function LearnPage() {
         ))}
       </ol>
 
-      <h2 className="mt-12 text-xl font-semibold" data-tour="learn-queue">Open ({queue.total})</h2>
-      {queue.rows.length === 0 ? <p className="rt-muted mt-3">Nothing waiting. No posts need an explanation.</p> : null}
+      <h2 className="mt-12 text-xl font-semibold" data-tour="learn-queue">Open ({queueWindow.total})</h2>
+      {queue.length === 0 ? <p className="rt-muted mt-3">Nothing waiting. No posts need an explanation.</p> : null}
       <ol className="mt-4 grid gap-4">
-        {queue.rows.map((r) => (
+        {queue.map((r) => (
           <li key={r.id} className="rt-card grid gap-2 p-4">
             <p className="rt-muted text-xs">
               {dateAst(r.lastSentAt)} · {r.groups.join(", ") || "No group"} · {r.senderName ?? "Unnamed sender"} · ×{r.timesSeen}
@@ -77,10 +85,12 @@ export default async function LearnPage() {
           </li>
         ))}
       </ol>
+      <PaginationBar path="/realty/learn" raw={raw} window={queueWindow} />
 
       <h2 className="mt-12 text-xl font-semibold">Past answers</h2>
       {past.length === 0 ? <p className="rt-muted mt-3">No answers yet.</p> : null}
       {past.length ? (
+        <>
         <div className="rt-table-wrap mt-3">
           <table className="w-full text-sm">
             <thead className="rt-thead text-left">
@@ -105,6 +115,8 @@ export default async function LearnPage() {
             </tbody>
           </table>
         </div>
+        <PaginationBar path="/realty/learn" raw={raw} window={pastWindow} param="pastPage" />
+        </>
       ) : null}
 
       {told ? (

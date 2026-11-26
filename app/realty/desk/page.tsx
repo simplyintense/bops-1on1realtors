@@ -9,6 +9,10 @@ import { viewer } from "../viewer";
 import { LeadCards } from "./lead-cards";
 import { RecommendationsPanel } from "./recommendations-panel";
 import { leadsSectionCopy, showFeedStatus } from "./copy";
+import { leadCardId } from "@/realty/flow/automatch-leads.ts";
+import { CARD_PAGE_SIZE, hrefWithParams, pageWindow, slicePage, type QueryParams } from "@/realty/flow/pagination.ts";
+import { PaginationBar } from "../pagination-bar";
+import { LeadCardHashPage } from "./lead-hash-page";
 
 /**
  * The staff desk: the home for signed-in staff. The login gate covers every /realty page, and the public demo redirects
@@ -22,15 +26,16 @@ import { leadsSectionCopy, showFeedStatus } from "./copy";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Staff desk · 1on1 Realtors", robots: { index: false, follow: false } };
 
-type Params = Record<string, string | string[] | undefined>;
-
-export default async function RealtyDesk({ searchParams }: { searchParams: Promise<Params> }) {
+export default async function RealtyDesk({ searchParams }: { searchParams: Promise<QueryParams> }) {
   const { email, owner } = await viewer();
-  const showHidden = (await searchParams).hidden === "1";
+  const raw = await searchParams;
+  const showHidden = (Array.isArray(raw.hidden) ? raw.hidden[0] : raw.hidden) === "1";
   // Never throws out of the page: a failure is the panel's error state.
   const recs = await staffRecommendations({ email, showHidden }).catch(() => null);
   const leads = await staffLeads({ email, showHidden }).catch(() => null);
   const feedStatus = showFeedStatus(owner) ? webhookStatusLabel(readWebhookStatus(periskopeRoot())) : null;
+  const leadWindow = pageWindow({ page: raw.page, pageSize: CARD_PAGE_SIZE, total: leads?.cards.length ?? 0 });
+  const leadView = leads ? { ...leads, cards: slicePage(leads.cards, leadWindow) } : leads;
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
@@ -68,7 +73,14 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
           {leadsSectionCopy(owner)}
         </p>
         <div className="mt-4">
-          <LeadCards view={leads} owner={owner} showHidden={showHidden} toggleHref={showHidden ? "/realty/desk" : "/realty/desk?hidden=1"} />
+          <LeadCardHashPage ids={(leads?.cards ?? []).map((c) => leadCardId(c.requestId, c.listingKey))} pageSize={CARD_PAGE_SIZE} path="/realty/desk" raw={raw} />
+          <LeadCards
+            view={leadView}
+            owner={owner}
+            showHidden={showHidden}
+            toggleHref={hrefWithParams("/realty/desk", raw, { hidden: showHidden ? undefined : "1", page: undefined })}
+          />
+          {leadWindow.total ? <PaginationBar path="/realty/desk" raw={raw} window={leadWindow} /> : null}
         </div>
       </section>
 

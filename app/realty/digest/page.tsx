@@ -7,6 +7,8 @@ import { Cards, portOfSpainTime } from "../desk/recommendations-panel";
 import { Notice } from "../notice";
 import { viewer } from "../viewer";
 import { ReplayButton } from "./replay-button";
+import { PAGE_SIZE, pageWindow, slicePage, type QueryParams } from "@/realty/flow/pagination.ts";
+import { PaginationBar } from "../pagination-bar";
 
 /**
  * The daily digest: the last 24 hours of buyer requests from the agents' WhatsApp group (Periskope intake), with every match and
@@ -17,8 +19,9 @@ import { ReplayButton } from "./replay-button";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Daily digest · 1on1 Realtors", robots: { index: false, follow: false } };
 
-export default async function RealtyDigest() {
+export default async function RealtyDigest({ searchParams }: { searchParams: Promise<QueryParams> }) {
   const { email } = await viewer();
+  const raw = await searchParams;
   const view = await staffDigest({ email });
   if (!("digest" in view)) {
     return (
@@ -28,6 +31,8 @@ export default async function RealtyDigest() {
     );
   }
   const d = view.digest;
+  const cardWindow = pageWindow({ page: raw.page, pageSize: PAGE_SIZE, total: d.cards.length });
+  const cards = slicePage(d.cards, cardWindow);
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
       <p className="rt-eyebrow">Read only</p>
@@ -71,8 +76,11 @@ export default async function RealtyDigest() {
           Last 24 hours
         </h2>
         <div className="mt-4">
-          {d.cards.length ? (
-            <Cards cards={d.cards} detail />
+          {cards.length ? (
+            <>
+              <Cards cards={cards} detail />
+              <PaginationBar path="/realty/digest" raw={raw} window={cardWindow} />
+            </>
           ) : (
             <Notice>No WhatsApp buyer requests in the last 24 hours. Until the agents&apos; group is connected, the replay below shows it working.</Notice>
           )}

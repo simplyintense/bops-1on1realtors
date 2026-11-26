@@ -51,6 +51,17 @@ export function listPostViews(store: PeriskopeStore, owner: boolean): PostView[]
     .sort((a, b) => b.sentAt.localeCompare(a.sentAt));
 }
 
+/** One page of posts, newest first. The JSONL store is still read in full for the count and sort; only this page becomes views. */
+export function listPostPage(store: PeriskopeStore, owner: boolean, opts: { limit: number; offset: number }): { rows: PostView[]; total: number } {
+  const posts = store.posts();
+  const total = posts.length;
+  const page = [...posts].sort((a, b) => b.sentAt.localeCompare(a.sentAt)).slice(opts.offset, opts.offset + opts.limit);
+  if (!page.length) return { rows: [], total };
+  const wanted = new Set(page.map((p) => p.messageId));
+  const liveById = new Map(store.live().filter((r) => wanted.has(r.messageId)).map((r) => [r.messageId, r]));
+  return { rows: page.map((p) => postView(p, owner, liveById.get(p.messageId))), total };
+}
+
 export function findPostView(store: PeriskopeStore, requestId: string, owner: boolean, withText: boolean = owner): PostView | null {
   const post = store.posts().find((p) => requestIdOf(p.messageId) === requestId);
   if (!post) return null;

@@ -400,6 +400,38 @@ test("search pages: limit and offset, newest first, with a total", () => {
   assert.deepEqual(next.rows.map((r) => r.messageIds[0]), ["p-1"]);
 });
 
+test("openQueue and taught page with limit, offset and a total", () => {
+  const vague = (n: number) =>
+    post({
+      messageId: `v-page-${n}`,
+      senderPhone: `+1868555020${n}`,
+      sentAt: `2026-11-0${n}T12:00:00.000Z`,
+      area: null,
+      price: null,
+      type: null,
+      originalText: `vague unique words ${n} nobody knows`,
+    });
+  const root = world({ supply: [1, 2, 3].map(vague) });
+  syncFromJsonl(root);
+  const first = withSearchStore(root, (s) => s.openQueue(2, 0));
+  const second = withSearchStore(root, (s) => s.openQueue(2, 2));
+  assert.equal(first.total, 3);
+  assert.equal(first.rows.length, 2);
+  assert.equal(second.total, 3);
+  assert.equal(second.rows.length, 1);
+  assert.ok(first.rows[0]!.lastSentAt >= first.rows[1]!.lastSentAt);
+
+  withSearchStore(root, (s) => {
+    for (const r of s.openQueue(10).rows) s.teach(r.id, { answer: `note for ${r.messageIds[0]}` });
+  });
+  const taughtFirst = withSearchStore(root, (s) => ({ total: s.taughtCount(), rows: s.taught(2, 0) }));
+  const taughtNext = withSearchStore(root, (s) => s.taught(2, 2));
+  assert.equal(taughtFirst.total, 3);
+  assert.equal(taughtFirst.rows.length, 2);
+  assert.equal(taughtNext.length, 1);
+  assert.equal(withSearchStore(root, (s) => s.taught().length), 3, "the default still returns up to 100");
+});
+
 test("searchInputFrom validates filters and clamps paging", () => {
   assert.throws(() => searchInputFrom({ kind: "elsewhere" }), SearchInputError);
   assert.throws(() => searchInputFrom({ from: "2026-13-40" }), SearchInputError);
