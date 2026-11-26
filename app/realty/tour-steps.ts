@@ -68,7 +68,7 @@ const PAGES: Record<string, { nav: Copy; sections: Section[] }> = {
     ],
   },
   "/realty/search": {
-    nav: { title: "Supply & Demand", text: "Listings and buyer requests from the WhatsApp groups, in one place. Read-only." },
+    nav: { title: "Market Search", text: "Listings and buyer requests from the WhatsApp groups, in one place. Read-only." },
     sections: [
       { key: "tabs", target: "search-tabs", title: "Supply, demand and more", text: "Pick the kind of post you want to look at." },
       { key: "filters", target: "search-filters", title: "Filters", text: "Narrow it down by keyword, area, price, beds or type." },

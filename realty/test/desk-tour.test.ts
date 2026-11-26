@@ -65,7 +65,7 @@ test("replay: Start tour begins at the welcome card whether or not the tour was 
 
 test("role filtering: an agent sees only Desk and Online search; owners get their pages; teachers get Teach", () => {
   const agent = pagesOf(buildTourSteps(AGENT_ONLY));
-  assert.deepEqual(agent, ["/realty/desk", "/realty/search", "/realty/market"], "the tour follows the nav: Supply & Demand is for all staff");
+  assert.deepEqual(agent, ["/realty/desk", "/realty/search", "/realty/market"], "the tour follows the nav: Market Search is for all staff");
   assert.ok(!agent.includes("/"), "the Bops chat app is never in the tour");
 
   const owner = pagesOf(buildTourSteps(OWNER_ONLY));
@@ -87,7 +87,7 @@ test("role filtering: an agent sees only Desk and Online search; owners get thei
 test("steps navigate: each step has a page, pages come in nav order, and each page starts with its nav link", () => {
   for (const [name, role] of Object.entries(ROLES)) {
     const steps = buildTourSteps(role);
-    const navOrder = visibleStaffPages(role).filter((p) => p.href !== "/" && !p.external).map((p) => p.href);
+    const navOrder = visibleStaffPages(role).filter((p) => p.href !== "/").map((p) => p.href);
     const seq = steps.flatMap((s) => (s.page ? [s.page] : []));
     const grouped = [...new Set(seq)];
     assert.deepEqual(grouped, navOrder, `${name}: pages in nav order, each grouped together`);
@@ -152,8 +152,11 @@ test("every spotlight target is on a page: each data-tour id in the steps exists
   const appRealty = fileURLToPath(new URL("../../app/realty", import.meta.url));
   walk(appRealty);
   const source = files.map((f) => readFileSync(f, "utf8")).join("\n");
+  // The sidebar (the /realty pages) and the Bops home's top nav each put the nav's data-tour id on their links.
+  const sidebarSource = readFileSync(join(appRealty, "staff-sidebar.tsx"), "utf8");
+  assert.ok(sidebarSource.includes("data-tour={link.tourId}"), "sidebar links carry their data-tour id");
   const navSource = readFileSync(join(appRealty, "staff-nav.tsx"), "utf8");
-  assert.ok(navSource.includes("data-tour={navTourId(p.href)}"), "nav links carry their data-tour id");
+  assert.ok(navSource.includes("data-tour={navTourId(p.href)}"), "top nav links carry their data-tour id");
   const targets = new Set(Object.values(ROLES).flatMap((r) => buildTourSteps(r).map((s) => s.target)));
   for (const t of targets) {
     if (!t || t.startsWith("nav-")) continue;

@@ -16,7 +16,7 @@ import { leadsSectionCopy, showFeedStatus } from "./copy";
  * only (checked on the server, not just hidden), 1on1 CRM Automatch, Supply & Demand, All posts and the daily digest. Then "Automatch leads" (strong matches on the listings you hold; every card for an owner), then the "Top recommendations
  * for you" panel, where matches marked not a fit or closed are hidden unless "Show hidden" is on. Read only: nothing here
  * sends or writes. This is the landing page after sign-in (lib/gate.ts safeNext); the Bops chat app at / is one click away
- * in the nav ("Bops home").
+ * in the sidebar ("Workspace").
  */
 
 export const dynamic = "force-dynamic";
@@ -51,7 +51,7 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
             <Tile href="/realty/automatch" title="1on1 CRM Automatch" cta="Open Automatch">
               Owners only. Buyer requests matched against the 1on1 CRM.
             </Tile>
-            <Tile href="/realty/search" title="Supply & Demand" cta="Open Supply & Demand">
+            <Tile href="/realty/search" title="Market Search" cta="Open Market Search">
               Owners only. The WhatsApp supply and demand, and the online buyer-request feed. Read-only.
             </Tile>
             <Tile href="/realty/posts" title="All posts" cta="See all posts">

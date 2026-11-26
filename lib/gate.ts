@@ -13,6 +13,7 @@
  *   BOPS_ALLOWED_EMAILS        comma separated: exact emails, or "@1on1realtors.com" for a whole domain
  *   BOPS_GATE_SECRET           32+ random characters, signs the session cookie
  *   BOPS_PUBLIC_URL            https://bop.1on1realtors.com (Google redirects back to <url>/api/gate/callback)
+ *   BOPS_SSO_SECRET            optional: the 1on1 CRM's sign-in hand-off secret (lib/sso.ts, /auth/sso); unset, the hand-off is off
  *   GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET   a "Web application" OAuth client
  *
  * No imports and Web Crypto only, so the proxy (any runtime), the routes and node --test all share it.
@@ -86,6 +87,9 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/gate/login",
   "/api/gate/callback",
   "/api/gate/logout",
+  // The CRM's signed hand-off (app/auth/sso, lib/sso.ts): it sets the session itself, checked by its own signed token. Not public:
+  // the demo gate (demoRoute) still sends it away.
+  "/auth/sso",
   // Webhooks and the tunnel (proxy.ts TAILNET_PATHS / TUNNEL_PATHS), each checked by its own secret.
   "/api/apps/call",
   "/api/phone/agentphone",

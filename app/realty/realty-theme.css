@@ -1,6 +1,7 @@
 /*
  * The 1on1 Realtors theme for the staff pages under /realty/* (app/realty/layout.tsx). Scoped to .realty-theme, so the
- * Bops chat app at / keeps its own styles. The tokens are the live site's (HSL components, as on 1on1realtors.com).
+ * Bops chat app at / keeps its own styles. The tokens are the live site's (HSL components, as on 1on1realtors.com); Inter for
+ * everything, as the CRM's staff portal does (headings included).
  */
 
 .realty-theme {
@@ -22,6 +23,9 @@
   --border: 270 15% 90%;
   --ring: 270 65% 30%;
   --radius: 1rem;
+  /* The CRM's purple shadows (realtyf1on1inalsite src/index.css): cards and the tile hover. */
+  --shadow-purple: 0 4px 20px rgba(74, 30, 104, 0.12);
+  --shadow-purple-lg: 0 10px 40px rgba(74, 30, 104, 0.15);
   /* Not on the live site: used only for error notices. */
   --danger: 0 65% 42%;
 
@@ -34,7 +38,7 @@
 .realty-theme h1,
 .realty-theme h2,
 .realty-theme h3 {
-  font-family: var(--font-realty-serif), Georgia, serif;
+  font-family: var(--font-realty-sans), ui-sans-serif, system-ui, sans-serif;
   letter-spacing: -0.01em;
 }
 
@@ -84,6 +88,46 @@
   font-weight: 600;
 }
 
+/* Sidebar (staff-sidebar.tsx): the CRM sidebar's look. Colours are written as hsl(var(--token)) here, because the bops
+ * Tailwind theme maps colour utilities to the raw token, which isn't a colour in these HSL tokens. */
+.rt-side {
+  background: hsl(var(--background));
+  border-right: 1px solid hsl(var(--border));
+}
+
+.rt-side-top {
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.rt-side-divider {
+  border-color: hsl(var(--border));
+}
+
+.rt-side-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.rt-side-link:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+/* The current page: the CRM's bg-primary text-primary-foreground. */
+.rt-side-link[aria-current="page"] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
 /* Text */
 .rt-eyebrow {
   font-size: 0.75rem;
@@ -108,6 +152,7 @@
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
   background: hsl(var(--card));
+  box-shadow: var(--shadow-purple);
 }
 
 .rt-tile {
@@ -120,11 +165,11 @@
 .rt-tile:hover,
 .rt-tile:focus-visible {
   border-color: hsl(var(--primary) / 0.45);
-  box-shadow: 0 10px 30px -18px hsl(var(--brand-purple-dark) / 0.45);
+  box-shadow: var(--shadow-purple-lg);
 }
 
 .rt-tile-title {
-  font-family: var(--font-realty-serif), Georgia, serif;
+  font-family: var(--font-realty-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 1.25rem;
   color: hsl(var(--foreground));
 }
@@ -148,7 +193,9 @@
 }
 
 .rt-btn:hover {
-  background: hsl(var(--brand-purple-dark));
+  background: #FF6B35;
+  color: hsl(var(--primary));
+  box-shadow: 0 0 20px rgba(255, 107, 53, 0.5);
 }
 
 /* A small toggle (the match follow-up buttons): pressed shows the current status. */
@@ -220,6 +267,7 @@
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
   background: hsl(var(--card));
+  box-shadow: var(--shadow-purple);
 }
 
 .rt-thead {
@@ -255,7 +303,7 @@
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
   background: hsl(var(--card));
-  box-shadow: 0 20px 40px -12px hsl(var(--brand-purple-dark) / 0.25);
+  box-shadow: var(--shadow-purple-lg);
 }
 
 /* Market stats strip */
@@ -268,11 +316,11 @@
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
-  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.04);
+  box-shadow: var(--shadow-purple);
 }
 
 .rt-stat-value {
-  font-family: var(--font-realty-serif), Georgia, serif;
+  font-family: var(--font-realty-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 2rem;
   font-weight: 600;
   letter-spacing: -0.02em;
