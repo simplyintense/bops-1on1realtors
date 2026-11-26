@@ -71,7 +71,12 @@ const SENSITIVE_APIS = [
   "/api/memory",
   "/api/mail",
 ];
-const AGENT_PAGES_THAT_ARE_NOT_THE_DESK = ["/", "/realty/posts", "/realty/automatch", "/realty/digest", "/realty/alerts", "/realty-demo", "/realty/requests"];
+/** The nine AI Desk pages (the sidebar's group, staff-pages.ts): every signed-in staff member may open each, including "/". */
+const AI_DESK_PAGES = ["/", "/realty/desk", "/realty/automatch", "/realty/search", "/realty/posts", "/realty/market", "/realty/digest", "/realty/alerts", "/realty/learn"];
+/** Pages that are not AI Desk pages, and near-misses of them: an agent is sent to the desk. */
+const NOT_AI_DESK_PAGES = ["/realty-demo", "/realty/requests", "/realty/postsx", "/realty/automatchx", "/realty/digests", "/realty/learning", "/realty/alertsx", "/anything"];
+/** Owner-only mutation APIs and the owners' screens' APIs: an agent's call is 403, a GET or a POST. */
+const OWNER_ONLY_APIS = ["/api/realty/replay", "/api/realty/automatch-alert", "/api/realty/admin-digest", "/api/realty/posts", "/api/realty/posts/3fa9c2d1e8b74f60a1b2c3d4", "/api/realty/search/export", "/api/members", "/api/workspaces", "/api/vnc", "/api/call", "/api/state", "/api/routines", "/api/mail"];
 
 test("agents: Supply & Demand and a stored post's page open to any signed-in staff; the owners' post list, the owners' APIs and the export stay closed", async () => {
   const agent = await session(AGENT);
@@ -80,7 +85,7 @@ test("agents: Supply & Demand and a stored post's page open to any signed-in sta
   assert.equal(await at("/realty/posts/3fa9c2d1e8b74f60a1b2c3d4"), "pass", "a stored post, by its request id");
   assert.equal(await at("/realty/posts/3fa9.png"), "desk", "a dot is not an id");
   assert.equal(await at("/realty/posts/3fa9/extra"), "desk", "one id only");
-  assert.equal(await at("/realty/posts"), "desk", "the list of all posts stays owners-only");
+  assert.equal(await at("/realty/posts"), "pass", "the list of all posts is open to any signed-in staff");
   assert.equal(await at("/realty/posts/"), "desk");
   assert.equal(await at("/realty/searchable"), "desk", "a prefix isn't a path");
   assert.equal(await at("/api/realty/search"), "forbidden", "the search API stays owner-only");
@@ -90,10 +95,17 @@ test("agents: Supply & Demand and a stored post's page open to any signed-in sta
   assert.equal(await at("/realty/posts/3fa9c2d1e8b74f60a1b2c3d4", "POST"), "desk", "a POST to a page is not a page read");
 });
 
-test("agents: the desk, online search and their APIs; every other API is refused with 403, every other page goes to the desk", async () => {
+test("agents: every AI Desk page opens (GET), and the owners' APIs are refused with 403; every other page goes to the desk", async () => {
   const agent = await session(AGENT);
   for (const api of SENSITIVE_APIS) assert.equal(await decide(api, "GET", `bops_gate=${agent}`), "forbidden", api);
-  for (const page of AGENT_PAGES_THAT_ARE_NOT_THE_DESK) assert.equal(await decide(page, "GET", `bops_gate=${agent}`), "desk", page);
+  for (const page of AI_DESK_PAGES) assert.equal(await decide(page, "GET", `bops_gate=${agent}`), "pass", page);
+  for (const page of AI_DESK_PAGES) assert.equal(await decide(page, "HEAD", `bops_gate=${agent}`), "pass", `HEAD ${page}`);
+  for (const page of NOT_AI_DESK_PAGES) assert.equal(await decide(page, "GET", `bops_gate=${agent}`), "desk", page);
+  for (const api of OWNER_ONLY_APIS) {
+    assert.equal(await decide(api, "GET", `bops_gate=${agent}`), "forbidden", `GET ${api}`);
+    assert.equal(await decide(api, "POST", `bops_gate=${agent}`), "forbidden", `POST ${api}`);
+  }
+  assert.equal(await decide("/", "POST", `bops_gate=${agent}`), "desk", "a POST to the root is not a page read");
   assert.equal(await decide("/realty/desk", "GET", `bops_gate=${agent}`), "pass");
   assert.equal(await decide("/realty/desk/anything", "GET", `bops_gate=${agent}`), "pass");
   assert.equal(await decide("/realty/market", "GET", `bops_gate=${agent}`), "pass");
@@ -111,18 +123,45 @@ test("agents: the desk, online search and their APIs; every other API is refused
 
 test("owners reach every page and API, as before", async () => {
   const owner = await session(OWNER);
-  for (const path of [...SENSITIVE_APIS, ...AGENT_PAGES_THAT_ARE_NOT_THE_DESK, "/realty/desk", "/realty/learn", "/api/realty/match-status", "/api/realty/not-a-lead"]) {
+  for (const path of [...SENSITIVE_APIS, ...OWNER_ONLY_APIS, ...AI_DESK_PAGES, ...NOT_AI_DESK_PAGES, "/api/realty/match-status", "/api/realty/not-a-lead"]) {
     assert.equal(await decide(path, "POST", `bops_gate=${owner}`), "pass", path);
   }
 });
 
-test("teachers also reach the teach page and its APIs, and nothing owners-only", async () => {
+test("teachers reach the teach page (as every staff member does) and its POST APIs, and nothing owners-only", async () => {
   const teacher = await session(TEACHER);
   assert.equal(await decide("/realty/learn", "GET", `bops_gate=${teacher}`), "pass");
   assert.equal(await decide("/api/realty/learn", "POST", `bops_gate=${teacher}`), "pass");
   assert.equal(await decide("/api/realty/learn/questions", "POST", `bops_gate=${teacher}`), "pass");
   assert.equal(await decide("/api/vault", "GET", `bops_gate=${teacher}`), "forbidden");
-  assert.equal(await decide("/realty/posts", "GET", `bops_gate=${teacher}`), "desk");
+  for (const api of OWNER_ONLY_APIS) assert.equal(await decide(api, "POST", `bops_gate=${teacher}`), "forbidden", api);
+});
+
+test("an agent can't teach: the teach APIs are teacher-only, while the teach page is open to every staff member", async () => {
+  const agent = await session(AGENT);
+  assert.equal(await decide("/realty/learn", "GET", `bops_gate=${agent}`), "pass");
+  assert.equal(await decide("/api/realty/learn", "POST", `bops_gate=${agent}`), "forbidden");
+  assert.equal(await decide("/api/realty/learn/questions", "POST", `bops_gate=${agent}`), "forbidden");
+});
+
+test("agentMayReach: the desk is open and the root matches exactly, so the '/' trap can't open the site", () => {
+  assert.equal(agentMayReach("/realty/desk", "GET"), true);
+  assert.equal(agentMayReach("/", "GET"), true, "Workspace, the root only");
+  assert.equal(agentMayReach("/", "HEAD"), true);
+  assert.equal(agentMayReach("/", "POST"), false, "no writes to the root");
+  assert.equal(agentMayReach("/api/realty/replay", "GET"), false, "the owners' replay API");
+  assert.equal(agentMayReach("/api/realty/replay", "POST"), false);
+  assert.equal(agentMayReach("/api/members", "GET"), false, "the Workspace members API");
+  assert.equal(agentMayReach("/api/random/path", "GET"), false, "a random API path");
+  assert.equal(agentMayReach("/some/random/path", "GET"), false, "a random page is not the root's prefix");
+  assert.equal(agentMayReach("/realty", "GET"), false, "the realty index is not a page");
+  assert.equal(agentMayReach("/realty/posts", "GET"), true, "the list of all posts, exact");
+  assert.equal(agentMayReach("/realty/posts/3fa9c2d1e8b74f60a1b2c3d4", "GET"), true, "one stored post");
+  assert.equal(agentMayReach("/realty/posts/3fa9/extra", "GET"), false, "one id only");
+  assert.equal(agentMayReach("/realty/learn", "GET"), true, "the teach page for an agent");
+  assert.equal(agentMayReach("/realty/learn", "POST"), false, "a page takes no POST");
+  assert.equal(agentMayReach("/api/realty/learn", "POST"), false, "the teach API needs a teacher");
+  assert.equal(agentMayReach("/api/realty/learn", "POST", { teacher: true }), true, "...and a teacher may POST it");
 });
 
 test("signed out: an API call is a sign-in (401), a page goes to the sign-in", async () => {

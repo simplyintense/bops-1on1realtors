@@ -77,7 +77,8 @@ const LOGIN_ALIASES = new Set(["/login", "/signin", "/sign-in"]);
 
 /**
  * The login gate (lib/gate.ts): a response to send instead, or null to go on. Signed out: an API call gets 401, a page goes to
- * the sign-in. Owners get everything, as before. An agent (or a teacher, for the teach page) gets only what agentMayReach allows:
+ * the sign-in. Owners get everything, as before. Staff (an agent, or a teacher) get the AI Desk pages and what agentMayReach allows
+ * (a teacher also the teach APIs):
  * an API call gets 403, a page goes to the desk (gateVerdict).
  */
 async function gate(request: NextRequest): Promise<NextResponse | null> {

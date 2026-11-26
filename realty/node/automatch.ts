@@ -176,11 +176,12 @@ function rowOf(p: AutomatchGroup, d: SearchRow | undefined, names: Map<number, s
 }
 
 /**
- * The owners' Automatch (app/realty/automatch). Anyone who isn't an owner (ownerAllowed) gets { owner: false }, and nothing is
- * read: not the store, not the CRM.
+ * The 1on1 CRM Automatch (app/realty/automatch), read only. A signed-in staff member gets the same pairs and stats an owner gets,
+ * with owner false so the page passes the real owner flag to the lead cards. With no signed-in email (the login gate on, signed
+ * out) nothing is read, not the store, not the CRM, and the caller gets { owner: false } only.
  */
-export async function staffAutomatch(o: AutomatchOpts & { email: string | null }): Promise<{ owner: false } | ({ owner: true } & AutomatchResult)> {
+export async function staffAutomatch(o: AutomatchOpts & { email: string | null }): Promise<{ owner: false } | ({ owner: boolean } & AutomatchResult)> {
   const env = o.env ?? runtimeEnv();
-  if (!ownerAllowed(o.email, env)) return { owner: false };
-  return { owner: true, ...(await loadAutomatch({ ...o, env })) };
+  if (!o.email && !ownerAllowed(null, env)) return { owner: false };
+  return { owner: ownerAllowed(o.email, env), ...(await loadAutomatch({ ...o, env })) };
 }

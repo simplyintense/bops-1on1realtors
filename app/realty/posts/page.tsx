@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { dateAst, listPostViews } from "@/realty/node/group-posts.ts";
 import { PeriskopeStore } from "@/realty/node/periskope-store.ts";
 import { viewer } from "../viewer";
@@ -12,22 +11,21 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "All posts · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 /**
- * Owners only: WhatsApp group posts Bops has stored, with a link to the original text next to the
- * parse. Agents are sent to the desk and never receive the text.
+ * WhatsApp group posts Bops has stored, for any signed-in staff member. Each row opens the post's page, which shows the original
+ * text next to the parse (any staff member). The group name and chat id stay owners' only: listPostViews adds them only for an owner.
  */
 export default async function PostsPage() {
   const { owner } = await viewer();
-  if (!owner) redirect("/realty/desk");
   const store = new PeriskopeStore(periskopeRoot());
-  const posts = listPostViews(store, true);
+  const posts = listPostViews(store, owner);
 
   return (
     <main className="mx-auto w-full max-w-6xl px-5 py-10">
-      <p className="rt-eyebrow">Owners only · listen-only</p>
+      <p className="rt-eyebrow">Read only</p>
       <h1 className="mt-2 text-3xl font-semibold">All posts</h1>
       <p className="rt-muted mt-3">
         Posts stored from the allowlisted WhatsApp group. Open a post to see the original text next to
-        what the desk parsed. Agents do not see this page or the text.
+        what the desk parsed.
       </p>
       {posts.length === 0 ? (
         <p className="rt-muted mt-8">No posts stored yet.</p>

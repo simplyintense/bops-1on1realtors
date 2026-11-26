@@ -274,18 +274,21 @@ function fakeSeam(listings: Listing[], agents: SeamAgent[] = []) {
 
 const DANA: SeamAgent = { id: 7, name: "Dana Holder", email: null, phone: null };
 
-test("automatch is owners only: a non-owner gets { owner: false }, and neither the store nor the CRM is read", async () => {
+test("automatch is read by any signed-in staff member (owner: false for an agent); signed out reads neither the store nor the CRM", async () => {
   const root = storeRoot([DEMAND_ROW()]);
   const { seam, calls } = fakeSeam([LISTING()], [DANA]);
-  assert.deepEqual(await staffAutomatch({ email: AGENT, env: GATE, root, seam, now: NOW }), { owner: false });
   assert.deepEqual(await staffAutomatch({ email: null, env: GATE, root, seam, now: NOW }), { owner: false });
-  assert.deepEqual(calls, { listings: 0, agents: 0 }, "the CRM isn't read for a non-owner");
-  assert.equal(existsSync(join(root, SEARCH_DB)), false, "the search store isn't opened for a non-owner");
+  assert.deepEqual(calls, { listings: 0, agents: 0 }, "signed out: the CRM isn't read");
+  assert.equal(existsSync(join(root, SEARCH_DB)), false, "signed out: the search store isn't opened");
+
+  const agent = await staffAutomatch({ email: AGENT, env: GATE, root, seam, areas: AREAS, now: NOW });
+  assert.ok("pairs" in agent && agent.owner === false && agent.demand === 1, "an agent gets the same read-only data, owner false");
+  assert.equal(calls.listings, 1, "the CRM is read for a signed-in agent, as for an owner");
 
   const view = await staffAutomatch({ email: OWNER, env: GATE, root, seam, areas: AREAS, now: NOW });
-  assert.ok(view.owner);
+  assert.ok("pairs" in view && view.owner === true);
   assert.equal(view.demand, 1);
-  assert.equal(calls.listings, 1);
+  assert.equal(calls.listings, 2, "one CRM read for the agent, one for the owner");
 });
 
 test("an owner sees the same-area pair with the holder's name, the stored post, and the score", async () => {

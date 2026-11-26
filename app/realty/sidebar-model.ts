@@ -3,7 +3,8 @@ import type { CrmRole } from "./crm-role.ts";
 /**
  * The staff sidebar's links as plain data (no React), so a test can check hrefs, labels, order, the role split and the active
  * item without rendering. The markup is staff-sidebar.tsx, which copies the 1on1 CRM's sidebar (UnifiedSidebar.tsx) and reads
- * this list. Every CRM link is a same-tab link to the CRM's domain. Market Search is the one link to the desk.
+ * this list. Every CRM link is a same-tab link to the CRM's domain. The AI Desk group (DESK_LINKS) is the desk's own pages: local
+ * same-tab links on this origin.
  */
 
 export const CRM_ORIGIN = "https://1on1realtors.com";
@@ -32,7 +33,15 @@ export type CrmIcon =
   | "ImageDown"
   | "Cable"
   | "User"
-  | "LogOut";
+  | "LogOut"
+  | "LayoutGrid"
+  | "GitCompareArrows"
+  | "FileText"
+  | "Globe"
+  | "Newspaper"
+  | "Bell"
+  | "GraduationCap"
+  | "Bot";
 
 export type CrmItem = { readonly label: string; readonly to: string; readonly icon: CrmIcon; readonly roles: readonly CrmRole[] };
 export type CrmGroup = { readonly label: string; readonly icon: CrmIcon; readonly roles: readonly CrmRole[]; readonly items: readonly CrmItem[] };
@@ -40,7 +49,7 @@ export type CrmGroup = { readonly label: string; readonly icon: CrmIcon; readonl
 const BOTH: readonly CrmRole[] = ["super_admin", "admin"];
 const SUPER: readonly CrmRole[] = ["super_admin"];
 
-/** The top links, above Market Search. */
+/** The top links, above the AI Desk group. */
 export const CRM_TOP: readonly CrmItem[] = [
   { label: "Admin Dashboard", to: "/admin", icon: "Shield", roles: SUPER },
   { label: "Dashboard", to: "/agent/dashboard", icon: "LayoutDashboard", roles: BOTH },
@@ -107,8 +116,12 @@ export const CRM_GROUPS: readonly CrmGroup[] = [
   },
 ];
 
-/** The groups open on first render. The rest start closed. The desk is never a CRM page, so none opens because of the page. */
-export const CRM_GROUPS_OPEN_BY_DEFAULT: readonly string[] = ["CRM", "Properties", "Communications"];
+/**
+ * Groups open on first render, matching UnifiedSidebar.tsx on 1on1realtors.com (realtyf1on1inalsite origin/main, blob
+ * 9856f375b25a27a0a49b62700c04128e23284bed): AI Desk, CRM, Properties and Communications start open; Management and
+ * Analytics & Logs start closed. The Analytics group icon is BarChart (not BarChart3), as in that file.
+ */
+export const CRM_GROUPS_OPEN_BY_DEFAULT: readonly string[] = ["AI Desk", "CRM", "Properties", "Communications"];
 
 /** The footer links above Back to Site, in the CRM's order. */
 export const CRM_FOOTER: readonly CrmItem[] = [
@@ -119,14 +132,33 @@ export const CRM_FOOTER: readonly CrmItem[] = [
 
 export const CRM_BACK_TO_SITE: CrmItem = { label: "Back to Site", to: "/", icon: "Home", roles: BOTH };
 
-/** Market Search: the desk's own page. Active on /realty/search and on a stored post's page. */
-export const DESK_MARKET_SEARCH = { label: "Market Search", href: "/realty/search", icon: "Search" } as const;
+/** The AI Desk group's header: a collapsible group like CRM / Properties / Communications, with the Sparkles icon. */
+export const AI_DESK_GROUP = { label: "AI Desk", icon: "Sparkles" } as const;
+
+/** One link in the AI Desk group: a local page of this desk (same tab, same origin). */
+export type DeskLink = { readonly label: string; readonly href: string; readonly icon: CrmIcon };
+
+/**
+ * The AI Desk group's links, in the sidebar's order. These are the desk's pages (staff-pages.ts lists the same nine, in the same
+ * order, for the top nav and the tour). The active one is decided by isCurrentPage.
+ */
+export const DESK_LINKS: readonly DeskLink[] = [
+  { label: "Desk", href: "/realty/desk", icon: "LayoutGrid" },
+  { label: "Message Search (WA)", href: "/realty/search", icon: "Search" },
+  { label: "Online search", href: "/realty/market", icon: "Globe" },
+  { label: "Automatch", href: "/realty/automatch", icon: "GitCompareArrows" },
+  { label: "All posts", href: "/realty/posts", icon: "FileText" },
+  { label: "Digest", href: "/realty/digest", icon: "Newspaper" },
+  { label: "Auto-Match Alert", href: "/realty/alerts", icon: "Bell" },
+  { label: "Teach", href: "/realty/learn", icon: "GraduationCap" },
+  { label: "Bot Workspace", href: "/", icon: "Bot" },
+];
 
 /** Logout: the desk's gate sign-out (clears the bops_gate cookie). Labelled Logout, as in the CRM. */
 export const LOGOUT = { label: "Logout", href: "/api/gate/logout", icon: "LogOut" } as const;
 
-/** The desk links the sidebar shows. The guided tour's nav steps use this list: a page with no sidebar link has no nav step. */
-export const SIDEBAR_DESK_HREFS: readonly string[] = [DESK_MARKET_SEARCH.href];
+/** The desk links the sidebar shows (the AI Desk group). The guided tour's nav steps use this list: a page with no sidebar link has no nav step. */
+export const SIDEBAR_DESK_HREFS: readonly string[] = DESK_LINKS.map((l) => l.href);
 
 /** The sidebar's heading and its line under it: the Admin Portal for a super admin, the Agent Portal for an agent. */
 export function portalHeader(role: CrmRole): { readonly title: string; readonly subtitle: string } {
@@ -157,8 +189,8 @@ export function crmSidebar(role: CrmRole): {
 }
 
 /**
- * Whether a desk link is the page being shown. Market Search (/realty/search) is also the current item on a stored post's page.
- * All posts is current only on its own list, not on a post under it. Workspace is current only at /.
+ * Whether a desk link is the page being shown. Message Search (WA) (/realty/search) is also the current item on a stored post's page.
+ * All posts is current only on its own list, not on a post under it. Bot Workspace is current only at /.
  */
 const POST_PAGE = /^\/realty\/posts\/[A-Za-z0-9_-]+$/;
 
@@ -167,4 +199,9 @@ export function isCurrentPage(href: string, pathname: string): boolean {
   if (href === "/realty/posts") return pathname === href;
   if (href === "/realty/search") return pathname === href || pathname.startsWith(`${href}/`) || POST_PAGE.test(pathname);
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** Whether any AI Desk link is the page being shown: the group header takes the CRM's open/active style then. */
+export function deskGroupCurrent(pathname: string): boolean {
+  return DESK_LINKS.some((l) => isCurrentPage(l.href, pathname));
 }

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 import { loadAutoMatchAlerts } from "@/realty/node/automatch-alert.ts";
 import { ALERT_NAME } from "@/realty/flow/automatch-alert.ts";
 import { Notice } from "../notice";
@@ -7,27 +6,26 @@ import { viewer } from "../viewer";
 import { TestSendButton } from "./test-send-button";
 
 /**
- * Owners' Auto-Match Alert preview: one email per strong match (75 and above) as it would go to the holding agent, with
- * Crystal and Wendy on CC. A BCC is set and is not shown in the preview below, which is the message the agent would see.
- * Owners only. Live sending stays off until AUTOMATCH_ALERT_ENABLED is on. The test button sends one [TEST] alert to
- * miles@simplyintense.com only, with no CC or BCC, even while that flag is off.
+ * Auto-Match Alert preview, for any signed-in staff member: one email per strong match (75 and above) as it would go to the
+ * holding agent, with Crystal and Wendy on CC. A BCC is set and is not shown in the preview below, which is the message the agent
+ * would see. Live sending stays off until AUTOMATCH_ALERT_ENABLED is on. Only an owner gets the test button: it sends one [TEST]
+ * alert to miles@simplyintense.com only, with no CC or BCC, even while that flag is off.
  */
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Auto-Match Alert · 1on1 Realtors", robots: { index: false, follow: false } };
 
 export default async function AutoMatchAlertPage() {
-  const { email, owner } = await viewer();
-  if (!owner) redirect("/realty/desk");
+  const { owner } = await viewer();
   const loaded = await loadAutoMatchAlerts().catch(() => null);
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
-      <p className="rt-eyebrow">Owners only</p>
+      <p className="rt-eyebrow">Read only</p>
       <h1 className="mt-2 text-3xl font-semibold">{ALERT_NAME}</h1>
       <p className="rt-muted mt-3">
         One email per strong match, addressed to the agent who holds the listing. Live sending stays off until
-        AUTOMATCH_ALERT_ENABLED is on. You can still send one [TEST] alert to miles@simplyintense.com (no CC or BCC)
-        from this page.
+        AUTOMATCH_ALERT_ENABLED is on.
+        {owner ? " You can still send one [TEST] alert to miles@simplyintense.com (no CC or BCC) from this page." : null}
       </p>
       {!loaded ? (
         <div className="mt-6">
@@ -41,7 +39,7 @@ export default async function AutoMatchAlertPage() {
             {loaded.flip.wouldSendImmediately} would go immediately. Enabled: {loaded.enabled ? "yes" : "no"}. Transport:{" "}
             {loaded.hasTransport ? "yes" : "no"}.
           </p>
-          <TestSendButton />
+          {owner ? <TestSendButton /> : null}
           {loaded.alerts.length ? (
             <ol className="mt-8 grid gap-8" data-tour="alerts-emails">
               {loaded.alerts.map((a) => (

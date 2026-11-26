@@ -103,6 +103,11 @@
   background-color: hsl(var(--muted));
 }
 
+/* The CRM AdminLayout page background (bg-muted/30). */
+.realty-theme .bg-muted\/30 {
+  background-color: color-mix(in oklab, hsl(var(--muted)) 30%, transparent);
+}
+
 .realty-theme .bg-primary {
   background-color: hsl(var(--primary));
 }

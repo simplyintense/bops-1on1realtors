@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { askBudgetLabel } from "@/realty/flow/automatch.ts";
 import { listingPriceLabel } from "@/realty/flow/live-match.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
@@ -12,20 +11,27 @@ import { viewer } from "../viewer";
 
 /**
  * 1on1 CRM Automatch: WhatsApp buyer and renter demand (the Supply & Demand store) matched against our active CRM listings,
- * each pair scored 0–100 (realty/flow/automatch.ts). Owners only: anyone else is sent to the desk before any data is read.
- * Read only: nothing is sent, and nothing is written to the CRM. The default shows 75 and above; ?band=all adds 50 to 74.
+ * each pair scored 0–100 (realty/flow/automatch.ts). Read only for any signed-in staff member: nothing is sent, and nothing is
+ * written to the CRM. The lead cards' follow-up buttons follow the same rules as the desk (leadAccess). The default shows 75
+ * and above; ?band=all adds 50 to 74.
  */
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "1on1 CRM Automatch · 1on1 Realtors staff", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Automatch · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 const beds = (n: number | null) => (n == null ? null : `${n} bed${n === 1 ? "" : "s"}`);
 
 export default async function Automatch({ searchParams }: { searchParams: Promise<{ band?: string | string[]; hidden?: string | string[] }> }) {
-  const { email } = await viewer();
+  const { email, owner } = await viewer();
   const view = await staffAutomatch({ email });
-  if (!view.owner) redirect("/realty/desk");
   const raw = await searchParams;
+  if (!("pairs" in view)) {
+    return (
+      <main className="mx-auto w-full max-w-6xl px-5 py-10">
+        <Notice tone="error">Sign in to see Automatch.</Notice>
+      </main>
+    );
+  }
   const all = (Array.isArray(raw.band) ? raw.band[0] : raw.band) === "all";
   const showHidden = (Array.isArray(raw.hidden) ? raw.hidden[0] : raw.hidden) === "1";
   // Never throws out of the page: a failure is the section's error state.
@@ -34,8 +40,8 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
 
   return (
     <main className="mx-auto w-full max-w-6xl px-5 py-10">
-      <p className="rt-eyebrow">Owners only · read-only</p>
-      <h1 className="mt-2 text-3xl font-semibold">1on1 CRM Automatch</h1>
+      <p className="rt-eyebrow">Read only</p>
+      <h1 className="mt-2 text-3xl font-semibold">Automatch</h1>
       <p className="rt-muted mt-3">
         WhatsApp buyer and renter requests matched against our active CRM listings, each pair scored 0–100. Read only: nothing here is
         sent, and nothing is written to the CRM.
@@ -47,7 +53,7 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
         </Link>
         {" · "}
         <Link href="/realty/search" className="rt-link">
-          Market Search
+          Message Search (WA)
         </Link>
       </p>
 
@@ -81,7 +87,7 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
           Every strong match (75 and above): who asked, the listing and its agent (or the office), a suggested message, and the outcome buttons.
         </p>
         <div className="mt-4">
-          <LeadCards view={leads} owner showHidden={showHidden} toggleHref={showHidden ? "/realty/automatch" : "/realty/automatch?hidden=1"} />
+          <LeadCards view={leads} owner={owner} showHidden={showHidden} toggleHref={showHidden ? "/realty/automatch" : "/realty/automatch?hidden=1"} />
         </div>
       </section>
 

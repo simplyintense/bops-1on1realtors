@@ -64,31 +64,17 @@ test("replay: Start tour begins at the welcome card whether or not the tour was 
   assert.equal(last.text, "That's it. You can replay this tour any time with Start tour.");
 });
 
-test("role filtering: an agent sees only Desk and Online search; owners get their pages; teachers get Teach", () => {
-  const agent = pagesOf(buildTourSteps(AGENT_ONLY));
-  assert.deepEqual(agent, ["/realty/desk", "/realty/search", "/realty/market"], "the tour follows the nav: Market Search is for all staff");
-  assert.ok(!agent.includes("/"), "the Bops chat app is never in the tour");
-
-  const owner = pagesOf(buildTourSteps(OWNER_ONLY));
-  for (const page of ["/realty/automatch", "/realty/search", "/realty/posts", "/realty/digest", "/realty/alerts"]) {
-    assert.ok(owner.includes(page), `owner includes ${page}`);
+test("every staff member's tour follows the nine AI Desk pages, in nav order, Bot Workspace included", () => {
+  const allNine = ["/realty/desk", "/realty/search", "/realty/market", "/realty/automatch", "/realty/posts", "/realty/digest", "/realty/alerts", "/realty/learn", "/"];
+  for (const [name, role] of Object.entries({ agent: AGENT_ONLY, owner: OWNER_ONLY, teacher: TEACHER_ONLY, both: ROLES.ownerAndTeacher })) {
+    assert.deepEqual(pagesOf(buildTourSteps(role)), allNine, name);
   }
-  assert.ok(!owner.includes("/realty/learn"), "an owner who isn't a teacher doesn't get Teach");
-  assert.ok(!owner.includes("/"));
-
-  const teacher = pagesOf(buildTourSteps(TEACHER_ONLY));
-  assert.deepEqual(teacher, ["/realty/desk", "/realty/search", "/realty/market", "/realty/learn"]);
-  assert.ok(!teacher.includes("/"));
-
-  const both = pagesOf(buildTourSteps(ROLES.ownerAndTeacher));
-  assert.ok(both.includes("/realty/learn") && both.includes("/realty/automatch"));
-  assert.equal(both.length, 8, "every staff page except the chat app");
 });
 
 test("steps navigate: each step has a page, pages come in nav order, and a page starts with its nav link when the sidebar shows one", () => {
   for (const [name, role] of Object.entries(ROLES)) {
     const steps = buildTourSteps(role);
-    const navOrder = visibleStaffPages(role).filter((p) => p.href !== "/").map((p) => p.href);
+    const navOrder = visibleStaffPages(role).map((p) => p.href);
     const seq = steps.flatMap((s) => (s.page ? [s.page] : []));
     const grouped = [...new Set(seq)];
     assert.deepEqual(grouped, navOrder, `${name}: pages in nav order, each grouped together`);
@@ -157,9 +143,9 @@ test("every spotlight target is on a page: each data-tour id in the steps exists
   const appRealty = fileURLToPath(new URL("../../app/realty", import.meta.url));
   walk(appRealty);
   const source = files.map((f) => readFileSync(f, "utf8")).join("\n");
-  // The sidebar's Market Search link (the only desk link in the CRM's sidebar) and the Bops home's top nav each carry a nav id.
+  // Every AI Desk link carries its data-tour id (navTourId), and the top nav does too.
   const sidebarSource = readFileSync(join(appRealty, "staff-sidebar.tsx"), "utf8");
-  assert.ok(sidebarSource.includes('data-tour="nav-search"'), "the sidebar's Market Search link carries its data-tour id");
+  assert.ok(sidebarSource.includes("data-tour={navTourId(link.href)}"), "the sidebar's AI Desk links carry their data-tour ids");
   const navSource = readFileSync(join(appRealty, "staff-nav.tsx"), "utf8");
   assert.ok(navSource.includes("data-tour={navTourId(p.href)}"), "top nav links carry their data-tour id");
   const targets = new Set(Object.values(ROLES).flatMap((r) => buildTourSteps(r).map((s) => s.target)));

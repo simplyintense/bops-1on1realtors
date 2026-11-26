@@ -151,18 +151,69 @@ test("an email that isn't on BOPS_ALLOWED_EMAILS is rejected, and its nonce is n
 });
 
 test("unsafe next values sanitize to /realty/search when the token is otherwise valid", async () => {
-  for (const next of ["https://evil.example", "//evil.example", "/realty/desk", "/realty/posts", "/realty/posts/", "javascript:alert(1)", "/\\evil.example", "/realty/search/../../api/gate/logout", ""]) {
+  for (const next of [
+    "https://evil.example",
+    "//evil.example",
+    "/api/gate/logout",
+    "/api/keys",
+    "/realty/posts/",
+    "/realty/deskx",
+    "/realty/searchx",
+    "/realty/search#frag",
+    "/realty/search/../../api/gate/logout",
+    "javascript:alert(1)",
+    "/\\evil.example",
+    "",
+  ]) {
     const res = await hit(`?token=${mint(good())}&next=${encodeURIComponent(next)}`);
     assert.equal(location(res), `${PUBLIC}/realty/search`, `next=${JSON.stringify(next)}`);
     assert.ok(cookieOf(res), `a valid token still signs in for next=${JSON.stringify(next)}`);
   }
 });
 
-test("safeSsoNext: only the search page and one stored post (with plain query text) pass", () => {
-  assert.equal(safeSsoNext("/realty/search"), "/realty/search");
+test("a valid next for an AI Desk page lands there (the hand-off's own list, not the default)", async () => {
+  for (const next of ["/realty/desk", "/realty/posts", "/realty/market?q=maraval"]) {
+    const res = await hit(`?token=${mint(good())}&next=${encodeURIComponent(next)}`);
+    assert.equal(location(res), `${PUBLIC}${next}`, next);
+  }
+});
+
+test("safeSsoNext: the nine AI Desk pages, the site root and one stored post (with plain query text) pass", () => {
+  for (const page of ["/", "/realty/desk", "/realty/automatch", "/realty/search", "/realty/posts", "/realty/market", "/realty/digest", "/realty/alerts", "/realty/learn"]) {
+    assert.equal(safeSsoNext(page), page, page);
+  }
   assert.equal(safeSsoNext("/realty/search?source=online&q=maraval"), "/realty/search?source=online&q=maraval");
   assert.equal(safeSsoNext("/realty/posts/abc-DEF_09"), "/realty/posts/abc-DEF_09");
-  for (const bad of ["https://evil.example", "//evil.example", "/realty/desk", "/realty/posts", "/realty/searchx", "/realty/search/..", "/realty/search?x=..", "\\realty\\search", "/\\evil", undefined, null, 7]) {
+  assert.equal(safeSsoNext("/realty/posts/9f3ab21c?from=desk"), "/realty/posts/9f3ab21c?from=desk", "a plain query on a stored post");
+  assert.equal(safeSsoNext("/?next=x"), "/?next=x", "a plain query on the root");
+});
+
+test("safeSsoNext: anything else falls back to /realty/search, including fragments, other paths and near-misses", () => {
+  for (const bad of [
+    "https://evil.example",
+    "//evil.example",
+    "/api/gate/logout",
+    "/api/keys",
+    "/realty",
+    "/realty/searchx",
+    "/realty/searching",
+    "/realty/deskx",
+    "/realty/posts/",
+    "/realty/posts/a/b",
+    "/realty/posts/a.b",
+    "/realty/unknown",
+    "/realty/search/..",
+    "/realty/search?x=..",
+    "/realty/search#frag",
+    "/?x=1#frag",
+    "\\realty\\search",
+    "/\\evil",
+    "javascript:alert(1)",
+    "realty/search",
+    undefined,
+    null,
+    7,
+  ]) {
     assert.equal(safeSsoNext(bad), "/realty/search", String(bad));
   }
   // And Google's own rules are untouched: the desk stays the default there, which the hand-off doesn't use.

@@ -16,7 +16,7 @@ import { leadsSectionCopy, showFeedStatus } from "./copy";
  * only (checked on the server, not just hidden), 1on1 CRM Automatch, Supply & Demand, All posts and the daily digest. Then "Automatch leads" (strong matches on the listings you hold; every card for an owner), then the "Top recommendations
  * for you" panel, where matches marked not a fit or closed are hidden unless "Show hidden" is on. Read only: nothing here
  * sends or writes. This is the landing page after sign-in (lib/gate.ts safeNext); the Bops chat app at / is one click away
- * in the sidebar ("Workspace").
+ * in the sidebar ("Bot Workspace").
  */
 
 export const dynamic = "force-dynamic";
@@ -39,29 +39,25 @@ export default async function RealtyDesk({ searchParams }: { searchParams: Promi
       <p className="rt-muted mt-3">Tools for the 1on1 Realtors team. Nothing on these pages sends a message or writes to the CRM.</p>
       {feedStatus ? <p className="rt-muted mt-1 text-sm">{feedStatus}</p> : null}
 
-      <ul className={`mt-8 grid gap-4 ${owner ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
+      <ul className="mt-8 grid gap-4 md:grid-cols-3">
         <Tile href="/realty/market" title="Online search" cta="Search online" tour="desk-search">
           Other agencies&apos; listings for an area, with filters. Read-only.
         </Tile>
         <Tile href="https://1on1realtors.com/agent/dashboard" external title="1on1 CRM · Agent portal" cta="Open the agent portal" tour="desk-portal">
           The 1on1 Realtors agent portal on 1on1realtors.com. Opens in a new tab.
         </Tile>
-        {owner ? (
-          <>
-            <Tile href="/realty/automatch" title="1on1 CRM Automatch" cta="Open Automatch">
-              Owners only. Buyer requests matched against the 1on1 CRM.
-            </Tile>
-            <Tile href="/realty/search" title="Market Search" cta="Open Market Search">
-              Owners only. The WhatsApp supply and demand, and the online buyer-request feed. Read-only.
-            </Tile>
-            <Tile href="/realty/posts" title="All posts" cta="See all posts">
-              Owners only. Stored WhatsApp group posts, with the original text next to what the desk parsed.
-            </Tile>
-            <Tile href="/realty/digest" title="Daily digest" cta="Open the digest">
-              Owners only. The last day&apos;s WhatsApp requests and their matches, and a sample replay.
-            </Tile>
-          </>
-        ) : null}
+        <Tile href="/realty/automatch" title="Automatch" cta="Open Automatch">
+          Buyer requests matched against the 1on1 CRM.
+        </Tile>
+        <Tile href="/realty/search" title="Message Search (WA)" cta="Open Message Search">
+          The WhatsApp supply and demand, and the online buyer-request feed. Read-only.
+        </Tile>
+        <Tile href="/realty/posts" title="All posts" cta="See all posts">
+          Stored WhatsApp group posts, with the original text next to what the desk parsed.
+        </Tile>
+        <Tile href="/realty/digest" title="Digest" cta="Open the digest">
+          The last day&apos;s WhatsApp requests and their matches.
+        </Tile>
       </ul>
 
       <section className="mt-12" aria-labelledby="leads-heading" data-tour="desk-leads">

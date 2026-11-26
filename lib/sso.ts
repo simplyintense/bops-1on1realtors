@@ -40,11 +40,12 @@ type Env = Record<string, string | undefined>;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 /**
- * A `next` the hand-off may land on: the staff search page, or one stored post's page (/realty/posts/<id>, the id is hex or
- * base64url, as requestIdOf makes it). A query string is allowed, with plain characters only. Nothing else: no other desk pages,
- * no scheme, no "//", no backslash, no "..", no fragment.
+ * A `next` the hand-off may land on: the sidebar's nine AI Desk pages (staff-pages.ts, the site root included), or one stored
+ * post's page (/realty/posts/<id>, the id is hex or base64url, as requestIdOf makes it). A query string is allowed on those, with
+ * plain characters only. Nothing else: no other paths, no scheme, no "//", no backslash, no "..", no fragment.
  */
-const SSO_NEXT = /^\/realty\/(?:search|posts\/[A-Za-z0-9_-]+)(?:\?[A-Za-z0-9_=&%+.-]*)?$/;
+const SSO_NEXT =
+  /^(?:\/|\/realty\/(?:desk|automatch|search|posts|market|digest|alerts|learn)|\/realty\/posts\/[A-Za-z0-9_-]+)(?:\?[A-Za-z0-9_=&%+.-]*)?$/;
 
 /** Single-use nonces: nonce -> the token's expiry (ms). Pruned on each call, so the map keeps only tokens that could still pass. */
 const usedNonces = new Map<string, number>();
@@ -56,8 +57,9 @@ export function resetSsoNonces(): void {
 
 /**
  * A safe post-sign-in path for the hand-off, or SSO_DEFAULT_NEXT. Stricter than gate.ts safeNext on purpose: a hand-off may only
- * open the search page or a stored post, and Google sign-in keeps its own rules. Unsafe, empty or missing values all go to the
- * default: https://evil.example, //evil.example, /realty/desk, /realty/posts (no id), javascript: and /\evil.
+ * open one of the AI Desk pages or a stored post, and Google sign-in keeps its own rules. Unsafe, empty or missing values all go
+ * to the default: https://evil.example, //evil.example, /api/keys, /realty/searchx, /realty/posts/ (a trailing slash, no id),
+ * javascript: and /\evil.
  */
 export function safeSsoNext(next: unknown): string {
   if (typeof next !== "string" || next === "") return SSO_DEFAULT_NEXT;

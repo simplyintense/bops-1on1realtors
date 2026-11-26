@@ -7,7 +7,7 @@ import { SIDEBAR_DESK_HREFS } from "./sidebar-model.ts";
  *
  * The tour is: a welcome card, then for each page the viewer can see (in nav order) the page's nav link (only when the sidebar
  * shows that link, see SIDEBAR_DESK_HREFS) followed by the page's key sections, then a closing card that points at the Start
- * tour button. The Bops chat app at "/" is never in the tour.
+ * tour button. Every AI Desk page has a sidebar link, so every page has its nav step; Bot Workspace ("/") is one of them.
  */
 
 export const TOUR_SEEN_KEY = "desk-tour-seen"; // localStorage, only when there is no signed-in email (gate off)
@@ -29,7 +29,8 @@ export type TourState = { index: number };
 export type TourAction = { type: "next" } | { type: "back" } | { type: "skip" } | { type: "start" };
 
 type Copy = { title: string; text: string };
-type Section = Copy & { key: string; target: string };
+/** A section's key is its step id's second part. ownerOnly: the section's control is the owners' only, so only owners get its step. */
+type Section = Copy & { key: string; target: string; ownerOnly?: boolean };
 
 export const WELCOME: Copy = {
   title: "Welcome to the 1on1 Desk",
@@ -43,6 +44,10 @@ export const CLOSING: Copy = {
 
 /** Each page's nav copy and key sections, keyed by the page's href. Targets are data-tour ids in the page's source. */
 const PAGES: Record<string, { nav: Copy; sections: Section[] }> = {
+  "/": {
+    nav: { title: "Bot Workspace", text: "The chat workspace, where you work with your bots." },
+    sections: [],
+  },
   "/realty/desk": {
     nav: { title: "Desk", text: "Desk is your home page. It shows matches for you and shortcuts to your tools." },
     sections: [
@@ -70,7 +75,7 @@ const PAGES: Record<string, { nav: Copy; sections: Section[] }> = {
     ],
   },
   "/realty/search": {
-    nav: { title: "Market Search", text: "Listings and buyer requests from the WhatsApp groups, in one place. Read-only." },
+    nav: { title: "Message Search (WA)", text: "Listings and buyer requests from the WhatsApp groups, in one place. Read-only." },
     sections: [
       { key: "tabs", target: "search-tabs", title: "Supply, demand and more", text: "Pick the kind of post you want to look at." },
       { key: "filters", target: "search-filters", title: "Filters", text: "Narrow it down by keyword, area, price, beds or type." },
@@ -92,7 +97,7 @@ const PAGES: Record<string, { nav: Copy; sections: Section[] }> = {
     nav: { title: "Digest", text: "The last day's buyer requests from the WhatsApp group, and the matches for them." },
     sections: [
       { key: "requests", target: "digest-requests", title: "Last 24 hours", text: "The buyer requests that came in, each with its matches." },
-      { key: "replay", target: "digest-replay", title: "Replay", text: "A dry run with sample messages. Nothing is sent from here." },
+      { key: "replay", target: "digest-replay", title: "Replay", text: "A dry run with sample messages. Nothing is sent from here.", ownerOnly: true },
     ],
   },
   "/realty/alerts": {
@@ -116,12 +121,13 @@ export function buildTourSteps(viewer: { owner: boolean; teacher: boolean }): To
   const steps: TourStep[] = [{ id: "welcome", page: null, target: null, card: "centre", ...WELCOME }];
   for (const p of visibleStaffPages(viewer)) {
     const page = PAGES[p.href];
-    if (p.href === "/" || !page) continue; // the Bops chat app is not part of the tour
-    const slug = p.href.split("/").pop();
+    if (!page) continue;
+    const slug = navTourId(p.href).slice("nav-".length);
     if (SIDEBAR_DESK_HREFS.includes(p.href)) {
       steps.push({ id: `${slug}:nav`, page: p.href, target: navTourId(p.href), card: "near", title: page.nav.title, text: page.nav.text });
     }
     for (const s of page.sections) {
+      if (s.ownerOnly && !viewer.owner) continue;
       steps.push({ id: `${slug}:${s.key}`, page: p.href, target: s.target, card: "near", title: s.title, text: s.text });
     }
   }
