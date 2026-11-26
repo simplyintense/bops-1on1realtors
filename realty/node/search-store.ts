@@ -495,6 +495,13 @@ function recordTableSql(name: string, extra: string[] = []): string {
 function ensureSchema(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS realty_search_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS realty_search_events_created_at ON realty_search_events (created_at);
+    CREATE INDEX IF NOT EXISTS realty_search_events_email ON realty_search_events (user_email, created_at);
     CREATE TABLE IF NOT EXISTS people (
       phone TEXT PRIMARY KEY,
       name TEXT,
@@ -1215,6 +1222,34 @@ export function withSearchStore<T>(root: string, fn: (store: SearchStore) => T):
     return fn(store);
   } finally {
     store.close();
+  }
+}
+
+/**
+ * <root>/search.db open with the schema ensured, and no sync from JSONL. For readers that only need the tables as they are
+ * (the usage stats) and for the event log. The caller closes it.
+ */
+export function openSearchDb(root: string): DatabaseSync {
+  return openDb(root);
+}
+
+/**
+ * One row in realty_search_events: a staff Market Search page query, by the signed-in email (null when unknown). Never throws. On a
+ * failure it logs one generic line: the error itself is not logged, since it can carry the path or the email. No sync (withSearchStore
+ * would rebuild from the JSONL first, too heavy for a page view). It opens the database with the same 5 s busy timeout as every other
+ * open, so a locked database can hold the page for that long, the same as the search itself already can.
+ */
+export function recordRealtySearchEvent(root: string, email: string | null): void {
+  try {
+    const who = email?.trim().toLowerCase() || null;
+    const db = openDb(root);
+    try {
+      db.prepare("INSERT INTO realty_search_events (user_email, created_at) VALUES (?, ?)").run(who, new Date().toISOString());
+    } finally {
+      if (db.isOpen) db.close();
+    }
+  } catch {
+    console.warn("Market Search: search event not recorded.");
   }
 }
 

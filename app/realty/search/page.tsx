@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { PeriskopeStore, requestIdOf } from "@/realty/node/periskope-store.ts";
 import { photoIndex, type PhotoIndex } from "@/realty/node/listing-media.ts";
-import { SearchInputError, searchInputFrom, withSearchStore, type SearchInput, type SearchRow, type Tab } from "@/realty/node/search-store.ts";
+import { recordRealtySearchEvent, SearchInputError, searchInputFrom, withSearchStore, type SearchInput, type SearchRow, type Tab } from "@/realty/node/search-store.ts";
 import { REQUEST_LIMIT, requestCriteriaFromParams, sortFromParams, type RequestsResult } from "@/realty/flow/requests.ts";
 import { staffRequests } from "@/realty/node/requests.ts";
 import { viewer } from "../viewer";
@@ -54,6 +54,12 @@ const snippet = (s: string | null) => {
 export default async function SearchPage({ searchParams }: { searchParams: Promise<Params> }) {
   const { email, owner, teacher, staff } = await viewer();
   if (!staffMayOpen({ owner, staff })) redirect("/realty/desk");
+  // One event per authorized query, for either source (the redirect above means a viewer who is turned away is not logged).
+  // recordRealtySearchEvent never throws. setImmediate keeps the insert off the page's critical path so a locked
+  // database cannot delay the search itself.
+  const root = periskopeRoot();
+  const who = email;
+  setImmediate(() => recordRealtySearchEvent(root, who));
   const raw = await searchParams;
   // Only owners reach the online feed, and a non-owner's group filter is ignored (the group name is not theirs to search by).
   const source = owner ? sourceFrom(raw) : "groups";

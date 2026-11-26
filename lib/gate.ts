@@ -101,6 +101,8 @@ export const GATE_OPEN_PATHS = new Set([
   // The staff MCP's read-only search (realty/node/agent-search.ts), checked by its bearer token (BOPS_MCP_TOKEN) and nothing else.
   "/api/realty/agent-search",
   "/api/realty/agent-search/snapshot",
+  // The staff MCP's usage counts (realty/node/usage-stats.ts), checked by the same bearer token (BOPS_MCP_TOKEN) and nothing else.
+  "/api/mcp/stats",
 ]);
 
 /** Where staff land after sign-in: the desk (the Bops chat app at / is one click away in the nav). */
