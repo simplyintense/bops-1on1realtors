@@ -31,6 +31,8 @@ services:
         sync: false
       - key: BOPS_GATE_SECRET
         generateValue: true
+      - key: BOPS_SSO_SECRET
+        sync: false
       - key: GOOGLE_OAUTH_CLIENT_ID
         sync: false
       - key: GOOGLE_OAUTH_CLIENT_SECRET

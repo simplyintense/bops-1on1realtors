@@ -39,7 +39,7 @@ Two ready configs; pick one host:
   ```sh
   fly apps create bop-1on1realtors
   fly volumes create bops_data --size 3 --region mia -a bop-1on1realtors
-  fly secrets set -a bop-1on1realtors BOPS_ALLOWED_EMAILS=... BOPS_GATE_SECRET=... GOOGLE_OAUTH_CLIENT_ID=... \
+  fly secrets set -a bop-1on1realtors BOPS_ALLOWED_EMAILS=... BOPS_GATE_SECRET=... BOPS_SSO_SECRET=... GOOGLE_OAUTH_CLIENT_ID=... \
     GOOGLE_OAUTH_CLIENT_SECRET=... ORGO_API_KEY=... OPENAI_API_KEY=... OPENAI_EXECUTOR_API_KEY=... \
     ONEON1_CRM_URL=... ONEON1_CRM_ANON_KEY=... ONEON1_CRM_BOT_EMAIL=... ONEON1_CRM_BOT_PASSWORD=...
   fly deploy -c fly.bop-1on1.toml
@@ -88,6 +88,11 @@ paths that check their own signatures (`/api/apps/call`, `/api/phone/*`, `/api/c
 `/api/cloud/event`, `/api/intake/periskope`). The Periskope staff paths (`/api/intake/periskope/opt-out`,
 `/api/intake/periskope/consent`) stay behind the gate. With the gate off (the Mac app, `npm run dev`),
 nothing changes from upstream.
+
+The 1on1 CRM's sign-in hand-off (`GET /auth/sso?token=…&next=…`, lib/sso.ts) sets the same session cookie for an
+allowlisted agent who came from the CRM. It needs `BOPS_SSO_SECRET`, shared with the CRM (the HMAC key for its signed
+tokens). Unset or empty, the hand-off fails closed and the person goes to Google sign-in. `/auth/sso` is not public: the
+public demo sends it away like any other page.
 
 Google OAuth client (in the 1on1 Realtors Google Cloud project): type "Web application", authorized
 redirect URIs `https://bop.1on1realtors.com/api/gate/callback` and, until DNS is live,
