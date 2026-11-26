@@ -47,7 +47,7 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
         </Link>
         {" · "}
         <Link href="/realty/search" className="rt-link">
-          Supply &amp; Demand
+          Market Search
         </Link>
       </p>
 

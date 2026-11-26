@@ -1,38 +1,37 @@
 /**
- * The staff pages' nav entries, as plain data so a test can check labels, order and gating without rendering React
- * (app/realty/staff-nav.tsx renders them). Owners' pages are listed only for owners, and the teach page only for teachers;
- * the page checks themselves are on the server (viewer.ts). "Bops home" is the Bops chat app at / (the old home), listed for
- * owners only (an agent is sent to the desk from /): the nav is the one top nav on every staff-facing page, / included.
- * Supply & Demand is listed for every staff member: its owner-only parts (online feed, export, original text) are hidden by
- * the page itself (app/realty/search/page.tsx), and its APIs stay owner-only.
+ * The staff desk's pages, as plain data so a test can check labels, order and gating without rendering React. The sidebar
+ * (app/realty/sidebar-model.ts, rendered by staff-sidebar.tsx) and the Bops home's top nav (staff-nav.tsx) both read this list.
+ * The 1on1 CRM's agent pages are not here: they are the CRM's own links (sidebar-model.ts CRM_LINKS).
+ *
+ * Owners' pages are listed only for owners, and the teach page only for teachers; the page checks themselves are on the server
+ * (viewer.ts). "Workspace" is the Bops chat app at / (the old home), listed for owners only (an agent is sent to the desk from /).
+ * Market Search (/realty/search) is listed for every staff member: its owner-only parts (online feed, export, original text) are
+ * hidden by the page itself (app/realty/search/page.tsx), and its APIs stay owner-only.
  */
 export const STAFF_PAGES: readonly StaffPageEntry[] = [
   { href: "/realty/desk", label: "Desk", ownerOnly: false, teacherOnly: false },
-  { href: "https://1on1realtors.com", label: "Public site", ownerOnly: false, teacherOnly: false, external: true },
   { href: "/realty/automatch", label: "1on1 CRM Automatch", ownerOnly: true, teacherOnly: false },
-  { href: "/realty/search", label: "Supply & Demand", ownerOnly: false, teacherOnly: false },
+  { href: "/realty/search", label: "Market Search", ownerOnly: false, teacherOnly: false },
   { href: "/realty/posts", label: "All posts", ownerOnly: true, teacherOnly: false },
   { href: "/realty/market", label: "Online search", ownerOnly: false, teacherOnly: false },
   { href: "/realty/digest", label: "Digest", ownerOnly: true, teacherOnly: false },
   { href: "/realty/alerts", label: "Auto-Match Alert", ownerOnly: true, teacherOnly: false },
-  { href: "/realty/learn", label: "Teach Bops", ownerOnly: false, teacherOnly: true },
-  { href: "/", label: "Bops home", ownerOnly: true, teacherOnly: false },
+  { href: "/realty/learn", label: "Teach", ownerOnly: false, teacherOnly: true },
+  { href: "/", label: "Workspace", ownerOnly: true, teacherOnly: false },
 ];
 
-/** An entry: an internal /realty page or Bops home, or (external: true) the public site, opened in a new tab. */
+/** An entry: an internal /realty page, or the Bops chat app at / (Workspace). */
 export type StaffPageEntry = {
   readonly href: string;
   readonly label: string;
   readonly ownerOnly: boolean;
   readonly teacherOnly: boolean;
-  readonly external?: true;
 };
 
 export type StaffPage = StaffPageEntry;
 
-/** The data-tour id of a nav link (the guided tour spotlights it): nav-desk, nav-market, ... and nav-home for "/". */
+/** The data-tour id of a nav link (the guided tour spotlights it): nav-desk, nav-search, ... and nav-home for "/". */
 export function navTourId(href: string): string {
-  if (href.startsWith("http")) return "nav-public-site";
   return href === "/" ? "nav-home" : `nav-${href.split("/").filter(Boolean).pop()}`;
 }
 
@@ -42,7 +41,7 @@ export function visibleStaffPages(viewer: { owner: boolean; teacher: boolean }):
 }
 
 /**
- * Who may open Supply & Demand (/realty/search) and a stored post (/realty/posts/<id>): any signed-in staff (viewer.ts staff),
+ * Who may open Market Search (/realty/search) and a stored post (/realty/posts/<id>): any signed-in staff (viewer.ts staff),
  * and owners. The owners' post list and every owner API keep their own checks. The gate (lib/gate.ts) lets the same people in.
  */
 export function staffMayOpen(viewer: { staff: boolean; owner: boolean }): boolean {

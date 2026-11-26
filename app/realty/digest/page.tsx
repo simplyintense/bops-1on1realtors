@@ -40,7 +40,7 @@ export default async function RealtyDigest() {
         </Link>
         {" · "}
         <Link href="/realty/search" className="rt-link">
-          Supply & Demand
+          Market Search
         </Link>
         {" · "}
         <Link href="/realty/posts" className="rt-link">

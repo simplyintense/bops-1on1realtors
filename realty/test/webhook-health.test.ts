@@ -289,13 +289,21 @@ test("a failed DOWN send stays pending and is retried on the next poll, then not
 });
 
 test("with no Resend key the alert is skipped and logged, not retried forever", async () => {
-  const root = world("2026-11-14T13:00:00.000Z");
-  await consented(root);
-  const api = fakeWebhookApi(pausedRow);
-  await pollOnce({ root, env: { PERISKOPE_SIGNING_KEY: "sign-test", BOPS_PUBLIC_URL: "https://bop.1on1realtors.com" }, apiKey: PERISKOPE_KEY, now: () => NOW, fetcher: pollFetcher() as never, crm: null, webhookFetch: api.fetch });
-  assert.equal(api.resendCalls().length, 0);
-  assert.equal(readWebhookStatus(root).health?.pendingAlert ?? null, null);
-  assert.ok(journal(root).some((e) => e.type === "alert_skipped"));
+  // The poll reads its env from process.env too (runtimeEnv), so a key set in the shell would send. Clear it for this test only.
+  const savedKey = process.env.RESEND_API_KEY;
+  delete process.env.RESEND_API_KEY;
+  try {
+    const root = world("2026-11-14T13:00:00.000Z");
+    await consented(root);
+    const api = fakeWebhookApi(pausedRow);
+    await pollOnce({ root, env: { PERISKOPE_SIGNING_KEY: "sign-test", BOPS_PUBLIC_URL: "https://bop.1on1realtors.com" }, apiKey: PERISKOPE_KEY, now: () => NOW, fetcher: pollFetcher() as never, crm: null, webhookFetch: api.fetch });
+    assert.equal(api.resendCalls().length, 0);
+    assert.equal(readWebhookStatus(root).health?.pendingAlert ?? null, null);
+    assert.ok(journal(root).some((e) => e.type === "alert_skipped"));
+  } finally {
+    if (savedKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = savedKey;
+  }
 });
 
 test("the alert body is counts, chat names and time ranges only (the gap section), with no ids or phones", () => {

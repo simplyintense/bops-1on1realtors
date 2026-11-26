@@ -27,7 +27,7 @@ export default async function PostsPage() {
       <h1 className="mt-2 text-3xl font-semibold">All posts</h1>
       <p className="rt-muted mt-3">
         Posts stored from the allowlisted WhatsApp group. Open a post to see the original text next to
-        what Bops parsed. Agents do not see this page or the text.
+        what the desk parsed. Agents do not see this page or the text.
       </p>
       {posts.length === 0 ? (
         <p className="rt-muted mt-8">No posts stored yet.</p>

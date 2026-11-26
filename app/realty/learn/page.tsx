@@ -11,7 +11,7 @@ import { QuestionForm } from "./question-form";
 import { TeachForm } from "./teach-form";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Teach Bops · 1on1 Realtors staff", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Teach · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 /**
  * Teachers only (BOPS_TEACH_EMAILS). Anyone else gets a 404, not a hint that the page exists. Lists the needs-explanation
@@ -29,9 +29,9 @@ export default async function LearnPage() {
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
       <p className="rt-eyebrow">Teachers only</p>
-      <h1 className="mt-2 text-3xl font-semibold">Help Bops learn</h1>
+      <h1 className="mt-2 text-3xl font-semibold">Help the desk learn</h1>
       <p className="rt-muted mt-3">
-        Posts too vague to match. Say what one means in a line. If the answer names a term, a place or a type, Bops reads that
+        Posts too vague to match. Say what one means in a line. If the answer names a term, a place or a type, the desk reads that
         word the same way in every post from now on. Times are AST.
       </p>
 

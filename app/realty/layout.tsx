@@ -1,43 +1,32 @@
-import Link from "next/link";
-import { Inter, Playfair_Display } from "next/font/google";
+import { Inter } from "next/font/google";
 import type { ReactNode } from "react";
 import "./realty-theme.css";
 import { DeskTourProvider, StartTourButton } from "./desk-tour";
-import { StaffNav } from "./staff-nav";
+import { StaffSidebar } from "./staff-sidebar";
 import { shouldAutoStart } from "./tour-steps";
 import { viewer } from "./viewer";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 import { hasSeenTour } from "@/realty/node/tour-seen.ts";
 
 /**
- * The staff pages' layout (/realty/*): the 1on1 Realtors theme (realty-theme.css, scoped to .realty-theme), Inter for the UI and
- * Playfair Display for headings (the live site's fonts), then a header with the logo and the staff nav, then the page. The Bops
- * chat app at / is not themed. The public demo at /realty-demo is outside this layout.
+ * The staff pages' layout (/realty/*): the 1on1 Realtors theme (realty-theme.css, scoped to .realty-theme) in Inter, the CRM's
+ * own font, then the left sidebar (staff-sidebar.tsx: the logo, the desk's pages, the CRM's agent pages, the tour button) beside
+ * the page. The Bops chat app at / is not themed (its own header is staff-nav.tsx). The public demo at /realty-demo is outside
+ * this layout.
  */
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-realty-sans", display: "swap" });
-const playfair = Playfair_Display({ subsets: ["latin"], variable: "--font-realty-serif", display: "swap" });
 
 export default async function RealtyLayout({ children }: { children: ReactNode }) {
   const { email, owner, teacher } = await viewer();
   // Seen on the server for a signed-in viewer; with no email (gate off) the client checks its own localStorage flag.
   const seen = email ? hasSeenTour(email, periskopeRoot()) : false;
   return (
-    <div className={`realty-theme flex min-h-full flex-col ${inter.variable} ${playfair.variable}`}>
+    <div className={`realty-theme flex min-h-full flex-col md:flex-row ${inter.variable}`}>
       {/* Inside the theme's div so the tour's overlay gets the theme's colours and fonts. */}
       <DeskTourProvider owner={owner} teacher={teacher} signedIn={email !== null} autoStart={shouldAutoStart(seen)}>
-        <header className="rt-header">
-          <div className="rt-header-inner">
-            <Link href="/realty/desk" aria-label="1on1 Realtors staff desk">
-              {/* A static file in public/, as the pages have always shown it. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/realty/1on1-realtors-logo.png" alt="1on1 Realtors" className="h-10 w-auto" />
-            </Link>
-            <StaffNav owner={owner} teacher={teacher} />
-            <StartTourButton />
-          </div>
-        </header>
-        <div className="flex flex-1 flex-col">{children}</div>
+        <StaffSidebar owner={owner} teacher={teacher} footer={<StartTourButton />} />
+        <div className="flex min-w-0 flex-1 flex-col">{children}</div>
       </DeskTourProvider>
     </div>
   );

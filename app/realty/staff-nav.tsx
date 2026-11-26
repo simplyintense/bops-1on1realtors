@@ -2,27 +2,20 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isCurrentPage } from "./sidebar-model.ts";
 import { navTourId, visibleStaffPages } from "./staff-pages";
 
 /**
- * The staff pages' one top nav: in the realty layout's header, and in the header of the Bops chat app at / for a signed-in staff
- * member. The page being shown is marked from the path. The entries (staff-pages.ts) are listed only for the viewer's owner and
- * teacher flags (read on the server). "Bops home" (/) is one of them, not a one-off link. An external entry (the public site)
- * opens in a new tab.
+ * The staff desk's top nav, for the Bops chat app at / (app/page.tsx) only: a signed-in staff member sees the desk's pages above
+ * the chat. The /realty/* pages use the left sidebar instead (staff-sidebar.tsx), which reads the same list (staff-pages.ts).
+ * The entries are listed only for the viewer's owner and teacher flags (read on the server). "Workspace" (/) is one of them.
  */
 export function StaffNav({ owner, teacher }: { owner: boolean; teacher: boolean }) {
   const pathname = usePathname();
   return (
     <nav aria-label="Staff" className="rt-nav">
       {visibleStaffPages({ owner, teacher }).map((p) => {
-        if (p.external) {
-          return (
-            <a key={p.href} href={p.href} target="_blank" rel="noopener noreferrer" data-tour={navTourId(p.href)}>
-              {p.label}
-            </a>
-          );
-        }
-        const current = pathname === p.href || pathname.startsWith(`${p.href}/`);
+        const current = isCurrentPage(p.href, pathname);
         return (
           <Link key={p.href} href={p.href} aria-current={current ? "page" : undefined} data-tour={navTourId(p.href)}>
             {p.label}
