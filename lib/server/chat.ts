@@ -13,6 +13,7 @@ import { workComputer } from "./screens";
 import { DATA_TOOL_NAMES, DATA_TOOLS, dataNote, runDataTool } from "./treg";
 import { CRM_TOOL_NAMES, CRM_TOOLS, crmNote, crmNowLine, runCrmTool } from "./crm";
 import { REALTY_TOOL_NAMES, REALTY_TOOLS, runRealtyTool } from "./realty-crm";
+import { MARKET_SEARCH_TOOL, WHATSAPP_SEARCH_TOOL, WORKSPACE_SEARCH_TOOL_NAMES, WORKSPACE_SEARCH_TOOLS, runWorkspaceSearchTool } from "./workspace-search";
 import { ORBIT_OWNER_ONLY, ORBIT_TOOL_NAMES, ORBIT_TOOLS, orbitNote, orbitNowLine, runOrbitTool } from "./orbit";
 import type { ResponseInputItem } from "openai/resources/responses/responses";
 import { openaiClient } from "./openai-client";
@@ -836,6 +837,7 @@ const LOOKUPS = new Set([
   ...DATA_TOOL_NAMES,
   ...CRM_TOOL_NAMES,
   ...REALTY_TOOL_NAMES,
+  ...WORKSPACE_SEARCH_TOOL_NAMES,
   ...ORBIT_TOOL_NAMES,
 ]);
 
@@ -1236,7 +1238,7 @@ const NOT_FROM_OUTSIDE = new Set(["schedule", "manage_routine", "watch", "stop_w
  * The owner's drafts are left out with the tools themselves; the Connected apps and keys this bot has are there, asking
  * the owner before anything that changes something.
  */
-const NOT_FROM_MEMBER = new Set(["schedule", "manage_routine", "watch", "stop_watch", "create_skill", "update_skill", "create_bot", "remember", "recall", "text_me", ...ORBIT_OWNER_ONLY]);
+const NOT_FROM_MEMBER = new Set(["schedule", "manage_routine", "watch", "stop_watch", "create_skill", "update_skill", "create_bot", "remember", "recall", "text_me", ...WORKSPACE_SEARCH_TOOL_NAMES, ...ORBIT_OWNER_ONLY]);
 /**
  * Not on a chat turn a computer's runner answers (runner-chat.ts): what writes parts of the state a computer may not
  * (routines, watches, skills, bots: cloud/computer-scope.ts would hold them back, and the bot would say it did what never
@@ -1245,11 +1247,11 @@ const NOT_FROM_MEMBER = new Set(["schedule", "manage_routine", "watch", "stop_wa
  */
 const NOT_ON_RUNNER = new Set(["schedule", "manage_routine", "watch", "stop_watch", "create_skill", "update_skill", "propose_skill_change", "create_bot", "make_page", "make_image", "make_app", "change_app", "work_on_app", "deploy_app", "local_app", "hand_off", "ask_teammate"]);
 /** Tools that only read: calling them is nothing that can't be done twice (turn-context.ts noteActing). */
-const ONLY_READS = new Set(["find_app_actions", "recall", "check_email", "read_email", "web_fetch", "read_skill", "react"]);
+const ONLY_READS = new Set(["find_app_actions", "recall", "check_email", "read_email", "web_fetch", "read_skill", "react", ...WORKSPACE_SEARCH_TOOL_NAMES]);
 const notFromMember = (apps: boolean) => (apps ? NOT_FROM_MEMBER : new Set([...NOT_FROM_MEMBER, "make_app", "change_app", "work_on_app", "deploy_app", "local_app"]));
 
 /** Lookups whose answers come from outside Bops: the web, email, apps and data. A turn that read one can't save a skill. */
-const OUTSIDE_READS = new Set(["web_fetch", "check_email", "read_email", "use_app", "call_api", ...DATA_TOOL_NAMES, ...CRM_TOOL_NAMES, ...REALTY_TOOL_NAMES, ...ORBIT_TOOL_NAMES]);
+const OUTSIDE_READS = new Set(["web_fetch", "check_email", "read_email", "use_app", "call_api", ...DATA_TOOL_NAMES, ...CRM_TOOL_NAMES, ...REALTY_TOOL_NAMES, ...WORKSPACE_SEARCH_TOOL_NAMES, ...ORBIT_TOOL_NAMES]);
 
 /** Work the bot starts or passes on, which may open web addresses in its signed-in browser: checked for them (turn's workRefused). */
 const WORK = new Set(["start_task", "hand_off", "tell_task", "create_bot", "work_on_app"]);
@@ -2127,6 +2129,8 @@ async function turn(botId: string, chatId: string, opts: TurnOptions = {}): Prom
       ...(opts.outside ? [] : CRM_TOOLS(b)),
       // 1on1 Realtors' CRM (realty-crm.ts), read-only: likewise only on the user's own turns.
       ...(opts.outside ? [] : REALTY_TOOLS(b)),
+      // The WhatsApp supply and demand search and other agencies' listings (workspace-search.ts), read-only: the owner's own turns only, never a member's.
+      ...(opts.outside || member ? [] : WORKSPACE_SEARCH_TOOLS(b)),
       // Orbit (orbit.ts), the user's people, tasks and events: likewise only on their own turns. (Not for a bot that keeps
       // its memory to itself and doesn't read the team's: orbit.ts.)
       ...(opts.outside ? [] : ORBIT_TOOLS(b)),
@@ -2507,6 +2511,8 @@ async function turn(botId: string, chatId: string, opts: TurnOptions = {}): Prom
       if (DATA_TOOL_NAMES.has(name)) readFrom.add("Business data (companies and people)");
       if (CRM_TOOL_NAMES.has(name)) readFrom.add("Your CRM");
       if (REALTY_TOOL_NAMES.has(name)) readFrom.add("1on1 Realtors CRM");
+      if (name === WHATSAPP_SEARCH_TOOL) readFrom.add("WhatsApp supply and demand");
+      if (name === MARKET_SEARCH_TOOL) readFrom.add("other agencies' listings");
       if (ORBIT_TOOL_NAMES.has(name)) readFrom.add("Knowledge");
       // Into and out of its memory scope: its own bank while it keeps its memory to itself (lib/chain.ts).
       if (name === "remember") return learn(scopeOf(botId), a.fact ?? "", chatId).catch(failed);
@@ -2525,6 +2531,7 @@ async function turn(botId: string, chatId: string, opts: TurnOptions = {}): Prom
           .catch(failed);
       if (CRM_TOOL_NAMES.has(name)) return runCrmTool(botId, name, a, { chatId }).catch(failed);
       if (REALTY_TOOL_NAMES.has(name)) return runRealtyTool(name, a).then((out) => (bring(out), out)).catch(failed);
+      if (WORKSPACE_SEARCH_TOOL_NAMES.has(name)) return runWorkspaceSearchTool(name, a).then((out) => (bring(out), out)).catch(failed);
       if (ORBIT_TOOL_NAMES.has(name)) return runOrbitTool(botId, name, a, { chatId, routineId: bg?.routineId, readIn: (key) => read.accountsWith(key) }).catch(failed);
       if (name === "ask_teammate") return askTeammate(b, String(a.bot_id ?? ""), String(a.question ?? ""), chatId, asked, member).catch((e: Error) => `Couldn't reach them: ${e.message}`);
       if (name === "web_fetch") {
