@@ -117,8 +117,9 @@ export const CRM_GROUPS: readonly CrmGroup[] = [
 ];
 
 /**
- * The groups open on first render, the AI Desk group included. The rest start closed. A group doesn't open because of the page:
- * the desk's pages are never CRM pages, and the CRM's links are off-site, so none of them is ever the current page.
+ * Groups open on first render, matching UnifiedSidebar.tsx on 1on1realtors.com (realtyf1on1inalsite origin/main, blob
+ * 9856f375b25a27a0a49b62700c04128e23284bed): AI Desk, CRM, Properties and Communications start open; Management and
+ * Analytics & Logs start closed. The Analytics group icon is BarChart (not BarChart3), as in that file.
  */
 export const CRM_GROUPS_OPEN_BY_DEFAULT: readonly string[] = ["AI Desk", "CRM", "Properties", "Communications"];
 

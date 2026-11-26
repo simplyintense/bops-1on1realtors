@@ -114,8 +114,8 @@ export function StaffSidebar({ role }: { role: CrmRole }) {
   );
   const header = portalHeader(role);
   const side = crmSidebar(role);
-  const deskOpen = openGroups[AI_DESK_GROUP.label] ?? false;
   const deskCurrent = deskGroupCurrent(pathname);
+  const deskOpen = openGroups[AI_DESK_GROUP.label] ?? deskCurrent;
   const DeskIcon = ICONS[AI_DESK_GROUP.icon];
 
   // Escape closes the phone drawer. Only listens while it is open.
@@ -186,7 +186,7 @@ export function StaffSidebar({ role }: { role: CrmRole }) {
           </div>
 
           {side.groups.map((group) => {
-            const isOpen = openGroups[group.label] ?? false;
+            const isOpen = openGroups[group.label] ?? false; // CRM groups are never the current page on this desk
             const GroupIcon = ICONS[group.icon];
             return (
               <div key={group.label} className="space-y-1">

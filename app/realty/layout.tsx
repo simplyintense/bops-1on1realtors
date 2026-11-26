@@ -11,9 +11,10 @@ import { hasSeenTour } from "@/realty/node/tour-seen.ts";
 
 /**
  * The staff pages' layout (/realty/*): the 1on1 Realtors theme (realty-theme.css, scoped to .realty-theme) in Inter, the CRM's
- * own font, then the left sidebar (staff-sidebar.tsx: the CRM's staff sidebar, for the viewer's CRM role) beside the page. The
- * Start tour button sits above the page, outside the sidebar, so the sidebar stays the CRM's. The Bops chat app at / is not
- * themed (its own header is staff-nav.tsx). The public demo at /realty-demo is outside this layout.
+ * own font, then the left sidebar (staff-sidebar.tsx, matching UnifiedSidebar.tsx on 1on1realtors.com) beside the page. The
+ * shell follows the CRM's AdminLayout: min-h-screen, muted page background, and a bg-background header bar (px-6 py-4) with
+ * Start tour on the right, outside the sidebar. The chat app at / is not themed (its own header is staff-nav.tsx). The public
+ * demo at /realty-demo is outside this layout.
  */
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-realty-sans", display: "swap" });
@@ -23,15 +24,15 @@ export default async function RealtyLayout({ children }: { children: ReactNode }
   // Seen on the server for a signed-in viewer; with no email (gate off) the client checks its own localStorage flag.
   const seen = email ? hasSeenTour(email, periskopeRoot()) : false;
   return (
-    <div className={`realty-theme flex min-h-full flex-col md:flex-row ${inter.variable}`}>
+    <div className={`realty-theme flex min-h-screen flex-col md:flex-row bg-muted/30 ${inter.variable}`}>
       {/* Inside the theme's div so the tour's overlay gets the theme's colours and fonts. */}
       <DeskTourProvider owner={owner} teacher={teacher} signedIn={email !== null} autoStart={shouldAutoStart(seen)}>
         <StaffSidebar role={crmRole({ email, owner })} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex justify-end px-4 pt-3 md:px-6">
+          <header className="bg-background border-b border-border px-6 py-4 flex justify-end">
             <StartTourButton />
-          </div>
-          {children}
+          </header>
+          <div className="flex-1">{children}</div>
         </div>
       </DeskTourProvider>
     </div>

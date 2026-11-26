@@ -143,6 +143,48 @@ test("the links are the CRM's exact routes on its domain, and the AI Desk group 
   assert.deepEqual(SIDEBAR_DESK_HREFS, DESK_LINKS.map((l) => l.href), "the nine AI Desk hrefs, in order");
 });
 
+test("every CRM sidebar href is an exact route in the live CRM App.tsx (origin/main a38b229)", () => {
+  // Audited against simplyintense/realtyf1on1inalsite origin/main: UnifiedSidebar.tsx blob 9856f375 and App.tsx blob 51bd8c1.
+  // Each path is a static <Route path="..."> (not a :param catch-all). Back to Site is /.
+  const appExactRoutes = new Set([
+    "/",
+    "/admin",
+    "/admin/activity-logs",
+    "/admin/agents",
+    "/admin/ai-usage",
+    "/admin/analytics",
+    "/admin/contacts",
+    "/admin/crm",
+    "/admin/crm/leaderboard",
+    "/admin/image-optimization",
+    "/admin/inquiries",
+    "/admin/invites",
+    "/admin/properties",
+    "/admin/properties/leaderboard",
+    "/admin/settings",
+    "/admin/tasks",
+    "/admin/tasks/analytics",
+    "/admin/users",
+    "/agent/activity",
+    "/agent/crm",
+    "/agent/crm/add",
+    "/agent/dashboard",
+    "/agent/inquiries",
+    "/agent/mcp-settings",
+    "/agent/profile",
+    "/agent/properties",
+    "/agent/properties/new",
+    "/agent/tasks",
+  ]);
+  const crmLinks = linksFor("super_admin").filter(([, href]) => href.startsWith("https://1on1realtors.com"));
+  assert.equal(crmLinks.length, 28, "27 UnifiedSidebar items plus Back to Site");
+  for (const [label, href] of crmLinks) {
+    assert.ok(href.startsWith(`${CRM_ORIGIN}/`) || href === `${CRM_ORIGIN}/`, label);
+    const to = href === `${CRM_ORIGIN}/` ? "/" : href.slice(CRM_ORIGIN.length);
+    assert.ok(appExactRoutes.has(to), `${label} ${to} is not an exact App.tsx route`);
+  }
+});
+
 test("every CRM link is same-tab: no new window, no target, anywhere in the sidebar", () => {
   const markup = code(SIDEBAR);
   assert.ok(!/_blank|noopener|noreferrer|target=/.test(markup), "no target, no new-window rel");
@@ -289,6 +331,9 @@ test("the Start tour button is outside the sidebar; the sidebar keeps the hooks 
   assert.ok(!code(SIDEBAR).includes("StartTourButton"), "the sidebar's footer is the CRM's, with no tour button");
   assert.ok(LAYOUT.includes("<StartTourButton />"), "the layout places the tour button");
   assert.ok(LAYOUT.indexOf("<StartTourButton />") > LAYOUT.indexOf("<StaffSidebar"), "after the sidebar, in the page column");
+  assert.ok(LAYOUT.includes("min-h-screen") && LAYOUT.includes("bg-muted/30"), "the shell is the CRM AdminLayout: min-h-screen, muted page ground");
+  assert.ok(LAYOUT.includes("bg-background border-b border-border px-6 py-4"), "the CRM's header bar (px-6 py-4)");
+  assert.ok(THEME.includes("AdminLayout page background") && THEME.includes("30%, transparent"), "bg-muted/30 is pinned in the theme");
   assert.ok(TOUR.includes('data-tour="start-tour"'), "the button still carries its hook");
   assert.ok(SIDEBAR.includes("data-tour={navTourId(link.href)}"), "each AI Desk link carries its tour hook");
   assert.equal(navTourId("/realty/search"), "nav-search");
