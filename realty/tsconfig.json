@@ -11,5 +11,5 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["./**/*.ts", "../lib/gate.ts", "../lib/staff-workspace.ts"]
+  "include": ["./**/*.ts", "../lib/gate.ts", "../lib/staff-workspace.ts", "../lib/staff-chat-tools.ts"]
 }
