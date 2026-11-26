@@ -103,6 +103,8 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/realty/agent-search/snapshot",
   // The staff MCP's usage counts (realty/node/usage-stats.ts), checked by the same bearer token (BOPS_MCP_TOKEN) and nothing else.
   "/api/mcp/stats",
+  // The 1on1 CRM's client matching (realty/node/automatch-client.ts), checked by its bearer token (BOPS_AUTOMATCH_TOKEN) and nothing else.
+  "/api/realty/automatch-client",
 ]);
 
 /** Where staff land after sign-in: the desk (the Bops chat app at / is one click away in the nav). */
