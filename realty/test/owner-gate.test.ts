@@ -70,14 +70,16 @@ test("the desk's market side and unassigned requests are owners only: an agent g
   assert.ok(f.calls.some((c) => c.tool === "search_market_requests"));
 });
 
-test("the daily digest is owners only: anyone else gets { owner: false }, and the CRM isn't read for them", async () => {
+test("the daily digest is read by any signed-in staff member (owner: false for an agent); signed out reads nothing", async () => {
   let reads = 0;
   const seam: CrmSeam = { connected: true, listings: async () => (reads++, { status: "ok" as const, listings: [] }), agents: async () => [] };
   const intakeRoot = intake();
-  assert.deepEqual(await staffDigest({ email: AGENT, env: GATE, intakeRoot, seam }), { owner: false });
   assert.deepEqual(await staffDigest({ email: null, env: GATE, intakeRoot, seam }), { owner: false });
-  assert.equal(reads, 0);
-  const owner = await staffDigest({ email: OWNER, env: GATE, intakeRoot, seam });
-  assert.ok(owner.owner);
+  assert.equal(reads, 0, "signed out: the CRM isn't read");
+  const agent = await staffDigest({ email: AGENT, env: GATE, intakeRoot, seam });
+  assert.ok("digest" in agent && agent.owner === false, "an agent gets the digest, not the owner flag");
   assert.equal(reads, 1);
+  const owner = await staffDigest({ email: OWNER, env: GATE, intakeRoot, seam });
+  assert.ok("digest" in owner && owner.owner === true);
+  assert.equal(reads, 2);
 });

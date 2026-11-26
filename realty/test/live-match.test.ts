@@ -197,7 +197,7 @@ test("the CRM seam: not connected says so honestly, with no listings and no agen
   assert.deepEqual(await NOT_CONNECTED.agents(), []);
 });
 
-test("the daily digest counts the last 24 hours and is for owners only", async () => {
+test("the daily digest counts the last 24 hours; staff read it, only owners get owner: true, and signed out gets nothing", async () => {
   const w = world();
   await w.consent();
   for (const m of SAMPLE_MESSAGES) await w.post(sampleEnvelope(m));
@@ -209,10 +209,11 @@ test("the daily digest counts the last 24 hours and is for owners only", async (
 
   // The login gate is on here: with it off, anyone may see the owners' screens (ownerAllowed).
   const env = { ...GATE_ENV, BOPS_OWNER_EMAILS: "miles@1on1.example, wendy@1on1.example" };
-  assert.deepEqual(await staffDigest({ email: "kerry@1on1.example", env, intakeRoot: w.root }), { owner: false });
-  assert.deepEqual(await staffDigest({ email: null, env, intakeRoot: w.root }), { owner: false });
+  assert.deepEqual(await staffDigest({ email: null, env, intakeRoot: w.root }), { owner: false }, "signed out: no data");
+  const agent = await staffDigest({ email: "kerry@1on1.example", env, intakeRoot: w.root, now: new Date(NOW.getTime() + 60_000) });
+  assert.ok("digest" in agent && agent.owner === false && agent.digest.requests === 3, "a signed-in agent reads the same digest, not as an owner");
   const owner = await staffDigest({ email: "wendy@1on1.example", env, intakeRoot: w.root, now: new Date(NOW.getTime() + 60_000) });
-  assert.ok(owner.owner && owner.digest.requests === 3 && /CRM not connected/.test(owner.crmText ?? ""));
+  assert.ok("digest" in owner && owner.owner === true && owner.digest.requests === 3 && /CRM not connected/.test(owner.crmText ?? ""));
 });
 
 test("the replay endpoint's gate: owners only when sign-in is on, 401 signed out, 403 on the public demo", async () => {

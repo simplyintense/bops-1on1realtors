@@ -6,18 +6,26 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   BarChart,
+  Bell,
+  Bot,
   Briefcase,
   Building2,
   Cable,
   ChevronDown,
   ClipboardList,
+  FileText,
+  Globe,
+  GitCompareArrows,
+  GraduationCap,
   Home,
   ImageDown,
   LayoutDashboard,
+  LayoutGrid,
   ListChecks,
   LogOut,
   Mail,
   MessageSquare,
+  Newspaper,
   Plus,
   Search,
   Send,
@@ -31,13 +39,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { CrmRole } from "./crm-role.ts";
+import { navTourId } from "./staff-pages.ts";
 import {
+  AI_DESK_GROUP,
   CRM_BACK_TO_SITE,
   CRM_GROUPS_OPEN_BY_DEFAULT,
-  DESK_MARKET_SEARCH,
+  DESK_LINKS,
   LOGOUT,
   crmHref,
   crmSidebar,
+  deskGroupCurrent,
   isCurrentPage,
   portalHeader,
   type CrmIcon,
@@ -46,10 +57,11 @@ import {
 
 /**
  * The staff desk's left sidebar, copied from the 1on1 CRM's staff sidebar (UnifiedSidebar.tsx): the same header, links, order,
- * icons, groups and footer, with the same class names. The CRM's links are same-tab anchors to the CRM's domain. Market Search
- * is the desk's own link (a client link to /realty/search, with data-tour for the guided tour). The desk's other pages are not
- * in this sidebar; they stay reachable by URL. On a phone the same tree is a drawer behind a Menu bar; on md+ it is a sticky
- * column. The class names are the CRM's; the colour utilities are pinned inside .realty-theme (realty-theme.css).
+ * icons, groups and footer, with the same class names. The CRM's links are same-tab anchors to the CRM's domain. The AI Desk
+ * group (after the top links, before the CRM groups) is the desk's own pages: same-tab client links to this origin, with
+ * data-tour for the guided tour. It is collapsible like the CRM groups, and its header takes the CRM's active style when one of
+ * its pages is showing. On a phone the same tree is a drawer behind a Menu bar; on md+ it is a sticky column. The class names are
+ * the CRM's; the colour utilities are pinned inside .realty-theme (realty-theme.css).
  */
 
 const ICONS: Record<CrmIcon, LucideIcon> = {
@@ -76,12 +88,22 @@ const ICONS: Record<CrmIcon, LucideIcon> = {
   Cable,
   User,
   LogOut,
+  LayoutGrid,
+  GitCompareArrows,
+  FileText,
+  Globe,
+  Newspaper,
+  Bell,
+  GraduationCap,
+  Bot,
 };
 
 const LINK = "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground";
 const LINK_ACTIVE = "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm font-medium bg-primary text-primary-foreground";
 const GROUP_TRIGGER = "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm font-medium w-full text-muted-foreground hover:bg-muted hover:text-foreground";
 const SUB_LINK = "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm text-muted-foreground hover:bg-muted hover:text-foreground";
+/** A group header whose page is in the group: the CRM's open/active header style. */
+const GROUP_TRIGGER_CURRENT = "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm font-medium w-full bg-muted text-foreground hover:bg-muted hover:text-foreground";
 const LOGOUT_LINK = "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors w-full";
 
 export function StaffSidebar({ role }: { role: CrmRole }) {
@@ -92,7 +114,9 @@ export function StaffSidebar({ role }: { role: CrmRole }) {
   );
   const header = portalHeader(role);
   const side = crmSidebar(role);
-  const marketCurrent = isCurrentPage(DESK_MARKET_SEARCH.href, pathname);
+  const deskOpen = openGroups[AI_DESK_GROUP.label] ?? false;
+  const deskCurrent = deskGroupCurrent(pathname);
+  const DeskIcon = ICONS[AI_DESK_GROUP.icon];
 
   // Escape closes the phone drawer. Only listens while it is open.
   useEffect(() => {
@@ -128,15 +152,38 @@ export function StaffSidebar({ role }: { role: CrmRole }) {
             <CrmNavLink key={item.to} item={item} />
           ))}
 
-          <Link
-            href={DESK_MARKET_SEARCH.href}
-            data-tour="nav-search"
-            aria-current={marketCurrent ? "page" : undefined}
-            className={marketCurrent ? LINK_ACTIVE : LINK}
-          >
-            <Search className="h-5 w-5" />
-            <span>{DESK_MARKET_SEARCH.label}</span>
-          </Link>
+          <div className="space-y-1">
+            <button
+              type="button"
+              className={deskCurrent ? GROUP_TRIGGER_CURRENT : GROUP_TRIGGER}
+              aria-expanded={deskOpen}
+              onClick={() => setOpenGroups((prev) => ({ ...prev, [AI_DESK_GROUP.label]: !deskOpen }))}
+            >
+              <DeskIcon className="h-5 w-5" />
+              <span className="flex-1 text-left">{AI_DESK_GROUP.label}</span>
+              <ChevronDown className={`h-4 w-4 transition-transform${deskOpen ? " transform rotate-180" : ""}`} />
+            </button>
+            {deskOpen ? (
+              <div className="space-y-1 pl-4">
+                {DESK_LINKS.map((link) => {
+                  const current = isCurrentPage(link.href, pathname);
+                  const LinkIcon = ICONS[link.icon];
+                  return (
+                    <Link
+                      key={link.href}
+                      href={link.href}
+                      data-tour={navTourId(link.href)}
+                      aria-current={current ? "page" : undefined}
+                      className={current ? LINK_ACTIVE : SUB_LINK}
+                    >
+                      <LinkIcon className="h-4 w-4" />
+                      <span>{link.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
 
           {side.groups.map((group) => {
             const isOpen = openGroups[group.label] ?? false;

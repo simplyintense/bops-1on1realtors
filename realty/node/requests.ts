@@ -76,11 +76,15 @@ export async function staffRecommendations(o: Opts & { email: string | null; lis
   return { ...recs, live, crm: crm.status, crmText: crm.status === "ok" ? null : crm.text };
 }
 
-/** The owners' daily digest (app/realty/digest). Anyone who isn't an owner (ownerAllowed) gets { owner: false } and no data. */
-export async function staffDigest(o: { email: string | null; env?: Env; intakeRoot?: string; now?: Date; seam?: CrmSeam }): Promise<{ owner: false } | { owner: true; digest: Digest; crmText: string | null }> {
+/**
+ * The daily digest (app/realty/digest), read only. A signed-in staff member gets the same dataset an owner gets, with owner false so
+ * the page hides the owners' buttons (the replay). With no signed-in email (the login gate on, signed out) nothing is read, and the
+ * caller gets { owner: false } only.
+ */
+export async function staffDigest(o: { email: string | null; env?: Env; intakeRoot?: string; now?: Date; seam?: CrmSeam }): Promise<{ owner: false } | { owner: boolean; digest: Digest; crmText: string | null }> {
   const env = o.env ?? runtimeEnv();
-  if (!ownerAllowed(o.email, env)) return { owner: false };
+  if (!o.email && !ownerAllowed(null, env)) return { owner: false };
   const store = new PeriskopeStore(o.intakeRoot ?? defaultIntakeRoot());
   const crm = await (o.seam ?? crmSeamFromEnv(env)).listings();
-  return { owner: true, digest: digestOf(store.liveShown(), o.now ?? new Date(), 24, store.matchStatuses()), crmText: crm.status === "ok" ? null : crm.text };
+  return { owner: ownerAllowed(o.email, env), digest: digestOf(store.liveShown(), o.now ?? new Date(), 24, store.matchStatuses()), crmText: crm.status === "ok" ? null : crm.text };
 }

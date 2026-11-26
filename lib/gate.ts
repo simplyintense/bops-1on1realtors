@@ -121,22 +121,36 @@ export function safeNext(next: string | null | undefined): string {
 /* ---------------- Who may reach what (owners, teachers, agents) ---------------- */
 
 /**
- * With the gate on, an owner (ownerAllowed) reaches everything, as before. Any other signed-in person is an agent: they reach
- * only the pages and APIs listed here, which are the desk, online search, Supply & Demand and a stored post's page (the
- * owners' post list is not one), and the guided tour's APIs. A teacher (teachAllowed) also
- * reaches the teach page and its APIs. Everything else is refused by the proxy (proxy.ts): an API call gets 403, a page a
- * redirect to the desk. Listed by path, not by prefix, so a new route is closed until someone adds it here.
+ * With the gate on, an owner (ownerAllowed) reaches everything, as before. Any other signed-in person is staff, and staff reach
+ * the AI Desk pages (the sidebar's group, staff-pages.ts) and the guided tour's APIs. Owner-only mutation APIs, the owners' vault,
+ * keys and Workspace APIs stay closed to staff: their calls get 403. A teacher (teachAllowed) also may POST the teach APIs (the
+ * page's own forms; the teach page itself is open to all staff). Everything else is refused by the proxy (proxy.ts): an API call
+ * gets 403, a page a redirect to the desk. Listed by path, not by prefix, so a new route is closed until someone adds it here.
  */
 
 /**
- * A page an agent may open, with everything under it. Supply & Demand (/realty/search) is open to any signed-in staff; its
- * owner-only controls are hidden by the page, and its APIs stay owner-only (AGENT_APIS has none for them).
+ * The AI Desk pages a signed-in staff member may open, with everything under each. Supply & Demand (/realty/search) is open too;
+ * its owner-only controls are hidden by the page itself, and its APIs stay owner-only (AGENT_APIS has none for them).
+ * Automatch, the digest, the alert preview and the teach page are read-only for staff: their mutation buttons are hidden by the
+ * page (owner flag or teachAllowed), and the APIs they call are owner- or teacher-only.
  */
-export const AGENT_PAGES = ["/realty/desk", "/realty/market", "/realty/search"] as const;
-/** One stored post's page, /realty/posts/<request id> (the id is hex, from requestIdOf). The list of all posts stays owners-only. */
+export const AGENT_PAGES = [
+  "/realty/desk",
+  "/realty/automatch",
+  "/realty/search",
+  "/realty/market",
+  "/realty/digest",
+  "/realty/alerts",
+  "/realty/learn",
+] as const;
+
+/**
+ * Pages an agent may open by exact path only, never by prefix: "/" (Workspace, the Bops chat app's home) and "/realty/posts" (the
+ * list of all posts). `under(path, "/")` is true for every path, so "/" must never go through `under`.
+ */
+const AGENT_EXACT_PAGES: readonly string[] = ["/", "/realty/posts"];
+/** One stored post's page, /realty/posts/<request id> (the id is hex or base64url, from requestIdOf). */
 const AGENT_POST_PAGE = /^\/realty\/posts\/[A-Za-z0-9_-]+$/;
-/** The teach page, for a teacher only (teachAllowed). */
-export const TEACHER_PAGES = ["/realty/learn"] as const;
 
 type ApiRule = { methods: readonly string[]; match: (path: string) => boolean };
 
@@ -169,15 +183,15 @@ export function isStaticAsset(path: string): boolean {
 
 const under = (path: string, base: string) => path === base || path.startsWith(`${base}/`);
 
-/** Whether a signed-in agent (or a teacher, with `teacher`) may reach this path with this method. Owners are checked by the caller. */
+/** Whether a signed-in agent (or a teacher, with `teacher`, for the teach APIs) may reach this path with this method. Owners are checked by the caller. */
 export function agentMayReach(path: string, method: string, opts: { teacher?: boolean } = {}): boolean {
   const m = method.toUpperCase();
   const read = m === "GET" || m === "HEAD";
   if (!path.startsWith("/api/")) {
     if (isStaticAsset(path)) return read;
     if (!read) return false;
-    if (AGENT_PAGES.some((base) => under(path, base)) || AGENT_POST_PAGE.test(path)) return true;
-    return !!opts.teacher && TEACHER_PAGES.some((base) => under(path, base));
+    if (AGENT_EXACT_PAGES.includes(path) || AGENT_POST_PAGE.test(path)) return true;
+    return AGENT_PAGES.some((base) => under(path, base));
   }
   const rules = opts.teacher ? [...AGENT_APIS, ...TEACHER_APIS] : AGENT_APIS;
   return rules.some((r) => r.methods.includes(m) && r.match(path));
@@ -185,7 +199,7 @@ export function agentMayReach(path: string, method: string, opts: { teacher?: bo
 
 /**
  * What the gate does with one request, once it's on and the path isn't open (proxy.ts): "pass" (an owner; or an agent, or a
- * teacher for the teach page, to a path they may reach), "sign-in" (no session: an API call gets 401, a page the sign-in),
+ * teacher for the teach APIs, to a path they may reach), "sign-in" (no session: an API call gets 401, a page the sign-in),
  * "forbidden" (an agent's API call to anything else: 403) or "desk" (an agent's page elsewhere: the desk). `email` is the
  * signed-in address (readSession), or null.
  */

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { withSearchStore } from "@/realty/node/search-store.ts";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
@@ -14,26 +13,26 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Teach · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 /**
- * Teachers only (BOPS_TEACH_EMAILS). Anyone else gets a 404, not a hint that the page exists. Lists the needs-explanation
- * queue, newest first, with each post's exact text and Bops's best guess. An answer teaches Bops (saved to the shared
- * knowledge, so it applies to future posts too) and reports what changed. Below: the past answers. For owners only (the
- * owners' pages' rule, ownerAllowed): "What agents told us", the reasons agents gave for their outcomes on the lead cards.
+ * The teach page, open to any signed-in staff member: they see the open questions, the needs-explanation queue and the past
+ * answers. Only a teacher (BOPS_TEACH_EMAILS) sees the answer forms, and the POST routes check teacherAccess themselves. An
+ * answer teaches Bops (saved to the shared knowledge, so it applies to future posts too) and reports what changed. For owners
+ * only (ownerAllowed): "What agents told us", the reasons agents gave for their outcomes on the lead cards.
  */
 export default async function LearnPage() {
   const { teacher, owner } = await viewer();
-  if (!teacher) notFound();
   const { queue, past } = withSearchStore(periskopeRoot(), (store) => ({ queue: store.openQueue(200), past: store.taught(100) }));
   const questions = listOpenQuestions(periskopeRoot());
   const told = owner ? agentFeedbackSummary(new PeriskopeStore(periskopeRoot()).matchStatuses()) : null;
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
-      <p className="rt-eyebrow">Teachers only</p>
+      <p className="rt-eyebrow">{teacher ? "Teachers" : "Read only"}</p>
       <h1 className="mt-2 text-3xl font-semibold">Help the desk learn</h1>
       <p className="rt-muted mt-3">
         Posts too vague to match. Say what one means in a line. If the answer names a term, a place or a type, the desk reads that
         word the same way in every post from now on. Times are AST.
       </p>
+      {teacher ? null : <p className="rt-muted mt-2 text-sm">Only teachers can answer here. You can read the queue and the answers.</p>}
 
       <h2 className="mt-10 text-xl font-semibold" data-tour="learn-questions">Open questions</h2>
       <p className="rt-muted mt-2 text-sm">
@@ -51,7 +50,7 @@ export default async function LearnPage() {
                 {q.answer}
               </p>
             ) : (
-              <QuestionForm id={q.id} />
+              teacher ? <QuestionForm id={q.id} /> : <p className="rt-muted text-sm">No answer yet.</p>
             )}
           </li>
         ))}
@@ -74,7 +73,7 @@ export default async function LearnPage() {
                 Answered {r.explainedAt ? dateAst(r.explainedAt) : ""}: {r.explanation}
               </p>
             ) : null}
-            <TeachForm id={r.id} />
+            {teacher ? <TeachForm id={r.id} /> : null}
           </li>
         ))}
       </ol>

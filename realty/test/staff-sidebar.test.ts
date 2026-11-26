@@ -8,9 +8,10 @@ import {
   CRM_BACK_TO_SITE,
   CRM_FOOTER,
   CRM_GROUPS,
+  AI_DESK_GROUP,
   CRM_GROUPS_OPEN_BY_DEFAULT,
   CRM_ORIGIN,
-  DESK_MARKET_SEARCH,
+  DESK_LINKS,
   LOGOUT,
   SIDEBAR_DESK_HREFS,
   crmHref,
@@ -44,7 +45,7 @@ function linksFor(role: CrmRole): [string, string][] {
   const side = crmSidebar(role);
   return [
     ...side.top.map((i): [string, string] => [i.label, crmHref(i.to)]),
-    [DESK_MARKET_SEARCH.label, DESK_MARKET_SEARCH.href],
+    ...DESK_LINKS.map((i): [string, string] => [i.label, i.href]),
     ...side.groups.flatMap((g) => g.items.map((i): [string, string] => [i.label, crmHref(i.to)])),
     ...side.footer.map((i): [string, string] => [i.label, crmHref(i.to)]),
     [CRM_BACK_TO_SITE.label, crmHref(CRM_BACK_TO_SITE.to)],
@@ -73,7 +74,7 @@ test("the Admin Portal sees the whole CRM; the Agent Portal sees only the agent 
     assert.ok(superLabels.includes(label), `the Admin Portal shows ${label}`);
     assert.ok(!agentLabels.includes(label), `the Agent Portal does not show ${label}`);
   }
-  for (const label of ["Dashboard", "Market Search", "My Clients", "Add Client", "Team Client Activity", "My Properties", "Add Property", "Team Property Activity", "Tasks", "My Inquiries", "My Activity", "MCP settings", "My Profile", "Back to Site", "Logout"]) {
+  for (const label of ["Dashboard", "Desk", "Message Search (WA)", "Online search", "Automatch", "All posts", "Digest", "Auto-Match Alert", "Teach", "Bot Workspace", "My Clients", "Add Client", "Team Client Activity", "My Properties", "Add Property", "Team Property Activity", "Tasks", "My Inquiries", "My Activity", "MCP settings", "My Profile", "Back to Site", "Logout"]) {
     assert.ok(agentLabels.includes(label), `the Agent Portal shows ${label}`);
     assert.ok(superLabels.includes(label), `the Admin Portal shows ${label}`);
   }
@@ -89,16 +90,24 @@ test("the groups and the top and footer links, in the CRM's order and counts; Ma
   assert.deepEqual(crmSidebar(AGENT).top.map((i) => i.label), ["Dashboard"]);
   assert.deepEqual(crmSidebar(SUPER).footer.map((i) => i.label), ["MCP settings", "My Profile", "Settings"]);
   assert.deepEqual(crmSidebar(AGENT).footer.map((i) => i.label), ["MCP settings", "My Profile"]);
-  assert.deepEqual(CRM_GROUPS_OPEN_BY_DEFAULT, ["CRM", "Properties", "Communications"], "the three open by default; Management and Analytics start closed");
+  assert.deepEqual(CRM_GROUPS_OPEN_BY_DEFAULT, ["AI Desk", "CRM", "Properties", "Communications"], "AI Desk and the three CRM groups open by default; Management and Analytics start closed");
   assert.equal(CRM_GROUPS.length, 5);
 });
 
-test("the links are the CRM's exact routes on its domain, and Market Search is the desk's /realty/search", () => {
+test("the links are the CRM's exact routes on its domain, and the AI Desk group is the desk's nine pages", () => {
   assert.equal(CRM_ORIGIN, "https://1on1realtors.com");
   assert.deepEqual(linksFor(SUPER), [
     ["Admin Dashboard", "https://1on1realtors.com/admin"],
     ["Dashboard", "https://1on1realtors.com/agent/dashboard"],
-    ["Market Search", "/realty/search"],
+    ["Desk", "/realty/desk"],
+    ["Message Search (WA)", "/realty/search"],
+    ["Online search", "/realty/market"],
+    ["Automatch", "/realty/automatch"],
+    ["All posts", "/realty/posts"],
+    ["Digest", "/realty/digest"],
+    ["Auto-Match Alert", "/realty/alerts"],
+    ["Teach", "/realty/learn"],
+    ["Bot Workspace", "/"],
     ["My Clients", "https://1on1realtors.com/agent/crm"],
     ["Add Client", "https://1on1realtors.com/agent/crm/add"],
     ["All Clients", "https://1on1realtors.com/admin/crm"],
@@ -131,7 +140,7 @@ test("the links are the CRM's exact routes on its domain, and Market Search is t
     linksFor(AGENT).filter(([, href]) => href.startsWith("https://")).map(([, href]) => href).slice(0, 3),
     ["https://1on1realtors.com/agent/dashboard", "https://1on1realtors.com/agent/crm", "https://1on1realtors.com/agent/crm/add"],
   );
-  assert.deepEqual(SIDEBAR_DESK_HREFS, ["/realty/search"], "the desk's only sidebar link");
+  assert.deepEqual(SIDEBAR_DESK_HREFS, DESK_LINKS.map((l) => l.href), "the nine AI Desk hrefs, in order");
 });
 
 test("every CRM link is same-tab: no new window, no target, anywhere in the sidebar", () => {
@@ -144,17 +153,24 @@ test("every CRM link is same-tab: no new window, no target, anywhere in the side
   }
 });
 
-test("Market Search is the only current item: active on /realty/search, its sub-paths and a stored post, on no other desk page", () => {
-  for (const path of ["/realty/search", "/realty/search/", "/realty/posts/abc123DEF"]) {
-    assert.equal(isCurrentPage(DESK_MARKET_SEARCH.href, path), true, path);
+test("each AI Desk link is current on its own page; Message Search (WA) is also current on a stored post; All posts is not; Bot Workspace only at /", () => {
+  for (const link of DESK_LINKS) {
+    assert.equal(isCurrentPage(link.href, link.href), true, link.href);
   }
+  for (const path of ["/realty/search", "/realty/search/", "/realty/posts/abc123DEF"]) {
+    assert.equal(isCurrentPage("/realty/search", path), true, path);
+  }
+  assert.equal(isCurrentPage("/realty/posts", "/realty/posts"), true);
+  assert.equal(isCurrentPage("/realty/posts", "/realty/posts/abc123DEF"), false, "All posts is the list only");
+  assert.equal(isCurrentPage("/", "/"), true);
+  assert.equal(isCurrentPage("/", "/realty/desk"), false, "Bot Workspace is the root only");
   for (const path of ["/realty/desk", "/realty/posts", "/realty/market", "/realty/learn", "/"]) {
-    assert.equal(isCurrentPage(DESK_MARKET_SEARCH.href, path), false, path);
+    assert.equal(isCurrentPage("/realty/search", path), false, path);
   }
   const markup = code(SIDEBAR);
-  assert.equal((markup.match(/aria-current=/g) ?? []).length, 1, "one aria-current in the sidebar: Market Search's");
-  assert.ok(markup.includes("marketCurrent ? LINK_ACTIVE : LINK"), "the active style only on Market Search");
-  assert.ok(markup.includes('aria-current={marketCurrent ? "page" : undefined}'));
+  assert.ok(markup.includes("current ? LINK_ACTIVE : SUB_LINK"), "the active style is per AI Desk link");
+  assert.ok(markup.includes('aria-current={current ? "page" : undefined}'));
+  assert.ok(markup.includes("deskCurrent ? GROUP_TRIGGER_CURRENT : GROUP_TRIGGER"), "the group header is muted when a child is current");
 });
 
 test("the active and inactive classes are the CRM's; the active one is purple with light text on a 1rem radius", () => {
@@ -230,7 +246,7 @@ test("the header: Admin Portal with its line for a super admin, Agent Portal wit
 });
 
 test("the icons are the CRM's Lucide icons, each present in lucide-react under the same name", () => {
-  const names = new Set<string>(["ChevronDown", DESK_MARKET_SEARCH.icon, LOGOUT.icon, CRM_BACK_TO_SITE.icon]);
+  const names = new Set<string>(["ChevronDown", AI_DESK_GROUP.icon, LOGOUT.icon, CRM_BACK_TO_SITE.icon, ...DESK_LINKS.map((l) => l.icon)]);
   for (const i of [...crmSidebar(SUPER).top, ...CRM_FOOTER, ...CRM_GROUPS.flatMap((g) => g.items)]) names.add(i.icon);
   for (const g of CRM_GROUPS) names.add(g.icon);
   for (const name of names) {
@@ -238,14 +254,35 @@ test("the icons are the CRM's Lucide icons, each present in lucide-react under t
   }
   assert.equal(CRM_GROUPS.find((g) => g.label === "CRM")?.icon, "Briefcase");
   assert.equal(CRM_GROUPS.find((g) => g.label === "Analytics & Logs")?.icon, "BarChart");
+  assert.equal(AI_DESK_GROUP.icon, "Sparkles");
+  assert.deepEqual(DESK_LINKS.map((l) => l.icon), ["LayoutGrid", "Search", "Globe", "GitCompareArrows", "FileText", "Newspaper", "Bell", "GraduationCap", "Bot"]);
 });
 
-test("the desk's own pages are not in the sidebar: no Desk, Online search, Automatch, All posts, Digest, Alerts, Teach or Workspace", () => {
+test("the AI Desk group lists the nine desk pages in order, with Sparkles, open by default; old labels are gone", () => {
+  assert.equal(AI_DESK_GROUP.label, "AI Desk");
+  assert.equal(AI_DESK_GROUP.icon, "Sparkles");
+  assert.ok(CRM_GROUPS_OPEN_BY_DEFAULT.includes("AI Desk"));
+  assert.deepEqual(
+    DESK_LINKS.map((l) => [l.label, l.href, l.icon]),
+    [
+      ["Desk", "/realty/desk", "LayoutGrid"],
+      ["Message Search (WA)", "/realty/search", "Search"],
+      ["Online search", "/realty/market", "Globe"],
+      ["Automatch", "/realty/automatch", "GitCompareArrows"],
+      ["All posts", "/realty/posts", "FileText"],
+      ["Digest", "/realty/digest", "Newspaper"],
+      ["Auto-Match Alert", "/realty/alerts", "Bell"],
+      ["Teach", "/realty/learn", "GraduationCap"],
+      ["Bot Workspace", "/", "Bot"],
+    ],
+  );
   const labels = [...labelsFor(SUPER), ...labelsFor(AGENT)];
-  for (const label of ["Desk", "Online search", "1on1 CRM Automatch", "All posts", "Digest", "Auto-Match Alert", "Teach", "Workspace", "Supply & Demand"]) {
-    assert.ok(!labels.includes(label), label);
+  for (const label of DESK_LINKS.map((l) => l.label)) assert.ok(labels.includes(label), label);
+  for (const gone of ["Market Search", "1on1 CRM Automatch", "Workspace", "Supply & Demand"]) {
+    assert.ok(!labels.includes(gone), gone);
   }
-  assert.ok(!SIDEBAR.includes("staff-pages"), "the component doesn't read the desk's page list");
+  assert.ok(code(SIDEBAR).includes("DESK_LINKS.map"), "the component renders DESK_LINKS");
+  assert.ok(!code(SIDEBAR).includes("DESK_MARKET_SEARCH"), "the standalone Market Search link is gone");
 });
 
 test("the Start tour button is outside the sidebar; the sidebar keeps the hooks the tour spotlights", () => {
@@ -253,8 +290,10 @@ test("the Start tour button is outside the sidebar; the sidebar keeps the hooks 
   assert.ok(LAYOUT.includes("<StartTourButton />"), "the layout places the tour button");
   assert.ok(LAYOUT.indexOf("<StartTourButton />") > LAYOUT.indexOf("<StaffSidebar"), "after the sidebar, in the page column");
   assert.ok(TOUR.includes('data-tour="start-tour"'), "the button still carries its hook");
-  assert.ok(SIDEBAR.includes('data-tour="nav-search"'), "Market Search keeps its tour hook");
-  assert.equal(navTourId(DESK_MARKET_SEARCH.href), "nav-search");
+  assert.ok(SIDEBAR.includes("data-tour={navTourId(link.href)}"), "each AI Desk link carries its tour hook");
+  assert.equal(navTourId("/realty/search"), "nav-search");
+  assert.equal(navTourId("/"), "nav-home");
+  for (const href of SIDEBAR_DESK_HREFS) assert.ok(navTourId(href).startsWith("nav-"), href);
 });
 
 test("on a phone the same tree is a drawer behind a Menu bar; on md+ it is the sticky CRM column", () => {

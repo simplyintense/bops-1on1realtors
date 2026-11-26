@@ -16,7 +16,7 @@ import { staffMayOpen } from "../staff-pages";
 import { sourceFrom, toSearchParams, type RawParams } from "./source";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Market Search · 1on1 Realtors staff", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Message Search (WA) · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 type Params = RawParams;
 
@@ -85,7 +85,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     return (
       <main className="mx-auto w-full max-w-7xl px-5 py-10">
         <p className="rt-eyebrow">Owners only · read-only</p>
-        <h1 className="mt-2 text-3xl font-semibold">Market Search</h1>
+        <h1 className="mt-2 text-3xl font-semibold">Message Search (WA)</h1>
         <p className="rt-muted mt-3">
           Co-broke buyer requests from the WhatsApp and email feed, through the online market. Nothing here is sent or written. Agencies, dates,
           areas, budgets, beds and property types are shown; buyers&apos; names and contact details are not.
@@ -117,7 +117,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   return (
     <main className="mx-auto w-full max-w-7xl px-5 py-10">
       <p className="rt-eyebrow">Staff · read-only</p>
-      <h1 className="mt-2 text-3xl font-semibold">Market Search</h1>
+      <h1 className="mt-2 text-3xl font-semibold">Message Search (WA)</h1>
       <p className="rt-muted mt-3">
         Listings and buyer or renter requests from the allowlisted groups, de-duplicated across groups. Posts too vague to
         match wait in Needs explanation. Times are AST.
