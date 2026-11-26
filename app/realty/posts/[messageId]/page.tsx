@@ -6,21 +6,23 @@ import { PeriskopeStore, requestIdOf } from "@/realty/node/periskope-store.ts";
 import { photoIndex } from "@/realty/node/listing-media.ts";
 import { viewer } from "../../viewer";
 import { PhotoThumbs } from "../../photo-thumbs";
+import { staffMayOpen } from "../../staff-pages";
 import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Post · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
 /**
- * Owners only: one stored post, original text next to the parsed fields and category. Agents are
- * sent to the desk.
+ * One stored post, for any signed-in staff. Staff see the original WhatsApp text next to the parsed fields, to error-check
+ * the parse (the text is the point of this page). The match counts and the all-posts link are owners' only, and the view
+ * never carries the group name or chat id unless the viewer is an owner.
  */
 export default async function PostDetailPage({ params }: { params: Promise<{ messageId: string }> }) {
-  const { owner } = await viewer();
-  if (!owner) redirect("/realty/desk");
+  const { owner, staff } = await viewer();
+  if (!staffMayOpen({ owner, staff })) redirect("/realty/desk");
   const { messageId } = await params;
   const store = new PeriskopeStore(periskopeRoot());
-  const post = findPostView(store, messageId, true);
+  const post = findPostView(store, messageId, owner, true);
   if (!post) notFound();
   const photos = photoIndex(store);
   const hashes = photos.photos.get(post.messageId) ?? [];
@@ -39,17 +41,19 @@ export default async function PostDetailPage({ params }: { params: Promise<{ mes
     ["Buy or rent", post.intent ?? post.listingType ?? ""],
     ["Property class", post.propertyClass ?? ""],
     ["Parsed notes", post.notes ?? ""],
-    ["Matches", `${post.matchCount} (${post.marketMatches} market, ${post.crmMatches} ours)`],
+    ...(owner ? [["Matches", `${post.matchCount} (${post.marketMatches} market, ${post.crmMatches} ours)`] as [string, string]] : []),
   ];
 
   return (
     <main className="mx-auto w-full max-w-3xl px-5 py-10">
-      <p className="rt-eyebrow">Owners only</p>
-      <p className="rt-muted mt-2">
-        <Link href="/realty/posts" className="underline">
-          All posts
-        </Link>
-      </p>
+      <p className="rt-eyebrow">Staff · read-only</p>
+      {owner ? (
+        <p className="rt-muted mt-2">
+          <Link href="/realty/posts" className="underline">
+            All posts
+          </Link>
+        </p>
+      ) : null}
       <h1 className="mt-2 text-3xl font-semibold">Post</h1>
       <dl className="rt-card mt-6 grid gap-3 p-4">
         {rows.map(([k, v]) => (

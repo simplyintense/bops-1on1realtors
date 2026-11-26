@@ -71,7 +71,24 @@ const SENSITIVE_APIS = [
   "/api/memory",
   "/api/mail",
 ];
-const AGENT_PAGES_THAT_ARE_NOT_THE_DESK = ["/", "/realty/posts", "/realty/automatch", "/realty/search", "/realty/digest", "/realty/alerts", "/realty-demo", "/realty/requests"];
+const AGENT_PAGES_THAT_ARE_NOT_THE_DESK = ["/", "/realty/posts", "/realty/automatch", "/realty/digest", "/realty/alerts", "/realty-demo", "/realty/requests"];
+
+test("agents: Supply & Demand and a stored post's page open to any signed-in staff; the owners' post list, the owners' APIs and the export stay closed", async () => {
+  const agent = await session(AGENT);
+  const at = (path: string, method = "GET") => decide(path, method, `bops_gate=${agent}`);
+  assert.equal(await at("/realty/search"), "pass");
+  assert.equal(await at("/realty/posts/3fa9c2d1e8b74f60a1b2c3d4"), "pass", "a stored post, by its request id");
+  assert.equal(await at("/realty/posts/3fa9.png"), "desk", "a dot is not an id");
+  assert.equal(await at("/realty/posts/3fa9/extra"), "desk", "one id only");
+  assert.equal(await at("/realty/posts"), "desk", "the list of all posts stays owners-only");
+  assert.equal(await at("/realty/posts/"), "desk");
+  assert.equal(await at("/realty/searchable"), "desk", "a prefix isn't a path");
+  assert.equal(await at("/api/realty/search"), "forbidden", "the search API stays owner-only");
+  assert.equal(await at("/api/realty/search/export"), "forbidden", "the export stays owner-only");
+  assert.equal(await at("/api/realty/posts"), "forbidden", "the posts API stays owner-only");
+  assert.equal(await at("/api/realty/posts/3fa9c2d1e8b74f60a1b2c3d4"), "forbidden", "the post API stays owner-only");
+  assert.equal(await at("/realty/posts/3fa9c2d1e8b74f60a1b2c3d4", "POST"), "desk", "a POST to a page is not a page read");
+});
 
 test("agents: the desk, online search and their APIs; every other API is refused with 403, every other page goes to the desk", async () => {
   const agent = await session(AGENT);

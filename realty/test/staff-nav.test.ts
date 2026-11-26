@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { STAFF_PAGES, visibleStaffPages } from "../../app/realty/staff-pages.ts";
+import { STAFF_PAGES, staffMayOpen, visibleStaffPages } from "../../app/realty/staff-pages.ts";
 
 /**
  * The staff nav (app/realty/staff-pages.ts, rendered by app/realty/staff-nav.tsx): labels, order, and which entries each
@@ -32,8 +32,16 @@ test("the full nav for an owner who teaches: the new order and labels, with Requ
   assert.ok(!ENTRIES.some((p) => p.label === "Requests" || p.href === "/realty/requests"), "the Requests entry is removed");
 });
 
-test("an agent (neither owner nor teacher) sees the desk and online search only: no Bops home", () => {
-  assert.deepEqual(labels({ owner: false, teacher: false }), ["Desk", "Public site", "Online search"]);
+test("an agent (neither owner nor teacher) sees the desk, Supply & Demand and online search: no owner pages, no Bops home", () => {
+  assert.deepEqual(labels({ owner: false, teacher: false }), ["Desk", "Public site", "Supply & Demand", "Online search"]);
+});
+
+test("the access rule for Supply & Demand and a stored post: any signed-in staff, and owners; nobody else", () => {
+  // Staff is any signed-in person the gate admits (viewer.ts): an owner, an agent or a teacher.
+  assert.equal(staffMayOpen({ staff: true, owner: false }), true, "an agent");
+  assert.equal(staffMayOpen({ staff: true, owner: true }), true, "an owner");
+  assert.equal(staffMayOpen({ staff: false, owner: true }), true, "an owner is always staff");
+  assert.equal(staffMayOpen({ staff: false, owner: false }), false, "signed out, or not allowlisted");
 });
 
 test("Bops home is at / and listed for owners only: an agent is sent to the desk from /", () => {
@@ -49,14 +57,15 @@ test("Bops home is at / and listed for owners only: an agent is sent to the desk
 
 test("an owner who doesn't teach sees no Teach Bops; a teacher who isn't an owner sees no owner pages", () => {
   assert.deepEqual(labels({ owner: true, teacher: false }), ["Desk", "Public site", "1on1 CRM Automatch", "Supply & Demand", "All posts", "Online search", "Digest", "Auto-Match Alert", "Bops home"]);
-  assert.deepEqual(labels({ owner: false, teacher: true }), ["Desk", "Public site", "Online search", "Teach Bops"]);
+  assert.deepEqual(labels({ owner: false, teacher: true }), ["Desk", "Public site", "Supply & Demand", "Online search", "Teach Bops"]);
 });
 
 test("gating flags on the entries match the labels: owner pages are owner-only, Teach Bops is teacher-only, the rest open", () => {
   const byLabel = Object.fromEntries(STAFF_PAGES.map((p) => [p.label, p]));
-  for (const label of ["1on1 CRM Automatch", "Supply & Demand", "All posts", "Digest", "Auto-Match Alert"]) assert.equal(byLabel[label].ownerOnly, true, label);
+  for (const label of ["1on1 CRM Automatch", "All posts", "Digest", "Auto-Match Alert"]) assert.equal(byLabel[label].ownerOnly, true, label);
+  assert.equal(byLabel["Supply & Demand"].ownerOnly, false, "Supply & Demand is for all staff; its owner parts are the page's");
   assert.equal(byLabel["Teach Bops"].teacherOnly, true);
-  for (const label of ["Desk", "Public site", "Online search"]) {
+  for (const label of ["Desk", "Public site", "Online search", "Supply & Demand"]) {
     assert.equal(byLabel[label].ownerOnly, false, label);
     assert.equal(byLabel[label].teacherOnly, false, label);
   }

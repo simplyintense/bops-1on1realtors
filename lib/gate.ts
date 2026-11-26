@@ -94,6 +94,9 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/cloud/event",
   // Periskope's WhatsApp group webhook (realty/node/periskope-intake.ts), checked by its HMAC signature. Its staff paths (opt-out, consent) stay gated.
   "/api/intake/periskope",
+  // The staff MCP's read-only search (realty/node/agent-search.ts), checked by its bearer token (BOPS_MCP_TOKEN) and nothing else.
+  "/api/realty/agent-search",
+  "/api/realty/agent-search/snapshot",
 ]);
 
 /** Where staff land after sign-in: the desk (the Bops chat app at / is one click away in the nav). */
@@ -113,13 +116,19 @@ export function safeNext(next: string | null | undefined): string {
 
 /**
  * With the gate on, an owner (ownerAllowed) reaches everything, as before. Any other signed-in person is an agent: they reach
- * only the pages and APIs listed here, which are the desk, online search and the guided tour. A teacher (teachAllowed) also
+ * only the pages and APIs listed here, which are the desk, online search, Supply & Demand and a stored post's page (the
+ * owners' post list is not one), and the guided tour's APIs. A teacher (teachAllowed) also
  * reaches the teach page and its APIs. Everything else is refused by the proxy (proxy.ts): an API call gets 403, a page a
  * redirect to the desk. Listed by path, not by prefix, so a new route is closed until someone adds it here.
  */
 
-/** A page an agent may open, with everything under it. */
-export const AGENT_PAGES = ["/realty/desk", "/realty/market"] as const;
+/**
+ * A page an agent may open, with everything under it. Supply & Demand (/realty/search) is open to any signed-in staff; its
+ * owner-only controls are hidden by the page, and its APIs stay owner-only (AGENT_APIS has none for them).
+ */
+export const AGENT_PAGES = ["/realty/desk", "/realty/market", "/realty/search"] as const;
+/** One stored post's page, /realty/posts/<request id> (the id is hex, from requestIdOf). The list of all posts stays owners-only. */
+const AGENT_POST_PAGE = /^\/realty\/posts\/[A-Za-z0-9_-]+$/;
 /** The teach page, for a teacher only (teachAllowed). */
 export const TEACHER_PAGES = ["/realty/learn"] as const;
 
@@ -161,7 +170,7 @@ export function agentMayReach(path: string, method: string, opts: { teacher?: bo
   if (!path.startsWith("/api/")) {
     if (isStaticAsset(path)) return read;
     if (!read) return false;
-    if (AGENT_PAGES.some((base) => under(path, base))) return true;
+    if (AGENT_PAGES.some((base) => under(path, base)) || AGENT_POST_PAGE.test(path)) return true;
     return !!opts.teacher && TEACHER_PAGES.some((base) => under(path, base));
   }
   const rules = opts.teacher ? [...AGENT_APIS, ...TEACHER_APIS] : AGENT_APIS;

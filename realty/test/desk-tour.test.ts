@@ -65,7 +65,7 @@ test("replay: Start tour begins at the welcome card whether or not the tour was 
 
 test("role filtering: an agent sees only Desk and Online search; owners get their pages; teachers get Teach", () => {
   const agent = pagesOf(buildTourSteps(AGENT_ONLY));
-  assert.deepEqual(agent, ["/realty/desk", "/realty/market"]);
+  assert.deepEqual(agent, ["/realty/desk", "/realty/search", "/realty/market"], "the tour follows the nav: Supply & Demand is for all staff");
   assert.ok(!agent.includes("/"), "the Bops chat app is never in the tour");
 
   const owner = pagesOf(buildTourSteps(OWNER_ONLY));
@@ -76,7 +76,7 @@ test("role filtering: an agent sees only Desk and Online search; owners get thei
   assert.ok(!owner.includes("/"));
 
   const teacher = pagesOf(buildTourSteps(TEACHER_ONLY));
-  assert.deepEqual(teacher, ["/realty/desk", "/realty/market", "/realty/learn"]);
+  assert.deepEqual(teacher, ["/realty/desk", "/realty/search", "/realty/market", "/realty/learn"]);
   assert.ok(!teacher.includes("/"));
 
   const both = pagesOf(buildTourSteps(ROLES.ownerAndTeacher));

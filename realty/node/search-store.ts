@@ -48,6 +48,8 @@ const DAY_MS = 86_400_000;
 const AST_OFFSET = "-04:00";
 
 const TABLE: Record<Tab, string> = { supply: "supply", demand: "demand", vague: "needs_explanation" };
+/** A row the owner ignored or parked (its status column; NULL for an ordinary row). */
+const NOT_HIDDEN = "(status IS NULL OR status NOT IN ('ignored', 'parked'))";
 
 /** One JSONL line from supply.jsonl or demand.jsonl. Read defensively: any field may be missing or the wrong type. */
 export type SourceRow = Record<string, unknown>;
@@ -136,6 +138,8 @@ export type SearchInput = {
   minPrice?: number;
   maxPrice?: number;
   beds?: number;
+  /** beds is "at least" rather than exact. Only the agent search sets it; the owner's search and the snapshot stay exact. */
+  bedsAtLeast?: boolean;
   type?: string;
   listingType?: RecordListingType;
   agent?: string;
@@ -144,6 +148,8 @@ export type SearchInput = {
   to?: string;
   limit?: number;
   offset?: number;
+  /** Leave out ignored and parked rows (the agent search). Off by default: the owner's tabs show them. */
+  excludeStatus?: boolean;
 };
 
 export type SearchResult = { kind: Tab; total: number; limit: number; offset: number; rows: SearchRow[] };
@@ -957,7 +963,7 @@ export class SearchStore {
     const ttdPrice = "(CASE WHEN UPPER(currency) = 'USD' THEN price * ? ELSE price END)";
     if (input.minPrice != null) add(`${ttdPrice} >= ?`, USD_TO_TTD, input.minPrice);
     if (input.maxPrice != null) add(`${ttdPrice} <= ?`, USD_TO_TTD, input.maxPrice);
-    if (input.beds != null) add("beds = ?", input.beds);
+    if (input.beds != null) add(input.bedsAtLeast ? "beds >= ?" : "beds = ?", input.beds);
     if (hasText(input.type)) add("lower(type) = lower(?)", input.type!.trim());
     if (input.listingType) add("listing_type = ?", input.listingType);
     if (hasText(input.agent)) {
@@ -969,6 +975,7 @@ export class SearchStore {
     if (hasText(input.group)) add(`id IN (SELECT record_id FROM record_groups WHERE tab = ? AND group_name LIKE ? ESCAPE '\\')`, kind, likeOf(input.group!.trim()));
     if (input.from) add("last_sent_at >= ?", astStart(input.from));
     if (input.to) add("first_sent_at < ?", new Date(Date.parse(astStart(input.to)) + DAY_MS).toISOString());
+    if (input.excludeStatus) where.push(NOT_HIDDEN);
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const table = TABLE[kind];
     const limit = input.limit ?? 100;
@@ -979,6 +986,35 @@ export class SearchStore {
       .all(...args, limit, offset)
       .map((r) => toSearchRow(r, kind));
     return { kind, total, limit, offset, rows };
+  }
+
+  /**
+   * The few columns a market snapshot needs, for the rows a snapshot counts: one side, not ignored or parked, with the same
+   * from/to meaning as search(). No phone, name, text or group leaves the database through this.
+   */
+  snapshotRows(input: { kind: Side; area?: string; listingType?: RecordListingType; from?: string; to?: string }): { area: string | null; type: string | null; listingType: string | null; currency: string | null; price: number | null }[] {
+    const where: string[] = [NOT_HIDDEN];
+    const args: (string | number)[] = [];
+    if (hasText(input.area)) {
+      where.push("area LIKE ? ESCAPE '\\'");
+      args.push(likeOf(input.area!.trim()));
+    }
+    if (input.listingType) {
+      where.push("listing_type = ?");
+      args.push(input.listingType);
+    }
+    if (input.from) {
+      where.push("last_sent_at >= ?");
+      args.push(astStart(input.from));
+    }
+    if (input.to) {
+      where.push("first_sent_at < ?");
+      args.push(new Date(Date.parse(astStart(input.to)) + DAY_MS).toISOString());
+    }
+    return this.db
+      .prepare(`SELECT area, type, listing_type, currency, price FROM ${TABLE[input.kind]} WHERE ${where.join(" AND ")}`)
+      .all(...args)
+      .map((r) => ({ area: str(r.area), type: str(r.type), listingType: str(r.listing_type), currency: str(r.currency), price: num(r.price) }));
   }
 
   /** All rows of the three tabs, for the export. Text and phone numbers included: owner-gated callers only. */
