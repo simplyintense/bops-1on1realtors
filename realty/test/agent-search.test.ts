@@ -404,11 +404,11 @@ test("snapshot: kind defaults to supply, demand is allowed, vague and other valu
 /* ---------------- the gate ---------------- */
 
 test("the search paths are open to the gate (no Google session) and are server-to-server in proxy.ts", async () => {
-  for (const p of ["/api/realty/agent-search", "/api/realty/agent-search/snapshot", "/api/mcp/stats"]) assert.equal(GATE_OPEN_PATHS.has(p), true, p);
+  for (const p of ["/api/realty/agent-search", "/api/realty/agent-search/snapshot", "/api/mcp/stats", "/api/realty/automatch-client"]) assert.equal(GATE_OPEN_PATHS.has(p), true, p);
   const proxy = readFileSync(new URL("../../proxy.ts", import.meta.url), "utf8");
   const line = proxy.split("\n").find((l) => l.startsWith("const TAILNET_PATHS"));
   assert.ok(line, "TAILNET_PATHS is found");
-  assert.ok(line.includes('"/api/realty/agent-search"') && line.includes('"/api/realty/agent-search/snapshot"') && line.includes('"/api/mcp/stats"'));
+  assert.ok(line.includes('"/api/realty/agent-search"') && line.includes('"/api/realty/agent-search/snapshot"') && line.includes('"/api/mcp/stats"') && line.includes('"/api/realty/automatch-client"'));
 });
 
 /* ---------------- external listings (the market search, a fake here) ---------------- */
