@@ -138,6 +138,8 @@ export type SearchInput = {
   minPrice?: number;
   maxPrice?: number;
   beds?: number;
+  /** beds is "at least" rather than exact. Only the agent search sets it; the owner's search and the snapshot stay exact. */
+  bedsAtLeast?: boolean;
   type?: string;
   listingType?: RecordListingType;
   agent?: string;
@@ -961,7 +963,7 @@ export class SearchStore {
     const ttdPrice = "(CASE WHEN UPPER(currency) = 'USD' THEN price * ? ELSE price END)";
     if (input.minPrice != null) add(`${ttdPrice} >= ?`, USD_TO_TTD, input.minPrice);
     if (input.maxPrice != null) add(`${ttdPrice} <= ?`, USD_TO_TTD, input.maxPrice);
-    if (input.beds != null) add("beds = ?", input.beds);
+    if (input.beds != null) add(input.bedsAtLeast ? "beds >= ?" : "beds = ?", input.beds);
     if (hasText(input.type)) add("lower(type) = lower(?)", input.type!.trim());
     if (input.listingType) add("listing_type = ?", input.listingType);
     if (hasText(input.agent)) {

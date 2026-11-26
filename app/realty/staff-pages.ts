@@ -3,12 +3,14 @@
  * (app/realty/staff-nav.tsx renders them). Owners' pages are listed only for owners, and the teach page only for teachers;
  * the page checks themselves are on the server (viewer.ts). "Bops home" is the Bops chat app at / (the old home), listed for
  * owners only (an agent is sent to the desk from /): the nav is the one top nav on every staff-facing page, / included.
+ * Supply & Demand is listed for every staff member: its owner-only parts (online feed, export, original text) are hidden by
+ * the page itself (app/realty/search/page.tsx), and its APIs stay owner-only.
  */
 export const STAFF_PAGES: readonly StaffPageEntry[] = [
   { href: "/realty/desk", label: "Desk", ownerOnly: false, teacherOnly: false },
   { href: "https://1on1realtors.com", label: "Public site", ownerOnly: false, teacherOnly: false, external: true },
   { href: "/realty/automatch", label: "1on1 CRM Automatch", ownerOnly: true, teacherOnly: false },
-  { href: "/realty/search", label: "Supply & Demand", ownerOnly: true, teacherOnly: false },
+  { href: "/realty/search", label: "Supply & Demand", ownerOnly: false, teacherOnly: false },
   { href: "/realty/posts", label: "All posts", ownerOnly: true, teacherOnly: false },
   { href: "/realty/market", label: "Online search", ownerOnly: false, teacherOnly: false },
   { href: "/realty/digest", label: "Digest", ownerOnly: true, teacherOnly: false },
@@ -37,4 +39,12 @@ export function navTourId(href: string): string {
 /** The entries this viewer may see, in nav order. */
 export function visibleStaffPages(viewer: { owner: boolean; teacher: boolean }): StaffPage[] {
   return STAFF_PAGES.filter((p) => (viewer.owner || !p.ownerOnly) && (viewer.teacher || !p.teacherOnly));
+}
+
+/**
+ * Who may open Supply & Demand (/realty/search) and a stored post (/realty/posts/<id>): any signed-in staff (viewer.ts staff),
+ * and owners. The owners' post list and every owner API keep their own checks. The gate (lib/gate.ts) lets the same people in.
+ */
+export function staffMayOpen(viewer: { staff: boolean; owner: boolean }): boolean {
+  return viewer.staff || viewer.owner;
 }

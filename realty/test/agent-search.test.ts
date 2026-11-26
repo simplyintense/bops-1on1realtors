@@ -3,12 +3,12 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AGENT_NOTES_MAX, AGENT_ROW_KEYS, agentRow, agentSearch, agentSnapshot, bearerOk, deskPostUrl, externalRow, mergeExternal, sameListing, sameSecret, snapshotGroups, type AgentRequest, type Env, type ListingKey } from "../node/agent-search.ts";
+import { AGENT_NOTES_MAX, AGENT_ROW_KEYS, agentRow, agentSearch, agentSnapshot, bearerOk, deskPostUrl, externalRow, hitDate, inDateRange, mergeExternal, sameListing, sameSecret, snapshotGroups, type AgentRequest, type Env, type ListingKey } from "../node/agent-search.ts";
 import type { DeskCriteria, DeskResult } from "../flow/market-desk.ts";
 import type { CoBrokeHit } from "../flow/market-search.ts";
 import { GATE_OPEN_PATHS } from "../../lib/gate.ts";
 import { PeriskopeStore, requestIdOf } from "../node/periskope-store.ts";
-import type { SearchRow } from "../node/search-store.ts";
+import { withSearchStore, type SearchRow } from "../node/search-store.ts";
 
 // Invented data only: made-up agents, 555-style numbers, invented listings, groups, chats and text.
 const SENDER = "+18685550101";
@@ -415,7 +415,7 @@ test("the search paths are open to the gate (no Google session) and are server-t
 
 const EXT_SITE = "Site Alpha";
 /** The exact keys of an external row: the same shape as the WhatsApp row where they overlap, plus the site, url and contact. */
-const EXT_ROW_KEYS = ["id", "kind", "area", "development", "price", "currency", "beds", "baths", "type", "listingType", "intent", "propertyClass", "notes", "firstSentAt", "lastSentAt", "timesSeen", "firm", "source", "site", "url", "photo", "agent", "agentPhone", "agentWhatsapp", "agentEmail", "deskUrl"];
+const EXT_ROW_KEYS = ["id", "kind", "dateKnown", "area", "development", "price", "currency", "beds", "baths", "type", "listingType", "intent", "propertyClass", "notes", "firstSentAt", "lastSentAt", "timesSeen", "firm", "source", "site", "url", "photo", "agent", "agentPhone", "agentWhatsapp", "agentEmail", "deskUrl"];
 
 /** An invented market hit. The contact details are invented and not real numbers or addresses. */
 function hit(over: Partial<CoBrokeHit> = {}): CoBrokeHit {
@@ -519,14 +519,13 @@ test("demand: source=external is a 400; any other source ignores the market, wit
   assert.equal(calls.length, 0, "demand never asks the market");
 });
 
-test("the market is not asked on page 2, for shortlet, for a date filter, for a bad type, or with no area and no market filter", async () => {
+test("the market is not asked on page 2, for shortlet, for a bad type, or with no area and no market filter", async () => {
   const root = world(Array.from({ length: 12 }, (_, i) => post(i + 1, { area: "Maraval" })));
   const calls: DeskCriteria[] = [];
   const m = fakeMarket([hit()], calls);
   const cases: [string, RegExp][] = [
     ["area=Maraval&offset=10", /only on the first page/],
     ["area=Maraval&listingType=shortlet", /Shortlet/],
-    ["area=Maraval&from=2026-11-01", /Date filters/],
     ["area=Maraval&type=villa", /property type/],
     ["", /Give an area/],
     ["q=lime", /Give an area/],
@@ -628,6 +627,61 @@ test("the page limit counts WhatsApp rows first: external rows only fill what is
   const short = await agentSearch(req("area=Maraval&limit=2"), root, ENV, { market: m });
   assert.equal(rowsOf(short.body).length, 2);
   assert.equal((short.body.external as { returned: number }).returned, 0);
+});
+
+test("the date filters do not skip the market: external hits are kept by their own date, last seen first, both bounds inclusive, undated kept", async () => {
+  const root = world([]);
+  const calls: DeskCriteria[] = [];
+  const u = (n: number) => `https://site-alpha.example/d${n}`;
+  // Prices are apart by more than 2%, so none of these is a duplicate of another.
+  const m = fakeMarket(
+    [
+      hit({ url: u(1), price: 1_000_000, firstSeen: "2026-11-01", lastSeen: "2026-11-20" }), // last seen in range: kept, though first seen is before
+      hit({ url: u(2), price: 2_000_000, firstSeen: "2026-11-01", lastSeen: "2026-11-05" }), // last seen before: dropped, though first seen is in range
+      hit({ url: u(3), price: 3_000_000, firstSeen: "2026-10-01", lastSeen: null }), // no last seen: first seen is before: dropped
+      hit({ url: u(4), price: 4_000_000, firstSeen: "2026-11-15", lastSeen: null }), // no last seen: first seen in range: kept
+      hit({ url: u(5), price: 5_000_000, firstSeen: null, lastSeen: null }), // no date: kept, dateKnown false
+      hit({ url: u(6), price: 6_000_000, firstSeen: "2026-11-25", lastSeen: "2026-11-25" }), // the last day: kept (inclusive)
+    ],
+    calls,
+  );
+  const r = await agentSearch(req("area=Maraval&from=2026-11-10&to=2026-11-25"), root, ENV, { market: m });
+  assert.equal(r.status, 200);
+  assert.equal(calls.length, 1, "the date filters don't stop the market being asked");
+  assert.equal((r.body.external as { status: string }).status, "ok");
+  const rows = rowsOf(r.body);
+  assert.deepEqual(rows.map((x) => x.url), [u(1), u(4), u(5), u(6)]);
+  assert.deepEqual(rows.map((x) => x.dateKnown), [true, true, false, true]);
+  assert.deepEqual(r.body.totals, { whatsapp: 0, external: 4 });
+  assert.deepEqual(r.body.external, { status: "ok", returned: 4 });
+});
+
+test("hitDate: last seen, else first seen; neither is null", () => {
+  assert.equal(hitDate(hit({ firstSeen: "2026-11-01", lastSeen: "2026-11-20" })), "2026-11-20");
+  assert.equal(hitDate(hit({ firstSeen: "2026-11-01", lastSeen: null })), "2026-11-01");
+  assert.equal(hitDate(hit({ firstSeen: null, lastSeen: "not-a-date" })), null, "a bad last seen falls through, and no first seen is null");
+  assert.equal(hitDate(hit({ firstSeen: null, lastSeen: null })), null);
+});
+
+test("inDateRange: both bounds inclusive, an open bound is open, and an undated hit is kept", () => {
+  assert.equal(inDateRange("2026-11-10", "2026-11-10", "2026-11-25"), true, "the first day");
+  assert.equal(inDateRange("2026-11-25", "2026-11-10", "2026-11-25"), true, "the last day");
+  assert.equal(inDateRange("2026-11-09", "2026-11-10", "2026-11-25"), false, "the day before");
+  assert.equal(inDateRange("2026-11-26", "2026-11-10", "2026-11-25"), false, "the day after");
+  assert.equal(inDateRange("2020-01-01", undefined, "2026-11-25"), true, "no from");
+  assert.equal(inDateRange("2030-01-01", "2026-11-10", undefined), true, "no to");
+  assert.equal(inDateRange(null, "2026-11-10", "2026-11-25"), true, "undated is kept");
+});
+
+test("beds is at least on the agent search, for WhatsApp rows too: beds=3 gives the 3 and 4 bed rows, not 2 or unknown; the owner's store search stays exact", async () => {
+  const root = world([post(1, { beds: 2 }), post(2, { beds: 3 }), post(3, { beds: 4 }), post(4, { beds: null })]);
+  const r = await agentSearch(req("beds=3&source=whatsapp"), root, ENV);
+  assert.equal(r.status, 200);
+  assert.deepEqual(rowsOf(r.body).map((x) => x.beds).sort(), [3, 4]);
+  assert.equal(r.body.total, 2);
+  const exact = withSearchStore(root, (store) => store.search({ kind: "supply", beds: 3 }));
+  assert.equal(exact.total, 1, "without the flag, the owner's search is exact");
+  assert.deepEqual(exact.rows.map((x) => x.beds), [3]);
 });
 
 const key = (over: Partial<ListingKey> = {}): ListingKey => ({ area: "Maraval", listingType: "sale", beds: 3, price: 1_000_000, currency: "TTD", ...over });

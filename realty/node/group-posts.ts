@@ -3,15 +3,20 @@ import { PeriskopeStore, requestIdOf, type LiveRow } from "./periskope-store.ts"
 import { dateAst } from "../flow/ast-time.ts";
 
 /**
- * Owner views of WhatsApp group posts (original text next to the parse). Agents never receive
- * originalText. The text is not logged here.
+ * Views of WhatsApp group posts. Agents never receive originalText, the group name or the chat id. Owners get all of
+ * them; the post page (/realty/posts/<id>) passes withText so that any signed-in staff member can check the parse against
+ * the original message. The text is not logged here.
  */
 
-export type PostView = Omit<PostRecord, "originalText"> & {
+export type PostView = Omit<PostRecord, "originalText" | "chatId" | "groupName"> & {
   requestId: string;
   matchCount: number;
   marketMatches: number;
   crmMatches: number;
+  /** Owners only: the WhatsApp chat and group. */
+  chatId?: string;
+  groupName?: string | null;
+  /** Present when withText is true (owners, and staff on the post page). */
   originalText?: string;
 };
 
@@ -21,13 +26,21 @@ export function matchCounts(live: LiveRow | undefined): { matchCount: number; ma
   return { marketMatches, crmMatches, matchCount: marketMatches + crmMatches };
 }
 
-/** The post as a page or API may return it. originalText is present only when owner is true. */
-export function postView(post: PostRecord, owner: boolean, live?: LiveRow): PostView {
+/**
+ * The post as a page or API may return it. The group name and chat id are present only when owner is true. The original
+ * text is present when withText is true, which defaults to owner.
+ */
+export function postView(post: PostRecord, owner: boolean, live?: LiveRow, withText: boolean = owner): PostView {
   const requestId = requestIdOf(post.messageId);
   const counts = matchCounts(live);
-  const { originalText, ...rest } = post;
-  if (owner) return { ...rest, originalText: originalText ?? undefined, requestId, ...counts };
-  return { ...rest, requestId, ...counts };
+  const { originalText, chatId, groupName, ...rest } = post;
+  const view: PostView = { ...rest, requestId, ...counts };
+  if (owner) {
+    view.chatId = chatId;
+    view.groupName = groupName;
+  }
+  if (withText) view.originalText = originalText ?? undefined;
+  return view;
 }
 
 export function listPostViews(store: PeriskopeStore, owner: boolean): PostView[] {
@@ -38,11 +51,11 @@ export function listPostViews(store: PeriskopeStore, owner: boolean): PostView[]
     .sort((a, b) => b.sentAt.localeCompare(a.sentAt));
 }
 
-export function findPostView(store: PeriskopeStore, requestId: string, owner: boolean): PostView | null {
+export function findPostView(store: PeriskopeStore, requestId: string, owner: boolean, withText: boolean = owner): PostView | null {
   const post = store.posts().find((p) => requestIdOf(p.messageId) === requestId);
   if (!post) return null;
   const live = store.live().find((r) => r.messageId === post.messageId);
-  return postView(post, owner, live);
+  return postView(post, owner, live, withText);
 }
 
 /** Date in AST for the export (flow/ast-time.ts, shared with the admin digest). */

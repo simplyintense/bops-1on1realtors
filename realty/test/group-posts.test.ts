@@ -59,6 +59,23 @@ test("list and detail helpers keep originalText off agent views", () => {
   assert.equal("originalText" in (findPostView(store, id, false) ?? {}), false);
 });
 
+test("the post page's staff view: any staff gets the original text, a non-owner never gets the group name or chat id", () => {
+  const store = new PeriskopeStore(mkdtempSync(join(tmpdir(), "group-posts-staff-")));
+  store.addPost(SAMPLE);
+  const id = requestIdOf(SAMPLE.messageId);
+  const staff = findPostView(store, id, false, true);
+  assert.equal(staff?.originalText, SAMPLE.originalText, "a staff member sees the original text");
+  assert.equal(staff?.area, "Maraval", "and the parsed fields");
+  assert.equal("groupName" in (staff ?? {}), false, "no group name for a non-owner");
+  assert.equal("chatId" in (staff ?? {}), false, "no chat id for a non-owner");
+  assert.equal(JSON.stringify(staff).includes(SAMPLE.groupName ?? "\u0000"), false, "the group name appears nowhere in the view");
+  const plain = findPostView(store, id, false);
+  assert.equal("originalText" in (plain ?? {}), false, "without the flag, a non-owner still gets no text");
+  const owner = findPostView(store, id, true);
+  assert.equal(owner?.groupName, SAMPLE.groupName, "an owner keeps the group name and chat id");
+  assert.equal(owner?.chatId, SAMPLE.chatId);
+});
+
 test("the group-posts API gate is owners only: an agent gets 403, signed out 401, the owner passes", async () => {
   const req = async (email: string | null) =>
     new Request("https://bops.example/api/realty/posts", { headers: email ? { cookie: `${GATE_COOKIE}=${await makeSession(email, cfg)}` } : {} });

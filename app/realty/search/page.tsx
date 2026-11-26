@@ -12,6 +12,7 @@ import { periskopeRoot } from "@/realty/node/periskope-root.ts";
 import { RequestsFeed } from "./requests-feed";
 import { Notice } from "../notice";
 import { PhotoThumbs } from "../photo-thumbs";
+import { staffMayOpen } from "../staff-pages";
 import { sourceFrom, toSearchParams, type RawParams } from "./source";
 
 export const dynamic = "force-dynamic";
@@ -43,24 +44,30 @@ const snippet = (s: string | null) => {
 };
 
 /**
- * Owners only: Supply & Demand. Two sources: the WhatsApp groups (the default: the supply, demand and needs-explanation
- * queue, with filters as a plain GET form; rows link to the stored post; needs-explanation rows are taught on the Teach Bops
- * page, teachers only) and the online feed (?source=online: the market's co-broke buyer requests, the old Requests page).
- * Agents never see this page.
+ * Supply & Demand, for any signed-in staff. Two sources: the WhatsApp groups (the default: the supply, demand and
+ * needs-explanation queue, with filters as a plain GET form; rows link to the stored post; needs-explanation rows are taught on
+ * the Teach Bops page, teachers only) and the online feed (?source=online: the market's co-broke buyer requests, the old Requests
+ * page, owners only).
+ * Owners only, on this page: the online feed, the JSON export, the group name and filter, the owner's explanations and the
+ * original text (the same fields the agent search leaves out). Their APIs (app/api/realty/search, export) stay owner-only.
  */
 export default async function SearchPage({ searchParams }: { searchParams: Promise<Params> }) {
-  const { email, owner, teacher } = await viewer();
-  if (!owner) redirect("/realty/desk");
+  const { email, owner, teacher, staff } = await viewer();
+  if (!staffMayOpen({ owner, staff })) redirect("/realty/desk");
   const raw = await searchParams;
-  const source = sourceFrom(raw);
+  // Only owners reach the online feed, and a non-owner's group filter is ignored (the group name is not theirs to search by).
+  const source = owner ? sourceFrom(raw) : "groups";
+  const filters: Params = owner ? raw : { ...raw, group: undefined };
   const sourceNav = (
     <nav aria-label="Source" className="mt-6 flex flex-wrap gap-2">
       <Link href={hrefWith(raw, { source: undefined, offset: undefined })} className="rt-chip" aria-pressed={source === "groups"}>
         WhatsApp groups
       </Link>
-      <Link href={hrefWith(raw, { source: "online", kind: undefined, offset: undefined })} className="rt-chip" aria-pressed={source === "online"}>
-        Online feed
-      </Link>
+      {owner ? (
+        <Link href={hrefWith(raw, { source: "online", kind: undefined, offset: undefined })} className="rt-chip" aria-pressed={source === "online"}>
+          Online feed
+        </Link>
+      ) : null}
     </nav>
   );
 
@@ -86,7 +93,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   let input: SearchInput = { kind: "supply" };
   let error: string | null = null;
   try {
-    input = searchInputFrom(raw);
+    input = searchInputFrom(filters);
   } catch (e) {
     if (!(e instanceof SearchInputError)) throw e;
     error = e.message;
@@ -99,17 +106,23 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     return Array.isArray(v) ? v[0] ?? "" : v ?? "";
   };
   const pageSize = input.limit ?? 100;
+  const columns = owner ? 11 : 10;
 
   return (
     <main className="mx-auto w-full max-w-7xl px-5 py-10">
-      <p className="rt-eyebrow">Owners only · read-only</p>
+      <p className="rt-eyebrow">Staff · read-only</p>
       <h1 className="mt-2 text-3xl font-semibold">Supply &amp; Demand</h1>
       <p className="rt-muted mt-3">
         Listings and buyer or renter requests from the allowlisted groups, de-duplicated across groups. Posts too vague to
-        match wait in Needs explanation. Times are AST.{" "}
-        <a className="rt-link" href="/api/realty/search/export">
-          Download all tabs (JSON)
-        </a>
+        match wait in Needs explanation. Times are AST.
+        {owner ? (
+          <>
+            {" "}
+            <a className="rt-link" href="/api/realty/search/export">
+              Download all tabs (JSON)
+            </a>
+          </>
+        ) : null}
       </p>
 
       {sourceNav}
@@ -138,7 +151,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           <option value="rent">Rent</option>
           <option value="shortlet">Short let</option>
         </select>
-        <input name="group" defaultValue={val("group")} placeholder="Group" className="rt-field" aria-label="Group" />
+        {owner ? <input name="group" defaultValue={val("group")} placeholder="Group" className="rt-field" aria-label="Group" /> : null}
         <input name="from" defaultValue={val("from")} placeholder="From YYYY-MM-DD" className="rt-field" aria-label="From date" />
         <input name="to" defaultValue={val("to")} placeholder="To YYYY-MM-DD" className="rt-field" aria-label="To date" />
         <div className="flex gap-2">
@@ -166,7 +179,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                 <tr>
                   <th className="px-2 py-2">Last seen</th>
                   <th className="px-2 py-2">Seen</th>
-                  <th className="px-2 py-2">Group(s)</th>
+                  {owner ? <th className="px-2 py-2">Group(s)</th> : null}
                   <th className="px-2 py-2">Sender</th>
                   <th className="px-2 py-2">Phone</th>
                   <th className="px-2 py-2">Area / development</th>
@@ -179,7 +192,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
               </thead>
               <tbody>
                 {result.rows.map((r) => (
-                  <ResultRows key={r.id} r={r} tab={tab} teacher={teacher} photos={photos} />
+                  <ResultRows key={r.id} r={r} tab={tab} owner={owner} teacher={teacher} photos={photos} columns={columns} />
                 ))}
               </tbody>
             </table>
@@ -196,17 +209,19 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   );
 }
 
-function ResultRows({ r, tab, teacher, photos }: { r: SearchRow; tab: Tab; teacher: boolean; photos: PhotoIndex }) {
+function ResultRows({ r, tab, owner, teacher, photos, columns }: { r: SearchRow; tab: Tab; owner: boolean; teacher: boolean; photos: PhotoIndex; columns: number }) {
   const place = [r.area, r.development].filter(Boolean).join(" / ");
   const post = r.messageIds[0] ? `/realty/posts/${requestIdOf(r.messageIds[0])}` : null;
   const hashes = [...new Set(r.messageIds.flatMap((m) => photos.photos.get(m) ?? []))].slice(0, 3);
   const sameAs = r.messageIds.flatMap((m) => photos.links.get(m) ?? []).find((m) => !r.messageIds.includes(m));
+  // The owner's explanation and the original text are the owners' (as on the agent search); staff see the parsed fields and a link.
+  const explained = owner && r.explanation ? <p className="rt-muted py-1 text-xs">Explained {r.explainedAt ? dateAst(r.explainedAt) : ""}: {r.explanation}</p> : null;
   return (
     <>
       <tr className="rt-row align-top">
         <td className="px-2 py-2 whitespace-nowrap">{dateAst(r.lastSentAt)}</td>
         <td className="px-2 py-2">×{r.timesSeen}</td>
-        <td className="px-2 py-2">{r.groups.join(", ")}</td>
+        {owner ? <td className="px-2 py-2">{r.groups.join(", ")}</td> : null}
         <td className="px-2 py-2">{r.senderName ?? ""}</td>
         <td className="px-2 py-2 whitespace-nowrap">{r.senderPhone}</td>
         <td className="px-2 py-2">{place}</td>
@@ -217,11 +232,11 @@ function ResultRows({ r, tab, teacher, photos }: { r: SearchRow; tab: Tab; teach
         <td className="px-2 py-2">
           {post ? (
             <Link href={post} className="rt-link">
-              {snippet(r.originalText)}
+              {owner ? snippet(r.originalText) : "View post"}
             </Link>
-          ) : (
+          ) : owner ? (
             snippet(r.originalText)
-          )}
+          ) : null}
           <PhotoThumbs hashes={hashes} />
           {sameAs ? (
             <Link href={`/realty/posts/${requestIdOf(sameAs)}`} className="rt-link block pt-1 text-xs">
@@ -231,20 +246,22 @@ function ResultRows({ r, tab, teacher, photos }: { r: SearchRow; tab: Tab; teach
         </td>
       </tr>
       {tab === "vague" ? (
+        explained || teacher ? (
+          <tr className="rt-row">
+            <td colSpan={columns} className="px-2">
+              {explained}
+              {teacher ? (
+                <Link href="/realty/learn" className="rt-link py-1 text-xs">
+                  Teach Bops
+                </Link>
+              ) : null}
+            </td>
+          </tr>
+        ) : null
+      ) : explained ? (
         <tr className="rt-row">
-          <td colSpan={11} className="px-2">
-            {r.explanation ? <p className="rt-muted py-1 text-xs">Explained {r.explainedAt ? dateAst(r.explainedAt) : ""}: {r.explanation}</p> : null}
-            {teacher ? (
-              <Link href="/realty/learn" className="rt-link py-1 text-xs">
-                Teach Bops
-              </Link>
-            ) : null}
-          </td>
-        </tr>
-      ) : r.explanation ? (
-        <tr className="rt-row">
-          <td colSpan={11} className="px-2">
-            <p className="rt-muted py-1 text-xs">Explained {r.explainedAt ? dateAst(r.explainedAt) : ""}: {r.explanation}</p>
+          <td colSpan={columns} className="px-2">
+            {explained}
           </td>
         </tr>
       ) : null}

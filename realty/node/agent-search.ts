@@ -18,11 +18,12 @@ import { SearchInputError, searchInputFrom, withSearchStore, type Side, type Sea
  * What an agent gets for a WhatsApp row: the allow-list below (sender name and phone, dates, the parsed fields, the notes
  * clipped, the firm) and deskUrl, the desk page of the original message. Never the original text, the group or group name,
  * the chat id, the message ids, the explanation, status, priority or category. Ignored and parked rows are never returned or
- * counted.
+ * counted. beds is "at least" for WhatsApp rows (SearchInput.bedsAtLeast); the owner's search stays exact.
  *
  * Supply also carries other agencies' listings from the external-sites market search (staffMarketSearch, the same call the
  * staff market page makes), when source is "external" or "all". Those rows are asked for on the first page only, after the
- * WhatsApp rows, and carry the listing agent's contact.
+ * WhatsApp rows, and carry the listing agent's contact. The date filters (from, to) apply to them by their own date (hitDate:
+ * last seen, else first seen); a hit with no date is kept and says dateKnown false.
  *
  * Nothing here is written, sent or logged. The token is compared in constant time and never echoed.
  */
@@ -104,7 +105,7 @@ function clipNotes(s: string | null): string | null {
 /**
  * The desk page of a WhatsApp record's original message: the existing per-post page (app/realty/posts/[messageId]), by the
  * same requestIdOf the Supply & Demand page links with. A record seen in several messages links to its first. Null when the
- * record has no message. The page itself is owners-only today (see the route's doc).
+ * record has no message. Any signed-in staff user may open it (lib/gate.ts agentMayReach), and it shows no original text to them.
  */
 export function deskPostUrl(base: string, messageIds: readonly string[]): string | null {
   const first = messageIds[0];
@@ -153,6 +154,8 @@ const PRICE_TOLERANCE = 0.02;
 export type ExternalAgentRow = {
   id: string;
   kind: "supply";
+  /** False when the hit has no usable date (neither last seen nor first seen): it is kept by the date filters, not dated. */
+  dateKnown: boolean;
   area: string | null;
   development: null;
   price: number | null;
@@ -192,6 +195,7 @@ export function externalRow(h: CoBrokeHit): ExternalAgentRow {
   return {
     id: `ext:${createHash("sha256").update(h.url ?? `${h.source}\n${h.title}`).digest("hex").slice(0, 16)}`,
     kind: "supply",
+    dateKnown: hitDate(h) !== null,
     area: h.area,
     development: null,
     price: h.price,
@@ -219,14 +223,36 @@ export function externalRow(h: CoBrokeHit): ExternalAgentRow {
   };
 }
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * An external hit's date for the date filters: its last seen date, else its first seen date, as YYYY-MM-DD (the market's own
+ * listing dates, which are calendar days, so they compare as AST days). Null when neither is a real date.
+ */
+export function hitDate(h: CoBrokeHit): string | null {
+  for (const d of [h.lastSeen, h.firstSeen]) {
+    if (d && YMD.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`))) return d;
+  }
+  return null;
+}
+
+/**
+ * Whether a hit's date is within [from, to], both inclusive (YYYY-MM-DD; an unset bound is open). A hit with no date is kept:
+ * the filter can't rule it out, and the row says dateKnown false.
+ */
+export function inDateRange(date: string | null, from?: string, to?: string): boolean {
+  if (date === null) return true;
+  return (!from || date >= from) && (!to || date <= to);
+}
+
 /**
  * The market request for a supply search, or the reason there isn't one. Only the market's own filters are sent (area or
- * development, price, beds, type, listing type). `q` is not one of them, so it is applied to the hits here. Dates have no
- * market meaning, shortlet isn't on the market, and an unknown type can't be asked for: those skip. With no area and no
- * other market filter the market would be searched with nothing, so that skips too.
+ * development, price, beds, type, listing type). `q` is not one of them, so it is applied to the hits here, and the date
+ * filters are applied to the hits here too (inDateRange): the market has no date filter. Shortlet isn't on the market, and an
+ * unknown type can't be asked for: those skip. With no area and no other market filter the market would be searched with
+ * nothing, so that skips too.
  */
 export function externalPlan(input: SearchInput): { criteria: DeskCriteria; words: string[] } | { skip: string } {
-  if (input.from || input.to) return { skip: "Date filters do not apply to external listings." };
   if (input.listingType === "shortlet") return { skip: "Shortlet listings are not on the market search." };
   let propertyType: PropertyType | null = null;
   if (input.type) {
@@ -320,7 +346,8 @@ async function externalListings(input: SearchInput, offset: number, deps: AgentD
   }
   if (res.status === "not-configured") return { status: "not-configured", reason: "The market search is not set up on this server.", hits: [] };
   if (res.status === "error") return { status: "error", reason: res.reason === "timeout" ? "The market search timed out." : "The market search is unavailable.", hits: [] };
-  const hits = plan.words.length ? res.listings.filter((h) => matchesWords(h, plan.words)) : res.listings;
+  const worded = plan.words.length ? res.listings.filter((h) => matchesWords(h, plan.words)) : res.listings;
+  const hits = worded.filter((h) => inDateRange(hitDate(h), input.from, input.to));
   return { status: "ok", reason: res.failed > 0 ? "Some area searches failed; the listings shown may be incomplete." : undefined, hits };
 }
 
@@ -329,7 +356,8 @@ async function externalListings(input: SearchInput, offset: number, deps: AgentD
 /**
  * source: whatsapp (the WhatsApp rows only), external (market listings only) or all (default). Only supply has external
  * listings: kind=demand with source=external is a 400, and demand ignores them. external and totals are in the reply for
- * supply unless source=whatsapp. total stays the WhatsApp total, for paging. A `full` param is ignored, as are the
+ * supply unless source=whatsapp. total stays the WhatsApp total, for paging. from and to filter the WhatsApp rows and the
+ * external hits (by their own date, undated hits kept). A `full` param is ignored, as are the
  * X-1on1-Role and X-1on1-User headers: every signed-in staff user gets the same rows.
  */
 export async function agentSearch(req: AgentRequest, root: string, env: Env, deps: AgentDeps = {}): Promise<AgentReply> {
@@ -358,7 +386,8 @@ export async function agentSearch(req: AgentRequest, root: string, env: Env, dep
     throw e;
   }
   const offset = input.offset ?? 0;
-  const result = withSearchStore(root, (store) => store.search({ ...input, kind, limit, offset, excludeStatus: true }));
+  // beds is "at least" here (WhatsApp rows and the market alike); the owner's search keeps it exact.
+  const result = withSearchStore(root, (store) => store.search({ ...input, kind, limit, offset, excludeStatus: true, bedsAtLeast: true }));
   const desk: DeskRow[] = source === "external" ? [] : result.rows.map((r) => agentRow(r, base));
 
   if (kind !== "supply" || source === "whatsapp") {
