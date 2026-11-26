@@ -4,6 +4,8 @@ import { ALERT_NAME } from "@/realty/flow/automatch-alert.ts";
 import { Notice } from "../notice";
 import { viewer } from "../viewer";
 import { TestSendButton } from "./test-send-button";
+import { CARD_PAGE_SIZE, pageWindow, slicePage, type QueryParams } from "@/realty/flow/pagination.ts";
+import { PaginationBar } from "../pagination-bar";
 
 /**
  * Auto-Match Alert preview, for any signed-in staff member: one email per strong match (75 and above) as it would go to the
@@ -15,9 +17,12 @@ import { TestSendButton } from "./test-send-button";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Auto-Match Alert · 1on1 Realtors", robots: { index: false, follow: false } };
 
-export default async function AutoMatchAlertPage() {
+export default async function AutoMatchAlertPage({ searchParams }: { searchParams: Promise<QueryParams> }) {
   const { owner } = await viewer();
+  const raw = await searchParams;
   const loaded = await loadAutoMatchAlerts().catch(() => null);
+  const alertWindow = loaded ? pageWindow({ page: raw.page, pageSize: CARD_PAGE_SIZE, total: loaded.alerts.length }) : null;
+  const alerts = loaded && alertWindow ? slicePage(loaded.alerts, alertWindow) : [];
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-10">
       <p className="rt-eyebrow">Read only</p>
@@ -40,9 +45,10 @@ export default async function AutoMatchAlertPage() {
             {loaded.hasTransport ? "yes" : "no"}.
           </p>
           {owner ? <TestSendButton /> : null}
-          {loaded.alerts.length ? (
+          {alerts.length && alertWindow ? (
+            <>
             <ol className="mt-8 grid gap-8" data-tour="alerts-emails">
-              {loaded.alerts.map((a) => (
+              {alerts.map((a) => (
                 <li key={`${a.requestId}-${a.listingKey}`} className="rt-card grid gap-3 p-4">
                   <p className="text-sm">
                     <strong>To:</strong> {a.toName} &lt;{a.to}&gt;
@@ -60,6 +66,8 @@ export default async function AutoMatchAlertPage() {
                 </li>
               ))}
             </ol>
+            <PaginationBar path="/realty/alerts" raw={raw} window={alertWindow} />
+            </>
           ) : (
             <div className="mt-6">
               <Notice>No new strong matches to preview.</Notice>

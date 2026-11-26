@@ -383,3 +383,29 @@
   white-space: nowrap;
   border: 0;
 }
+
+/* Pager buttons (the 1on1 CRM outline Previous / Next). */
+.rt-page-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) * 0.5);
+  padding: 0.25rem 0.7rem;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.rt-page-btn:hover,
+.rt-page-btn:focus-visible {
+  border-color: hsl(var(--primary));
+}
+
+.rt-page-btn.is-off {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+

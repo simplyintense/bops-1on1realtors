@@ -2,7 +2,7 @@ import { ownerAllowed } from "../../lib/gate.ts";
 import { leadsView, type LeadsView } from "../flow/automatch-leads.ts";
 import { runtimeEnv } from "../flow/env.ts";
 import { bandOf } from "../flow/automatch.ts";
-import { automatchRun, type AutomatchOpts, type AutomatchRow } from "./automatch.ts";
+import { automatchRun, type AutomatchOpts, type AutomatchResult, type AutomatchRow } from "./automatch.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
 
@@ -29,6 +29,20 @@ function agentIdOf(email: string | null, agents: readonly { id: number; email: s
  * doesn't depend on who looked first), then builds the cards from the store's statuses and first-seen times.
  */
 export async function staffLeads(o: LeadOptions): Promise<LeadsView> {
+  return (await loadAutomatchWithLeads(o)).leads;
+}
+
+/**
+ * Automatch pairs and lead cards from a single matching run. The Automatch page used to call staffAutomatch and
+ * staffLeads separately, which scored the same demand twice.
+ */
+export async function staffAutomatchWithLeads(o: LeadOptions): Promise<{ owner: false } | ({ owner: boolean } & AutomatchResult & { leads: LeadsView })> {
+  const env = o.env ?? runtimeEnv();
+  if (!o.email && !ownerAllowed(null, env)) return { owner: false };
+  return loadAutomatchWithLeads({ ...o, env });
+}
+
+async function loadAutomatchWithLeads(o: LeadOptions): Promise<{ owner: boolean } & AutomatchResult & { leads: LeadsView }> {
   const env = o.env ?? runtimeEnv();
   const now = o.now ?? new Date();
   const { result, agents } = await automatchRun({ ...o, env, now });
@@ -36,14 +50,16 @@ export async function staffLeads(o: LeadOptions): Promise<LeadsView> {
   store.recordMatchSeen(
     result.pairs.filter((p) => bandOf(p.score) === "strong" && p.ask.postId).map((p) => ({ requestId: p.ask.postId as string, listingKey: p.listingKey, at: now.toISOString() })),
   );
-  return leadsView(result.pairs, {
-    owner: ownerAllowed(o.email, env),
+  const owner = ownerAllowed(o.email, env);
+  const leads = leadsView(result.pairs, {
+    owner,
     agentId: agentIdOf(o.email, agents),
     statuses: store.matchStatuses(),
     firstSeen: store.matchSeenRows(),
     now,
     showHidden: o.showHidden,
   });
+  return { owner, ...result, leads };
 }
 
 /**

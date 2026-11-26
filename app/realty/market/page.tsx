@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import { criteriaFromParams, type DeskArea, type DeskCriteria, type DeskResult } from "@/realty/flow/market-desk.ts";
+import type { CoBrokeHit } from "@/realty/flow/market-search.ts";
 import { staffMarketSearch } from "@/realty/node/market-desk.ts";
 import { staffMarketStrip } from "@/realty/node/market-stats.ts";
 import { Notice } from "../notice";
 import { viewer } from "../viewer";
 import { ListingTable } from "./listing-table";
 import { StatsStrip } from "./stats-strip";
+import { PAGE_SIZE, pageWindow, slicePage, type QueryParams } from "@/realty/flow/pagination.ts";
+import { PaginationBar } from "../pagination-bar";
 
 /**
  * Online search for staff: other agencies' listings for an area, with filters (realty/flow/market-desk.ts). Read-only:
@@ -18,9 +21,7 @@ import { StatsStrip } from "./stats-strip";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Online search · 1on1 Realtors staff", robots: { index: false, follow: false } };
 
-type Params = Record<string, string | string[] | undefined>;
-
-export default async function MarketSearchPage({ searchParams }: { searchParams: Promise<Params> }) {
+export default async function MarketSearchPage({ searchParams }: { searchParams: Promise<QueryParams> }) {
   const raw = await searchParams;
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(raw)) {
@@ -50,7 +51,7 @@ export default async function MarketSearchPage({ searchParams }: { searchParams:
       <Filters c={c} />
 
       <section className="mt-8" data-tour="market-results">
-        {!result ? <Notice>Nothing searched yet. Set the filters above and search.</Notice> : <Results result={result} c={c} />}
+        {!result ? <Notice>Nothing searched yet. Set the filters above and search.</Notice> : <Results result={result} c={c} raw={raw} />}
       </section>
     </main>
   );
@@ -123,7 +124,7 @@ function Filters({ c }: { c: DeskCriteria }) {
   );
 }
 
-function Results({ result, c }: { result: DeskResult; c: DeskCriteria }) {
+function Results({ result, c, raw }: { result: DeskResult; c: DeskCriteria; raw: QueryParams }) {
   if (result.status === "not-configured") {
     return (
       <Notice tone="warn">
@@ -147,13 +148,22 @@ function Results({ result, c }: { result: DeskResult; c: DeskCriteria }) {
       {result.listings.length === 0 ? (
         <Notice>No matching listings.</Notice>
       ) : (
-        <>
-          <p className="rt-muted mb-3 text-sm">
-            {result.listings.length} listing{result.listings.length === 1 ? "" : "s"} from the market.
-          </p>
-          <ListingTable listings={result.listings} />
-        </>
+        <MarketListings listings={result.listings} raw={raw} />
       )}
+    </>
+  );
+}
+
+
+function MarketListings({ listings, raw }: { listings: CoBrokeHit[]; raw: QueryParams }) {
+  const w = pageWindow({ page: raw.page, pageSize: PAGE_SIZE, total: listings.length });
+  return (
+    <>
+      <p className="rt-muted mb-3 text-sm">
+        {listings.length} listing{listings.length === 1 ? "" : "s"} from the market.
+      </p>
+      <ListingTable listings={slicePage(listings, w)} />
+      <PaginationBar path="/realty/market" raw={raw} window={w} />
     </>
   );
 }

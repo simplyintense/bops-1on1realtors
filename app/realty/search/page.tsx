@@ -14,6 +14,8 @@ import { Notice } from "../notice";
 import { PhotoThumbs } from "../photo-thumbs";
 import { staffMayOpen } from "../staff-pages";
 import { sourceFrom, toSearchParams, type RawParams } from "./source";
+import { PAGE_SIZE, hrefWithParams, pageFromSearch, resolvePage } from "@/realty/flow/pagination.ts";
+import { PaginationBar } from "../pagination-bar";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Message Search (WA) · 1on1 Realtors staff", robots: { index: false, follow: false } };
@@ -28,13 +30,7 @@ const TABS: { tab: Tab; label: string }[] = [
 
 /** A link to this page with the same filters and one or more changed. */
 function hrefWith(raw: Params, changes: Record<string, string | undefined>): string {
-  const p = new URLSearchParams();
-  const merged: Record<string, string | undefined> = { ...Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])), ...changes };
-  for (const [k, v] of Object.entries(merged)) {
-    if (v) p.set(k, v);
-  }
-  const qs = p.toString();
-  return `/realty/search${qs ? `?${qs}` : ""}`;
+  return hrefWithParams("/realty/search", raw, changes);
 }
 
 const money = (r: SearchRow) => (r.price == null ? "" : `${r.price.toLocaleString("en-US")}${r.currency ? ` ${r.currency}` : ""}`);
@@ -66,11 +62,11 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   const filters: Params = owner ? raw : { ...raw, group: undefined };
   const sourceNav = (
     <nav aria-label="Source" className="mt-6 flex flex-wrap gap-2">
-      <Link href={hrefWith(raw, { source: undefined, offset: undefined })} className="rt-chip" aria-pressed={source === "groups"}>
+      <Link href={hrefWith(raw, { source: undefined, offset: undefined, page: undefined })} className="rt-chip" aria-pressed={source === "groups"}>
         WhatsApp groups
       </Link>
       {owner ? (
-        <Link href={hrefWith(raw, { source: "online", kind: undefined, offset: undefined })} className="rt-chip" aria-pressed={source === "online"}>
+        <Link href={hrefWith(raw, { source: "online", kind: undefined, offset: undefined, page: undefined })} className="rt-chip" aria-pressed={source === "online"}>
           Online feed
         </Link>
       ) : null}
@@ -105,13 +101,20 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     error = e.message;
   }
   const tab = input.kind ?? "supply";
-  const result = error ? null : withSearchStore(periskopeRoot(), (store) => store.search(input));
+  const requested = pageFromSearch(filters, PAGE_SIZE);
+  const found = error
+    ? null
+    : withSearchStore(periskopeRoot(), (store) =>
+        resolvePage(requested, PAGE_SIZE, (offset, limit) => {
+          const r = store.search({ ...input, limit, offset });
+          return { rows: r.rows, total: r.total };
+        }),
+      );
   const photos = photoIndex(new PeriskopeStore(periskopeRoot()));
   const val = (k: string) => {
     const v = raw[k];
     return Array.isArray(v) ? v[0] ?? "" : v ?? "";
   };
-  const pageSize = input.limit ?? 100;
   const columns = owner ? 11 : 10;
 
   return (
@@ -135,7 +138,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
 
       <nav aria-label="Tabs" className="mt-3 flex flex-wrap gap-2" data-tour="search-tabs">
         {TABS.map((t) => (
-          <Link key={t.tab} href={hrefWith(raw, { kind: t.tab, offset: undefined })} className="rt-chip" aria-pressed={tab === t.tab}>
+          <Link key={t.tab} href={hrefWith(raw, { kind: t.tab, offset: undefined, page: undefined })} className="rt-chip" aria-pressed={tab === t.tab}>
             {t.label}
           </Link>
         ))}
@@ -173,11 +176,10 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
       {error ? <p className="rt-notice rt-notice-error mt-6">{error}</p> : null}
       {photos.overCap ? <Notice tone="warn">Listing photo storage is full (2 GB). New photos are not saved until older ones are removed.</Notice> : null}
 
-      {result ? (
+      {found ? (
         <>
           <p className="rt-muted mt-6 text-sm">
-            {result.total} match{result.total === 1 ? "" : "es"}
-            {result.total ? ` · showing ${result.offset + 1}–${Math.min(result.offset + result.rows.length, result.total)}` : ""}
+            {found.window.total} match{found.window.total === 1 ? "" : "es"}
           </p>
           <div className="rt-table-wrap mt-3">
             <table className="w-full text-sm">
@@ -197,18 +199,13 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                 </tr>
               </thead>
               <tbody>
-                {result.rows.map((r) => (
+                {found.rows.map((r) => (
                   <ResultRows key={r.id} r={r} tab={tab} owner={owner} teacher={teacher} photos={photos} columns={columns} />
                 ))}
               </tbody>
             </table>
           </div>
-          {result.total > result.offset + result.rows.length || result.offset > 0 ? (
-            <nav aria-label="Pages" className="mt-4 flex gap-3 text-sm">
-              {result.offset > 0 ? <Link className="rt-link" href={hrefWith(raw, { offset: String(Math.max(0, result.offset - pageSize)) })}>Previous</Link> : null}
-              {result.total > result.offset + result.rows.length ? <Link className="rt-link" href={hrefWith(raw, { offset: String(result.offset + pageSize) })}>Next</Link> : null}
-            </nav>
-          ) : null}
+          <PaginationBar path="/realty/search" raw={raw} window={found.window} />
         </>
       ) : null}
     </main>
