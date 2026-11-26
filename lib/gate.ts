@@ -94,6 +94,9 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/cloud/event",
   // Periskope's WhatsApp group webhook (realty/node/periskope-intake.ts), checked by its HMAC signature. Its staff paths (opt-out, consent) stay gated.
   "/api/intake/periskope",
+  // The staff MCP's read-only search (realty/node/agent-search.ts), checked by its bearer token (BOPS_MCP_TOKEN) and nothing else.
+  "/api/realty/agent-search",
+  "/api/realty/agent-search/snapshot",
 ]);
 
 /** Where staff land after sign-in: the desk (the Bops chat app at / is one click away in the nav). */

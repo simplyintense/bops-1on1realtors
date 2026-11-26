@@ -36,7 +36,8 @@ import { DEMO_PAGE, demoRoute, GATE_COOKIE, GATE_OPEN_PATHS, gateConfig, gateVer
  */
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const TAILNET_PATHS = new Set(["/api/apps/call", "/api/phone/agentphone", "/api/phone/openai", "/api/channels/slack/events"]);
+// /api/realty/agent-search (+ /snapshot): the staff MCP's server-to-server read, checked by its bearer token (BOPS_MCP_TOKEN).
+const TAILNET_PATHS = new Set(["/api/apps/call", "/api/phone/agentphone", "/api/phone/openai", "/api/channels/slack/events", "/api/realty/agent-search", "/api/realty/agent-search/snapshot"]);
 /** Handed over by Bops Cloud's tunnel (lib/server/cloud-tunnel.ts), which proves itself with its own token. */
 const TUNNEL_PATHS = new Set(["/api/cloud/event"]);
 const READS = new Set(["GET", "HEAD"]);
