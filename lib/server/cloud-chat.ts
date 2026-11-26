@@ -1,6 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import { BOPS_DEVICE_HEADER, BOPS_PROTOCOL_HEADER, BOPS_USER_HEADER, CHAT_NOT_IN_CLOUD, STATE_PROTOCOL, type ChatSendAnswer } from "@/cloud/protocol";
+import { isStaffChat } from "@/lib/staff-chat-tools";
 import { workBot, workspaceOf } from "@/lib/types";
 import { appHeaders } from "./app-version";
 import { cloudOn, cloudUrl } from "./cloud";
@@ -31,7 +32,8 @@ const g = globalThis as unknown as { __bopsCloudChat?: { fetch?: typeof fetch } 
 export function sendsThroughCloud(chatId: string, extra: { images?: number; lookingAt?: string; appNote?: boolean; picks?: boolean }): boolean {
   if (onRunner() || !cloudOn() || extra.images || extra.lookingAt || extra.appNote || extra.picks) return false;
   const c = chat(chatId);
-  if (!c || c.kind === "group" || c.botIds.length !== 1) return false;
+  // A staff member's chat is answered here, with the read-only realty tools (chat.ts turn), never by Bops Cloud.
+  if (!c || isStaffChat(c) || c.kind === "group" || c.botIds.length !== 1) return false;
   const st = getState();
   const b = st.bots.find((x) => x.id === c.botIds[0]);
   if (!b || b.runsOn === "mac" || !workBot(b, st.bots).computerId) return false;

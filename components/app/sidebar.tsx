@@ -10,6 +10,7 @@ import { KeyIcon } from "./screen-cards";
 import { TeamCount, teamWords, useMembersCount } from "./members";
 import { FooterButton, footerPillOf, useFooterHover, useLastPill, type FooterKey, type FooterPage } from "./sidebar-footer";
 import { AppsIcon } from "./made-apps";
+import { useStaff } from "./staff";
 import { KnowledgeIcon, useKnowledgeNews, type MemoryOpen } from "./memory-categories";
 import { AppLogo } from "./apps";
 import { BotMenu, type BotMenuActions } from "./bot-menu";
@@ -126,6 +127,8 @@ export function Sidebar({
   /** The workspace switcher open from the start (expanded from the rail's workspace). */
   workspaces?: boolean;
 }) {
+  // A staff member's sidebar: no renaming a computer, no workspace edits (the owner's; the server refuses them anyway).
+  const staff = useStaff();
   const [query, setQuery] = useState<string | null>(search);
   const q = query?.trim().toLowerCase();
   // A workspace shared with the user is read only: no bot menu, and nothing new is made in it.
@@ -274,7 +277,7 @@ export function Sidebar({
             <circle cx="7" cy="7" r="4.5" fill="none" stroke="#0A0A0A" strokeWidth="1.5" />
             <path d="M10.5 10.5L14 14" fill="none" stroke="#0A0A0A" strokeWidth="1.5" strokeLinecap="round" />
           </RoundButton>
-          {!state.shared && (
+          {!state.shared && !staff && (
             <RoundButton label="New chat or bot" onClick={onCompose}>
               <path d="M8 3v10M3 8h10" fill="none" stroke="#0A0A0A" strokeWidth="1.6" strokeLinecap="round" />
             </RoundButton>
@@ -300,7 +303,7 @@ export function Sidebar({
                 group={g}
                 folded={folds.isFolded(g.key)}
                 onFold={(f) => folds.fold(g.key, f)}
-                onRename={!state.shared && g.computerId ? (name) => renameComputer(ws, g.computerId!, name) : undefined}
+                onRename={!state.shared && !staff && g.computerId ? (name) => renameComputer(ws, g.computerId!, name) : undefined}
                 waiting={item.chats.some((c) => c.id !== chatId && (attention.bots.has(chatBot(c) ?? "") || unreadChat(state, c, false)))}
                 rows={item.chats.map(chatItem)}
                 selected={open && chatItem(open)}
@@ -400,6 +403,8 @@ export function SidebarFooter({
   onApps: () => void;
 }) {
   const knowledge = categoriesOpen(state);
+  // Logins and Routines are the owner's (their accounts, their bots' routines): a staff member's footer has neither.
+  const staff = useStaff();
   // Apps only for an @orgo.ai account for now (lib/apps-access.ts); in a shared workspace, its owner's, when they gave the user Your Apps.
   const apps = appsShown(state);
   const page = (open === "knowledge" && !knowledge) || (open === "apps" && !apps) ? "vault" : open;
@@ -410,16 +415,18 @@ export function SidebarFooter({
   const pill = vertical ? null : footerPillOf({ rest: page ?? "vault", hover: shown(hover), last });
   const pages = (
     <>
-      <FooterButton
-        name="vault"
-        expanded={pill === "vault"}
-        pressed={page === "vault"}
-        label="Logins"
-        tip="Your accounts and logins, and which bots can use them"
-        onClick={onVault}
-        trail={<AppsTrail state={state} expanded={pill === "vault"} />}
-      />
-      <AutopilotButton state={state} expanded={pill === "routines"} pressed={page === "routines"} onOpen={onOpenAutopilot} />
+      {!staff && (
+        <FooterButton
+          name="vault"
+          expanded={pill === "vault"}
+          pressed={page === "vault"}
+          label="Logins"
+          tip="Your accounts and logins, and which bots can use them"
+          onClick={onVault}
+          trail={<AppsTrail state={state} expanded={pill === "vault"} />}
+        />
+      )}
+      {!staff && <AutopilotButton state={state} expanded={pill === "routines"} pressed={page === "routines"} onOpen={onOpenAutopilot} />}
       {knowledge && <KnowledgeButton state={state} expanded={pill === "knowledge"} pressed={page === "knowledge"} news={news} onOpen={() => onOpenMemory({})} />}
       {apps && <FooterButton name="apps" expanded={pill === "apps"} pressed={page === "apps"} label={appsName(state)} tip={appsLine(state)} onClick={onApps} icon={<AppsIcon size={16} />} />}
     </>
@@ -549,6 +556,8 @@ export function YouMenuView({
   const team = given === undefined ? read : given;
   const canRestart = useCanRestart();
   const leaving = useSignOut();
+  // A staff member's account menu has none of the owner's things in it: no Team, Settings, plan, this Mac's permissions, restart or sign out.
+  const staff = useStaff();
   const box = useRef<HTMLDivElement>(null);
   const shut = () => {
     setOpen(false);
@@ -615,10 +624,10 @@ export function YouMenuView({
         <div role="menu" aria-label="Your account" className="motion-menu-in absolute bottom-[calc(100%+8px)] left-0 z-[60] flex w-[248px] origin-bottom-left flex-col rounded-[14px] bg-white p-1.5 shadow-[0_0_0_1px_#E6E6E3,0_12px_32px_rgba(0,0,0,0.12)]">
           <div className="flex flex-col gap-0.5 px-2.5 pb-2 pt-1.5">
             <span className="truncate text-[14px] font-semibold leading-[18px]">{user?.name || state.owner?.name || "You"}</span>
-            <span className="truncate text-[12px] leading-4 text-[#9A9A98]">{user ? (user.email ?? "Signed in with Orgo") : "Not signed in"}</span>
+            <span className="truncate text-[12px] leading-4 text-[#9A9A98]">{staff ? "Signed in" : user ? (user.email ?? "Signed in with Orgo") : "Not signed in"}</span>
           </div>
           <div className="mx-2 mb-1 h-px bg-[#ECECEA]" />
-          {onTeam && (
+          {onTeam && !staff && (
             <button role="menuitem" data-menu-team onClick={pick(onTeam)} className={item}>
               <svg width="15" height="15" viewBox="0 0 16 16" className="shrink-0" aria-hidden>
                 <circle cx="6" cy="5.6" r="2.4" fill="none" stroke="#0A0A0A" strokeWidth="1.4" />
@@ -629,31 +638,37 @@ export function YouMenuView({
               {!!team && <span className="shrink-0 text-[12px] font-normal tabular-nums text-[#8A8A88]">{team}</span>}
             </button>
           )}
-          <button role="menuitem" onClick={pick(onSettings)} className={item}>
-            <svg width="15" height="15" viewBox="0 0 16 16" className="shrink-0" aria-hidden>
-              <path d="M3 4.5h10M3 8h10M3 11.5h10" fill="none" stroke="#0A0A0A" strokeWidth="1.4" strokeLinecap="round" />
-              <circle cx="6" cy="4.5" r="1.6" fill="#fff" stroke="#0A0A0A" strokeWidth="1.3" />
-              <circle cx="10.5" cy="8" r="1.6" fill="#fff" stroke="#0A0A0A" strokeWidth="1.3" />
-              <circle cx="5" cy="11.5" r="1.6" fill="#fff" stroke="#0A0A0A" strokeWidth="1.3" />
-            </svg>
-            Settings
-          </button>
-          <button role="menuitem" onClick={pick(onAccount)} className={item}>
-            <svg width="15" height="15" viewBox="0 0 16 16" className="shrink-0" aria-hidden>
-              <circle cx="8" cy="5.5" r="2.8" fill="none" stroke="#0A0A0A" strokeWidth="1.4" />
-              <path d="M2.8 13.5c.8-2.6 2.8-3.9 5.2-3.9s4.4 1.3 5.2 3.9" fill="none" stroke="#0A0A0A" strokeWidth="1.4" strokeLinecap="round" />
-            </svg>
-            Plan and usage
-          </button>
-          <button role="menuitem" onClick={pick(onSetup)} className={item}>
-            <svg width="15" height="15" viewBox="0 0 16 16" className="shrink-0" aria-hidden>
-              <rect x="1.8" y="2.8" width="12.4" height="8.4" rx="1.4" fill="none" stroke="#0A0A0A" strokeWidth="1.4" />
-              <path d="M5.8 13.6h4.4" fill="none" stroke="#0A0A0A" strokeWidth="1.4" strokeLinecap="round" />
-            </svg>
-            <span className="flex-1">Permissions on this Mac</span>
-            {needsYou && <NeedsYouDot />}
-          </button>
-          {canRestart &&
+          {!staff && (
+            <button role="menuitem" onClick={pick(onSettings)} className={item}>
+              <svg width="15" height="15" viewBox="0 0 16 16" className="shrink-0" aria-hidden>
+                <path d="M3 4.5h10M3 8h10M3 11.5h10" fill="none" stroke="#0A0A0A" strokeWidth="1.4" strokeLinecap="round" />
+                <circle cx="6" cy="4.5" r="1.6" fill="#fff" stroke="#0A0A0A" strokeWidth="1.3" />
+                <circle cx="10.5" cy="8" r="1.6" fill="#fff" stroke="#0A0A0A" strokeWidth="1.3" />
+                <circle cx="5" cy="11.5" r="1.6" fill="#fff" stroke="#0A0A0A" strokeWidth="1.3" />
+              </svg>
+              Settings
+            </button>
+          )}
+          {!staff && (
+            <button role="menuitem" onClick={pick(onAccount)} className={item}>
+              <svg width="15" height="15" viewBox="0 0 16 16" className="shrink-0" aria-hidden>
+                <circle cx="8" cy="5.5" r="2.8" fill="none" stroke="#0A0A0A" strokeWidth="1.4" />
+                <path d="M2.8 13.5c.8-2.6 2.8-3.9 5.2-3.9s4.4 1.3 5.2 3.9" fill="none" stroke="#0A0A0A" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+              Plan and usage
+            </button>
+          )}
+          {!staff && (
+            <button role="menuitem" onClick={pick(onSetup)} className={item}>
+              <svg width="15" height="15" viewBox="0 0 16 16" className="shrink-0" aria-hidden>
+                <rect x="1.8" y="2.8" width="12.4" height="8.4" rx="1.4" fill="none" stroke="#0A0A0A" strokeWidth="1.4" />
+                <path d="M5.8 13.6h4.4" fill="none" stroke="#0A0A0A" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+              <span className="flex-1">Permissions on this Mac</span>
+              {needsYou && <NeedsYouDot />}
+            </button>
+          )}
+          {canRestart && !staff &&
             (restart ? (
               <RestartAsk compact onCancel={() => setRestart(false)} />
             ) : (
@@ -851,6 +866,8 @@ export function WorkspaceSwitcher({
   onTeamChart?: () => void;
 }) {
   const [open, setOpen] = useState(opened);
+  // A staff member's switcher lists the workspaces; it doesn't rename, delete or make them (the owner's).
+  const staff = useStaff();
   // Workspaces others shared with the user (lib/shared.ts), read each time the menu opens.
   const [shared, setShared] = useState<SharedWorkspace[]>(sharedList ?? []);
   const [naming, setNaming] = useState<null | { id?: string; name: string }>(null);
@@ -1052,17 +1069,19 @@ export function WorkspaceSwitcher({
                       {count(w.id)} bot{count(w.id) === 1 ? "" : "s"}
                     </span>
                   </button>
-                  <button
-                    onClick={() => setNaming({ id: w.id, name: w.name })}
-                    title={`Rename ${w.name}`}
-                    aria-label={`Rename ${w.name}`}
-                    className="mx-1 flex size-7 shrink-0 items-center justify-center rounded-md text-[#9A9A98] opacity-0 transition-opacity duration-150 ease-out hover:bg-black/[0.06] hover:text-ink focus-visible:opacity-100 group-hover/ws:opacity-100 group-has-[:focus-visible]/ws:opacity-100 motion-reduce:transition-none"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 16 16">
-                      <path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12 3 13z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                  {workspaces.length > 1 && w.id !== MAIN_WORKSPACE && deleting?.id !== w.id && (
+                  {!staff && (
+                    <button
+                      onClick={() => setNaming({ id: w.id, name: w.name })}
+                      title={`Rename ${w.name}`}
+                      aria-label={`Rename ${w.name}`}
+                      className="mx-1 flex size-7 shrink-0 items-center justify-center rounded-md text-[#9A9A98] opacity-0 transition-opacity duration-150 ease-out hover:bg-black/[0.06] hover:text-ink focus-visible:opacity-100 group-hover/ws:opacity-100 group-has-[:focus-visible]/ws:opacity-100 motion-reduce:transition-none"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 16 16">
+                        <path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12 3 13z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  )}
+                  {!staff && workspaces.length > 1 && w.id !== MAIN_WORKSPACE && deleting?.id !== w.id && (
                     <button
                       onClick={() => void askDelete(w.id)}
                       title={`Delete ${w.name}`}
@@ -1150,7 +1169,7 @@ export function WorkspaceSwitcher({
               {problem && <span role="alert" className="px-2.5 pb-1 text-[12px] leading-4 text-[#B42318]">{problem}</span>}
               <NameInput value={naming.name} placeholder="Name the workspace" onChange={editName()} onSave={save} onCancel={() => setNaming(null)} />
             </>
-          ) : (
+          ) : staff ? null : (
             <button onClick={() => setNaming({ name: "" })} className="flex h-9 items-center gap-2 rounded-[10px] pl-2.5 text-left text-[14px] font-medium hover:bg-black/[0.04]">
               <span className="flex size-[18px] items-center justify-center">
                 <svg width="12" height="12" viewBox="0 0 16 16">

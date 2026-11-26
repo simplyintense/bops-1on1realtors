@@ -1,5 +1,6 @@
 "use client";
 
+import { useStaff } from "./staff";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { appsStayLine, live, type AppState, type Bot, type Effort } from "@/lib/types";
 import { Mascot } from "./mascot";
@@ -69,6 +70,7 @@ export function BotMenu({ state, bot: b, x, y, onClose, actions }: { state: AppS
   const row = "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] leading-4 text-ink hover:bg-[#F2F2F0]";
   const quick = "flex flex-1 flex-col items-center gap-1.5 rounded-xl py-2.5 text-[11.5px] font-medium leading-[14px]";
 
+  const staff = useStaff();
   return (
     <>
       {/* A press outside closes it; while Delete asks, it puts the question away first. */}
@@ -165,7 +167,7 @@ export function BotMenu({ state, bot: b, x, y, onClose, actions }: { state: AppS
           </div>
         )}
 
-        {!b.isMain && (
+        {!b.isMain && !staff && (
           <>
             <div className="mx-1.5 my-1 h-px bg-[#ECECEA]" />
             {confirm ? (

@@ -7,6 +7,7 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useLayoutE
 import { trackEvent } from "@/lib/analytics";
 import { BLOCKER_ASK, BRAINS_ON, COMPACTED, live, ownerSent, pairChatId, routineSent, threadCompactBlocked, threadCompacts, threadRunner, waitingAsks, WAITING_FOR_OK, waitsForOk, withRemoteTyping, workBot, workspaceOf, TAPBACK_EMOJI, TAPBACKS, type AppApproval, type AppState, type Blocker, type Bot, type Chat, type MadeApp, type Message, type Session, type Tapback, type ThreadReply } from "@/lib/types";
 import { Tapback as TapbackBalloon, TapbackGlyph, tapbackVars } from "@/components/message-ui/tapback";
+import { useStaff } from "./staff";
 import { Mascot } from "./mascot";
 import { OpenBotLocal, OpenLink, OpenPreview } from "./panel-tabs";
 import { appCoders } from "@/lib/hosted-apps";
@@ -389,6 +390,8 @@ export function ChatView({
   const [saving, setSaving] = useState<{ botId: string; chatId: string } | null>(null);
   // Stable, so the dialog's own timers aren't reset by every state poll.
   const closeSaving = useCallback(() => setSaving(null), []);
+  // A staff member's chat: no Compact, and no deleting or tapbacks on messages (the owner's; the server refuses them anyway).
+  const staff = useStaff();
   const rowProps = (m: Message) => ({
     replyCount: replyCount.get(m.id) ?? 0,
     root: m.replyTo ? messages.find((x) => x.id === m.replyTo) : undefined,
@@ -396,7 +399,7 @@ export function ChatView({
     onOpenReplies: () => setRepliesOpen(m.replyTo ?? m.id),
     onShowMac,
     // A shared workspace's messages are its owner's: never deleted from here.
-    onDelete: state.shared ? undefined : () => deletes.remove(m.chatId, [m], { mine: saidBy(m, state) === "you" }),
+    onDelete: state.shared || staff ? undefined : () => deletes.remove(m.chatId, [m], { mine: saidBy(m, state) === "you" }),
   });
   // Select messages (the chat's menu): the ones picked, in this chat only; Esc leaves it.
   const [selecting, setSelecting] = useState<{ chat: string; ids: string[] } | null>(null);
@@ -422,7 +425,7 @@ export function ChatView({
   // Compact (the chat's menu): every message up to now into the chat's summary, and its bots read it afresh from here
   // (lib/server/chat-summary.ts). The owner's, and in a shared workspace a member's with Write on every bot in it, as
   // saying something there takes (through the owner's Bops: shared-act.ts). Off while a bot answers, or with nothing new.
-  const mayCompact = !readOnly(state, c.botIds);
+  const mayCompact = !staff && !readOnly(state, c.botIds);
   const [compacting, setCompacting] = useState<{ chat: string; error?: string } | null>(null);
   const compactingHere = compacting?.chat === c.id ? compacting : null;
   const compactOff = compactingHere && !compactingHere.error ? "Compacting" : compactBlocked(c, messages, (id) => state.bots.find((x) => x.id === id)?.name);
@@ -1437,7 +1440,9 @@ function MessageRow({ m, state, showSender, continued, sessionById, chipIds, onO
   };
   // A shared workspace's messages are the owner's: read and copied, never reacted to or deleted here; replied to
   // only where the viewer has Write on every bot in the chat (canAct).
-  const ro = !!state.shared;
+  // Read-only here for a staff member: no tapbacks, no delete (see ChatView).
+  const staff = useStaff();
+  const ro = !!state.shared || staff;
   const writes = canAct(state, state.chats.find((x) => x.id === m.chatId)?.botIds ?? []);
   // The user's own words go out on the right. In a workspace shared with them the owner's come in on the left,
   // named as the owner's, never in the viewer's own outgoing bubble; and so does a member's (someone the owner

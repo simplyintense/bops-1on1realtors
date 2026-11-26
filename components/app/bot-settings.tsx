@@ -1,5 +1,6 @@
 "use client";
 
+import { useStaff } from "./staff";
 import { useEffect, useId, useRef, useState } from "react";
 import { mailRule } from "@/lib/permission";
 import { aiLine, CLOUD_HONOURS_CALL_SETTINGS, headerLine, lineVoiceNote, repliesNote, SETTINGS_SECTIONS, SETTINGS_WORDS as W, spacedPhone, teamLine, type SettingsSection } from "@/lib/bot-settings";
@@ -310,13 +311,14 @@ export function BotSettingsBody({
     memory: () => card("memory", ownMemory(state, b.id) ? W.memoryOwn : W.memoryTeam, <BotMemory state={state} bot={b} onOpenThread={links.onOpenThread} />),
     computer: () => card("computer", computerLine(state, b), <ComputerBody state={state} bot={b} links={links} onRoutines={(app) => (setOnly(app), onToggle("routines"))} />),
   };
+  const staff = useStaff();
   return (
     <>
       <div className="mt-6 flex flex-col gap-2.5">{SETTINGS_SECTIONS.map((s) => cards[s]())}</div>
       <div className="mt-6 flex flex-col gap-3.5">
         <WhereToFind state={state} bot={b} />
         <ShareAndPause state={state} bot={b} />
-        {!b.isMain && <DeleteBot bot={b} apps={appsStayLine(state, b)} />}
+        {!b.isMain && !staff && <DeleteBot bot={b} apps={appsStayLine(state, b)} />}
       </div>
     </>
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import { useStaff } from "./staff";
 import { useEffect, useRef, useState } from "react";
 import type { AppState, Chat } from "@/lib/types";
 import { categoriesOpen } from "@/lib/memory-categories";
@@ -143,6 +144,7 @@ export function SidebarRail({
     );
   };
 
+  const staff = useStaff();
   return (
     <aside data-tip-side="right" aria-label="Sidebar, collapsed" className="flex min-h-0 w-[72px] shrink-0 flex-col px-3 pb-3 pt-3.5">
       <div className="flex flex-col items-center gap-2 pb-3">
@@ -162,7 +164,7 @@ export function SidebarRail({
           <circle cx="7" cy="7" r="4.5" fill="none" stroke="#0A0A0A" strokeWidth="1.5" />
           <path d="M10.5 10.5L14 14" fill="none" stroke="#0A0A0A" strokeWidth="1.5" strokeLinecap="round" />
         </RoundButton>
-        {!state.shared && (
+        {!state.shared && !staff && (
           <RoundButton label="New chat or bot" onClick={onCompose}>
             <path d="M8 3v10M3 8h10" fill="none" stroke="#0A0A0A" strokeWidth="1.6" strokeLinecap="round" />
           </RoundButton>
