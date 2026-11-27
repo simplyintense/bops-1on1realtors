@@ -14,16 +14,16 @@ const TEACHER = { owner: false, teacher: true };
 const OWNER = { owner: true, teacher: false };
 const OWNER_TEACHER = { owner: true, teacher: true };
 
-const ALL_NINE = ["Desk", "Message Search (WA)", "Online search", "Automatch", "All posts", "Digest", "Auto-Match Alert", "Teach", "Bot Workspace"];
+const ALL_EIGHT = ["Desk", "Message Search (WA)", "Online search", "Automatch", "All posts", "Digest", "Auto-Match Alert", "Teach"];
 
-test("the nine AI Desk pages, in the sidebar's order, with Bot Workspace last", () => {
-  assert.deepEqual(STAFF_PAGES.map((p) => p.label), ALL_NINE);
-  assert.deepEqual(STAFF_PAGES.map((p) => p.href), ["/realty/desk", "/realty/search", "/realty/market", "/realty/automatch", "/realty/posts", "/realty/digest", "/realty/alerts", "/realty/learn", "/"]);
+test("the eight AI Desk pages, in the sidebar's order", () => {
+  assert.deepEqual(STAFF_PAGES.map((p) => p.label), ALL_EIGHT);
+  assert.deepEqual(STAFF_PAGES.map((p) => p.href), ["/realty/desk", "/realty/search", "/realty/market", "/realty/automatch", "/realty/posts", "/realty/digest", "/realty/alerts", "/realty/learn"]);
 });
 
-test("every staff member sees all nine: an agent, a teacher, an owner, and an owner who teaches get the same list", () => {
+test("every staff member sees all eight: an agent, a teacher, an owner, and an owner who teaches get the same list", () => {
   for (const viewer of [AGENT, TEACHER, OWNER, OWNER_TEACHER]) {
-    assert.deepEqual(labels(viewer), ALL_NINE, JSON.stringify(viewer));
+    assert.deepEqual(labels(viewer), ALL_EIGHT, JSON.stringify(viewer));
   }
   assert.deepEqual(visibleStaffPages(AGENT), visibleStaffPages(OWNER), "the same entries, not just the same labels");
   assert.deepEqual(visibleStaffPages(TEACHER), visibleStaffPages(OWNER_TEACHER));
@@ -36,13 +36,11 @@ test("no entry is owner-only or teacher-only any more: the flags stay, and every
   }
 });
 
-test("Bot Workspace is the chat app at / and is listed for every staff member, the root only", () => {
-  for (const viewer of [AGENT, TEACHER, OWNER]) {
-    assert.ok(visibleStaffPages(viewer).some((p) => p.label === "Bot Workspace" && p.href === "/"), JSON.stringify(viewer));
+test("Bot Workspace is in no top nav: not for an agent, a teacher or an owner, and no entry points at the root", () => {
+  for (const viewer of [AGENT, TEACHER, OWNER, OWNER_TEACHER]) {
+    assert.ok(!visibleStaffPages(viewer).some((p) => p.label === "Bot Workspace" || p.href === "/"), JSON.stringify(viewer));
   }
-  const home = STAFF_PAGES.find((p) => p.label === "Bot Workspace");
-  assert.equal(home?.href, "/");
-  assert.equal(navTourId("/"), "nav-home");
+  assert.ok(!STAFF_PAGES.some((p) => p.label === "Bot Workspace" || p.href === "/"));
 });
 
 test("Message Search (WA) is the renamed Supply & Demand / Market Search page: same URL, for every staff member, no owner flag", () => {
@@ -65,7 +63,7 @@ test("the access rule for Message Search (WA) and a stored post: any signed-in s
   assert.equal(staffMayOpen({ staff: false, owner: false }), false, "neither");
 });
 
-test("the data-tour ids: each nav entry's id is its last path segment, nav-home for Bot Workspace", () => {
+test("the data-tour ids: each nav entry's id is its last path segment; the root keeps its nav-home id", () => {
   assert.equal(navTourId("/realty/desk"), "nav-desk");
   assert.equal(navTourId("/realty/search"), "nav-search");
   assert.equal(navTourId("/realty/learn"), "nav-learn");

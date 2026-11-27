@@ -40,7 +40,7 @@ type Env = Record<string, string | undefined>;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 /**
- * A `next` the hand-off may land on: the sidebar's nine AI Desk pages (staff-pages.ts, the site root included), or one stored
+ * A `next` the hand-off may land on: the sidebar's eight AI Desk pages (staff-pages.ts), the site root (the owner-only Bot Workspace), or one stored
  * post's page (/realty/posts/<id>, the id is hex or base64url, as requestIdOf makes it). A query string is allowed on those, with
  * plain characters only. Nothing else: no other paths, no scheme, no "//", no backslash, no "..", no fragment.
  */

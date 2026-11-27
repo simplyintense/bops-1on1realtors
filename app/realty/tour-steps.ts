@@ -7,7 +7,7 @@ import { SIDEBAR_DESK_HREFS } from "./sidebar-model.ts";
  *
  * The tour is: a welcome card, then for each page the viewer can see (in nav order) the page's nav link (only when the sidebar
  * shows that link, see SIDEBAR_DESK_HREFS) followed by the page's key sections, then a closing card that points at the Start
- * tour button. Every AI Desk page has a sidebar link, so every page has its nav step; Bot Workspace ("/") is one of them.
+ * tour button. Every AI Desk page has a sidebar link, so every page has its nav step.
  */
 
 export const TOUR_SEEN_KEY = "desk-tour-seen"; // localStorage, only when there is no signed-in email (gate off)
@@ -44,10 +44,6 @@ export const CLOSING: Copy = {
 
 /** Each page's nav copy and key sections, keyed by the page's href. Targets are data-tour ids in the page's source. */
 const PAGES: Record<string, { nav: Copy; sections: Section[] }> = {
-  "/": {
-    nav: { title: "Bot Workspace", text: "The chat workspace, where you work with your bots." },
-    sections: [],
-  },
   "/realty/desk": {
     nav: { title: "Desk", text: "Desk is your home page. It shows matches for you and shortcuts to your tools." },
     sections: [

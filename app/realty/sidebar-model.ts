@@ -139,7 +139,7 @@ export const AI_DESK_GROUP = { label: "AI Desk", icon: "Sparkles" } as const;
 export type DeskLink = { readonly label: string; readonly href: string; readonly icon: CrmIcon };
 
 /**
- * The AI Desk group's links, in the sidebar's order. These are the desk's pages (staff-pages.ts lists the same nine, in the same
+ * The AI Desk group's links, in the sidebar's order. These are the desk's pages (staff-pages.ts lists the same eight, in the same
  * order, for the top nav and the tour). The active one is decided by isCurrentPage.
  */
 export const DESK_LINKS: readonly DeskLink[] = [
@@ -151,7 +151,6 @@ export const DESK_LINKS: readonly DeskLink[] = [
   { label: "Digest", href: "/realty/digest", icon: "Newspaper" },
   { label: "Auto-Match Alert", href: "/realty/alerts", icon: "Bell" },
   { label: "Teach", href: "/realty/learn", icon: "GraduationCap" },
-  { label: "Bot Workspace", href: "/", icon: "Bot" },
 ];
 
 /** Logout: the desk's gate sign-out (clears the bops_gate cookie). Labelled Logout, as in the CRM. */
@@ -190,7 +189,7 @@ export function crmSidebar(role: CrmRole): {
 
 /**
  * Whether a desk link is the page being shown. Message Search (WA) (/realty/search) is also the current item on a stored post's page.
- * All posts is current only on its own list, not on a post under it. Bot Workspace is current only at /.
+ * All posts is current only on its own list, not on a post under it.
  */
 const POST_PAGE = /^\/realty\/posts\/[A-Za-z0-9_-]+$/;
 

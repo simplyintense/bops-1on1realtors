@@ -74,7 +74,7 @@ test("the Admin Portal sees the whole CRM; the Agent Portal sees only the agent 
     assert.ok(superLabels.includes(label), `the Admin Portal shows ${label}`);
     assert.ok(!agentLabels.includes(label), `the Agent Portal does not show ${label}`);
   }
-  for (const label of ["Dashboard", "Desk", "Message Search (WA)", "Online search", "Automatch", "All posts", "Digest", "Auto-Match Alert", "Teach", "Bot Workspace", "My Clients", "Add Client", "Team Client Activity", "My Properties", "Add Property", "Team Property Activity", "Tasks", "My Inquiries", "My Activity", "MCP settings", "My Profile", "Back to Site", "Logout"]) {
+  for (const label of ["Dashboard", "Desk", "Message Search (WA)", "Online search", "Automatch", "All posts", "Digest", "Auto-Match Alert", "Teach", "My Clients", "Add Client", "Team Client Activity", "My Properties", "Add Property", "Team Property Activity", "Tasks", "My Inquiries", "My Activity", "MCP settings", "My Profile", "Back to Site", "Logout"]) {
     assert.ok(agentLabels.includes(label), `the Agent Portal shows ${label}`);
     assert.ok(superLabels.includes(label), `the Admin Portal shows ${label}`);
   }
@@ -94,7 +94,7 @@ test("the groups and the top and footer links, in the CRM's order and counts; Ma
   assert.equal(CRM_GROUPS.length, 5);
 });
 
-test("the links are the CRM's exact routes on its domain, and the AI Desk group is the desk's nine pages", () => {
+test("the links are the CRM's exact routes on its domain, and the AI Desk group is the desk's eight pages", () => {
   assert.equal(CRM_ORIGIN, "https://1on1realtors.com");
   assert.deepEqual(linksFor(SUPER), [
     ["Admin Dashboard", "https://1on1realtors.com/admin"],
@@ -107,7 +107,6 @@ test("the links are the CRM's exact routes on its domain, and the AI Desk group 
     ["Digest", "/realty/digest"],
     ["Auto-Match Alert", "/realty/alerts"],
     ["Teach", "/realty/learn"],
-    ["Bot Workspace", "/"],
     ["My Clients", "https://1on1realtors.com/agent/crm"],
     ["Add Client", "https://1on1realtors.com/agent/crm/add"],
     ["All Clients", "https://1on1realtors.com/admin/crm"],
@@ -140,7 +139,7 @@ test("the links are the CRM's exact routes on its domain, and the AI Desk group 
     linksFor(AGENT).filter(([, href]) => href.startsWith("https://")).map(([, href]) => href).slice(0, 3),
     ["https://1on1realtors.com/agent/dashboard", "https://1on1realtors.com/agent/crm", "https://1on1realtors.com/agent/crm/add"],
   );
-  assert.deepEqual(SIDEBAR_DESK_HREFS, DESK_LINKS.map((l) => l.href), "the nine AI Desk hrefs, in order");
+  assert.deepEqual(SIDEBAR_DESK_HREFS, DESK_LINKS.map((l) => l.href), "the eight AI Desk hrefs, in order");
 });
 
 test("every CRM sidebar href is an exact route in the live CRM App.tsx (origin/main a38b229)", () => {
@@ -195,7 +194,7 @@ test("every CRM link is same-tab: no new window, no target, anywhere in the side
   }
 });
 
-test("each AI Desk link is current on its own page; Message Search (WA) is also current on a stored post; All posts is not; Bot Workspace only at /", () => {
+test("each AI Desk link is current on its own page; Message Search (WA) is also current on a stored post; All posts is not", () => {
   for (const link of DESK_LINKS) {
     assert.equal(isCurrentPage(link.href, link.href), true, link.href);
   }
@@ -205,7 +204,7 @@ test("each AI Desk link is current on its own page; Message Search (WA) is also 
   assert.equal(isCurrentPage("/realty/posts", "/realty/posts"), true);
   assert.equal(isCurrentPage("/realty/posts", "/realty/posts/abc123DEF"), false, "All posts is the list only");
   assert.equal(isCurrentPage("/", "/"), true);
-  assert.equal(isCurrentPage("/", "/realty/desk"), false, "Bot Workspace is the root only");
+  assert.equal(isCurrentPage("/", "/realty/desk"), false, "the root is current only at /");
   for (const path of ["/realty/desk", "/realty/posts", "/realty/market", "/realty/learn", "/"]) {
     assert.equal(isCurrentPage("/realty/search", path), false, path);
   }
@@ -297,10 +296,10 @@ test("the icons are the CRM's Lucide icons, each present in lucide-react under t
   assert.equal(CRM_GROUPS.find((g) => g.label === "CRM")?.icon, "Briefcase");
   assert.equal(CRM_GROUPS.find((g) => g.label === "Analytics & Logs")?.icon, "BarChart");
   assert.equal(AI_DESK_GROUP.icon, "Sparkles");
-  assert.deepEqual(DESK_LINKS.map((l) => l.icon), ["LayoutGrid", "Search", "Globe", "GitCompareArrows", "FileText", "Newspaper", "Bell", "GraduationCap", "Bot"]);
+  assert.deepEqual(DESK_LINKS.map((l) => l.icon), ["LayoutGrid", "Search", "Globe", "GitCompareArrows", "FileText", "Newspaper", "Bell", "GraduationCap"]);
 });
 
-test("the AI Desk group lists the nine desk pages in order, with Sparkles, open by default; old labels are gone", () => {
+test("the AI Desk group lists the eight desk pages in order, with Sparkles, open by default; old labels are gone", () => {
   assert.equal(AI_DESK_GROUP.label, "AI Desk");
   assert.equal(AI_DESK_GROUP.icon, "Sparkles");
   assert.ok(CRM_GROUPS_OPEN_BY_DEFAULT.includes("AI Desk"));
@@ -315,7 +314,6 @@ test("the AI Desk group lists the nine desk pages in order, with Sparkles, open 
       ["Digest", "/realty/digest", "Newspaper"],
       ["Auto-Match Alert", "/realty/alerts", "Bell"],
       ["Teach", "/realty/learn", "GraduationCap"],
-      ["Bot Workspace", "/", "Bot"],
     ],
   );
   const labels = [...labelsFor(SUPER), ...labelsFor(AGENT)];

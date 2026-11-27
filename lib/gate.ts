@@ -111,7 +111,7 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/realty/learn/flag-match",
 ]);
 
-/** Where staff land after sign-in: the desk (the Bops chat app at / is one click away in the nav). */
+/** Where staff land after sign-in: the desk. */
 export const HOME_AFTER_SIGN_IN = "/realty/desk";
 
 /**
@@ -129,8 +129,8 @@ export function safeNext(next: string | null | undefined): string {
 /**
  * With the gate on, an owner (ownerAllowed) reaches everything, as before. Any other signed-in person is staff, and staff reach
  * the AI Desk pages (the sidebar's group, staff-pages.ts) and the guided tour's APIs. Owner-only mutation APIs, the owners' vault,
- * keys and Workspace APIs stay closed to staff: their calls get 403. Staff also reach the Bot Workspace (/) and its chat APIs (AGENT_APIS;
- * the routes redact the state and check each chat is theirs). A teacher (teachAllowed) also may POST the teach APIs (the
+ * keys and Bot Workspace APIs (/, /api/state, /api/chats, ...) stay closed to staff: their calls get 403, and the Workspace page sends
+ * them to the desk. A teacher (teachAllowed) also may POST the teach APIs (the
  * page's own forms; the teach page itself is open to all staff). Everything else is refused by the proxy (proxy.ts): an API call
  * gets 403, a page a redirect to the desk. Listed by path, not by prefix, so a new route is closed until someone adds it here.
  */
@@ -152,26 +152,20 @@ export const AGENT_PAGES = [
 ] as const;
 
 /**
- * Pages an agent may open by exact path only, never by prefix: "/" (Workspace, the Bops chat app's home) and "/realty/posts" (the
- * list of all posts). `under(path, "/")` is true for every path, so "/" must never go through `under`.
+ * Pages an agent may open by exact path only, never by prefix: "/realty/posts" (the list of all posts). `under(path, "/")` is true for
+ * every path, so the site root must never go through `under`; it stays closed to staff (Bot Workspace is owner-only).
  */
-const AGENT_EXACT_PAGES: readonly string[] = ["/", "/realty/posts"];
+const AGENT_EXACT_PAGES: readonly string[] = ["/realty/posts"];
 /** One stored post's page, /realty/posts/<request id> (the id is hex or base64url, from requestIdOf). */
 const AGENT_POST_PAGE = /^\/realty\/posts\/[A-Za-z0-9_-]+$/;
 
 type ApiRule = { methods: readonly string[]; match: (path: string) => boolean };
 
 /**
- * The APIs the desk, online search, the guided tour and the Bot Workspace (/) call (desk/follow-up-buttons.tsx, desk-tour.tsx,
- * photo-thumbs.tsx, components/app). The Bot Workspace's state and sign-in status are answered redacted for staff (lib/staff-workspace.ts),
- * and its chat routes check each chat is the signed-in person's own (isStaffChatOf). Its owner-only routes (settings, keys, bots, computers) stay out.
+ * The APIs the desk, online search, the guided tour and the teach page call (desk/follow-up-buttons.tsx, desk-tour.tsx,
+ * photo-thumbs.tsx, components/app). The Bot Workspace's APIs are not here: they stay owner-only.
  */
 export const AGENT_APIS: readonly ApiRule[] = [
-  // The Bot Workspace reads its state and the sign-in status (redacted for staff: app/api/state, app/api/auth/status).
-  { methods: ["GET", "HEAD"], match: (p) => p === "/api/state" || p === "/api/auth/status" },
-  // Their own chat with a bot: made on first use (app/api/chats), written in and marked read; each route checks the chat is theirs.
-  { methods: ["POST"], match: (p) => p === "/api/chats" },
-  { methods: ["POST"], match: (p) => /^\/api\/chats\/[A-Za-z0-9_]+\/(?:messages|read)$/.test(p) },
   // The desk's follow-up buttons: the route only writes what the agent may see on their own desk (realty/node/match-status.ts).
   { methods: ["POST"], match: (p) => p === "/api/realty/match-status" },
   // "Not a lead" on a desk card: the route only marks what the agent may see on their own desk (realty/node/not-a-lead.ts).
