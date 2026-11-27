@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { test } from "node:test";
-import { MemoryAreaResolver, type Place } from "../flow/areas.ts";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, test } from "node:test";
+import { MemoryAreaResolver, type Place, type ToolCaller } from "../flow/areas.ts";
 import { FAIR } from "../flow/automatch.ts";
 import { NOT_CONNECTED, type CrmSeam } from "../flow/crm-seam.ts";
 import type { Listing } from "../flow/source.ts";
 import { areasForMatch, isCentralAreaGroup } from "../extract.ts";
-import { automatchClient, placeWithoutRegion, type AutomatchClientOpts } from "../node/automatch-client.ts";
+import { automatchClient, EXCERPT_MAX, excerptOf, placeWithoutRegion, type AutomatchClientOpts } from "../node/automatch-client.ts";
 import type { AgentReply } from "../node/agent-search.ts";
 import { GATE_OPEN_PATHS } from "../../lib/gate.ts";
+import type { SearchRow } from "../node/search-store.ts";
 
 /**
  * POST /api/realty/automatch-client: the bearer gate (503 unset, 401 wrong), the brief's validation (400), the scoring against
@@ -276,7 +279,7 @@ test("the success response has the contract's field names and meta", async () =>
   assert.equal(r.status, 200);
   assert.deepEqual(Object.keys(r.body).sort(), ["matches", "meta", "ok"]);
   assert.equal(r.body.ok, true);
-  assert.deepEqual(r.body.meta, { total_candidates: 3, scored_at: NOW.toISOString() });
+  assert.deepEqual(r.body.meta, { total_candidates: 3, scored_at: NOW.toISOString(), sources: ["crm"] });
   assert.deepEqual(Object.keys(matchesOf(r)[0]).sort(), ["bathrooms", "bedrooms", "currency", "listing_type", "location", "matched_fields", "price", "property_id", "property_type", "reasons", "score", "title"]);
   const m = matchesOf(r)[0];
   assert.equal(m.property_id, "A");
@@ -436,6 +439,413 @@ test("the Central group is only 'Central location(s)': bare 'Central' is the reg
   assert.equal(isCentralAreaGroup("central  location"), true);
   assert.equal(areasForMatch("Central").same.includes("Cascade"), false, "bare Central expands to no places");
   assert.equal(areasForMatch("Central locations").same.includes("Cascade"), true);
+});
+
+/* ---------------- sources: WhatsApp offers and other agencies' listings ---------------- */
+
+type Meta = { total_candidates: number; scored_at: string; sources: string[]; whatsapp_candidates?: number; warnings?: string[] };
+type WaMatch = { id: string; title: string; location: string | null; price: number | null; currency: string | null; listing_type: string | null; property_type: string | null; bedrooms: number | null; bathrooms: number | null; score: number; reasons: string[]; sender_name: string | null; sender_phone: string | null; posted_at: string | null; excerpt: string | null; post_url: string | null };
+type OnlineMatch = { id: string | null; title: string | null; location: string | null; price: number | null; currency: string | null; listing_type: string | null; property_type: string | null; bedrooms: number | null; bathrooms: number | null; score: number | null; reasons: string[]; source_site: string | null; url: string | null };
+
+const WA_KEYS = ["bathrooms", "bedrooms", "currency", "excerpt", "id", "listing_type", "location", "posted_at", "post_url", "price", "property_type", "reasons", "score", "sender_name", "sender_phone", "title"];
+const ONLINE_KEYS = ["bathrooms", "bedrooms", "currency", "id", "listing_type", "location", "price", "property_type", "reasons", "score", "source_site", "title", "url"];
+
+const metaOf = (r: AgentReply) => r.body.meta as Meta;
+const waOf = (r: AgentReply) => (r.body.whatsapp_matches ?? []) as WaMatch[];
+const onlineOf = (r: AgentReply) => (r.body.online_matches ?? []) as OnlineMatch[];
+const waIds = (r: AgentReply) => waOf(r).map((m) => m.id);
+const warningsOf = (r: AgentReply) => metaOf(r).warnings ?? [];
+
+/** A store root with no files: the WhatsApp source reads nothing from it, so no test reads the real store. */
+const EMPTY_ROOT = mkdtempSync(join(tmpdir(), "automatch-empty-store-"));
+after(() => rmSync(EMPTY_ROOT, { recursive: true, force: true }));
+
+const THROWS: CrmSeam = { connected: true, listings: async () => { throw new Error("invented CRM failure"); }, agents: async () => [] };
+
+type RunOpts = {
+  listings?: Listing[];
+  seam?: CrmSeam;
+  areas?: AutomatchClientOpts["areas"];
+  supply?: SearchRow[];
+  market?: ToolCaller | null;
+  marketTimeoutMs?: number;
+  root?: string;
+  env?: Record<string, string | undefined>;
+};
+
+/** The handler with each source's seam injected: the CRM listings (or `seam`), the WhatsApp rows, the market. No network. */
+async function run(brief: unknown, o: RunOpts = {}): Promise<AgentReply> {
+  return automatchClient({ authorization: AUTH, body: JSON.stringify(brief) }, o.env ?? ENV, {
+    seam: o.seam ?? seamOf(o.listings ?? []),
+    areas: o.areas ?? AREAS,
+    knowledge: null,
+    now: NOW,
+    root: o.root ?? EMPTY_ROOT,
+    supply: o.supply,
+    market: o.market ?? null,
+    marketTimeoutMs: o.marketTimeoutMs,
+  });
+}
+
+const SENDER = "+1 868 555 0142";
+const GROUP_MARK = "Invented Co-Broke Group Zed";
+
+/** A supply row as the search store holds it: a Westmoorings two-bed rent at 9000 a month, unless `over` says otherwise. */
+const supplyRow = (over: Partial<SearchRow> = {}): SearchRow => ({
+  id: "W1",
+  tab: "supply",
+  kind: "supply",
+  senderPhone: SENDER,
+  senderName: "Invented Agent Zed",
+  firm: null,
+  category: "listing_for_rent",
+  chatId: "invented-chat-0001",
+  firstSentAt: "2026-11-18T12:00:00.000Z",
+  lastSentAt: "2026-11-19T12:00:00.000Z",
+  timesSeen: 1,
+  groups: [GROUP_MARK],
+  messageIds: ["invented-msg-1"],
+  area: "Westmoorings",
+  development: null,
+  price: 9000,
+  currency: "TTD",
+  beds: 2,
+  baths: 1,
+  type: "apartment",
+  listingType: "rent",
+  intent: null,
+  propertyClass: null,
+  notes: null,
+  originalText: "Two bed apartment in Westmoorings, 9000 a month. Call 555 0142.",
+  status: null,
+  ...over,
+});
+
+/** One match_buyer hit in the market's shape: the listing object, and the market's own 0 to 1 score. */
+const HIT = (listing: Record<string, unknown> = {}, over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  listing: { id: "m-1", title: "Invented Market Flat", area: "Westmoorings", price: 9500, currency: "TTD", beds: 2, baths: 1, listing_type: "rent", property_class: "apartment", url: "https://market.example.test/listings/m-1", agency: "Invented Agency Zed", ...listing },
+  reason: "Two beds in Westmoorings",
+  score: 0.91,
+  ...over,
+});
+
+type Call = { name: string; args: Record<string, unknown> };
+const askedArea = (c: Call) => (c.args.buyer as { area?: string }).area;
+/** The market's tools/call reply: a spoken line, then the JSON with the hits. */
+const marketReply = (hits: unknown[]) => ({ content: [{ type: "text", text: "Found some listings." }, { type: "text", text: JSON.stringify({ total: hits.length, matches: hits }) }] });
+/** A fake market: every match_buyer call answers `hits` in the market's shape, and each call is recorded in `calls`. */
+function marketOf(hits: unknown[] = [HIT()], calls: Call[] = []): ToolCaller {
+  return {
+    callTool: async (name, args) => {
+      calls.push({ name, args });
+      return marketReply(hits);
+    },
+  };
+}
+const NEVER: ToolCaller = { callTool: () => new Promise<never>(() => {}) };
+const BROKEN: ToolCaller = { callTool: async () => { throw new Error("invented market failure"); } };
+
+/* ---------------- sources: validation and defaults ---------------- */
+
+test("sources omitted or null means crm only, and the body has just matches and meta", async () => {
+  for (const brief of [BRIEF, { ...BRIEF, sources: null }]) {
+    const r = await run(brief, { listings: ALL });
+    assert.equal(r.status, 200);
+    assert.deepEqual(Object.keys(r.body).sort(), ["matches", "meta", "ok"]);
+    assert.deepEqual(metaOf(r).sources, ["crm"]);
+    assert.equal("whatsapp_candidates" in metaOf(r), false);
+    assert.deepEqual(idsOf(r), ["A", "B"]);
+  }
+});
+
+test("sources are trimmed, lower-cased and de-duplicated, in the order given", async () => {
+  const r = await run({ ...BRIEF, sources: ["CRM", " whatsapp ", "CRM"] }, { listings: ALL });
+  assert.equal(r.status, 200);
+  assert.deepEqual(metaOf(r).sources, ["crm", "whatsapp"]);
+});
+
+test("400 for an empty list, a plain string, a blank or unknown source, or a non-string", async () => {
+  for (const sources of [[], "crm", [""], ["crm", "twitter"], [1], [null], {}]) {
+    const r = await run({ ...BRIEF, sources }, { listings: ALL });
+    assert.equal(r.status, 400, JSON.stringify(sources));
+    assert.equal(typeof r.body.error, "string");
+  }
+});
+
+test("401 comes before the sources are read: a bad sources list with a wrong token is still 401", async () => {
+  const r = await automatchClient({ authorization: `Bearer ${WRONG}`, body: JSON.stringify({ ...BRIEF, sources: ["twitter"] }) }, ENV, opts(ALL));
+  assert.equal(r.status, 401);
+});
+
+/* ---------------- sources: the CRM is read only when asked for ---------------- */
+
+test("without crm in sources the CRM is never read: a seam that is not connected or throws still gives 200", async () => {
+  const wa = await run({ ...BRIEF, sources: ["whatsapp"] }, { seam: NOT_CONNECTED, supply: [supplyRow()] });
+  assert.equal(wa.status, 200);
+  assert.deepEqual(wa.body.matches, []);
+  assert.equal(metaOf(wa).total_candidates, 0);
+  assert.deepEqual(waIds(wa), ["W1"]);
+  const online = await run({ ...BRIEF, sources: ["online"] }, { seam: THROWS, market: null });
+  assert.equal(online.status, 200);
+  assert.deepEqual(online.body.matches, []);
+});
+
+test("crm alone with the CRM down is still a 503, with or without sources given", async () => {
+  for (const brief of [BRIEF, { ...BRIEF, sources: ["crm"] }]) {
+    assert.equal((await run(brief, { seam: THROWS })).status, 503);
+    assert.equal((await run(brief, { seam: NOT_CONNECTED })).status, 503);
+  }
+});
+
+test("crm with another source and the CRM down: 200, no crm matches, a warning, and the other sources still scored", async () => {
+  const r = await run({ ...BRIEF, sources: ["crm", "whatsapp"] }, { seam: THROWS, supply: [supplyRow()] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.matches, []);
+  assert.equal(metaOf(r).total_candidates, 0);
+  assert.equal(warningsOf(r).length, 1);
+  assert.match(warningsOf(r)[0], /CRM/);
+  assert.deepEqual(waIds(r), ["W1"]);
+  assert.equal(JSON.stringify(r.body).includes("invented CRM failure"), false);
+});
+
+/* ---------------- sources: WhatsApp offers ---------------- */
+
+test("a matching WhatsApp offer comes back with exactly the contract's fields, the poster's details and the post link", async () => {
+  const r = await run({ ...BRIEF, sources: ["whatsapp"] }, { supply: [supplyRow()] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body).sort(), ["matches", "meta", "ok", "whatsapp_matches"]);
+  assert.deepEqual(Object.keys(metaOf(r)).sort(), ["scored_at", "sources", "total_candidates", "whatsapp_candidates"]);
+  assert.equal(metaOf(r).whatsapp_candidates, 1);
+  const [m] = waOf(r);
+  assert.deepEqual(Object.keys(m).sort(), [...WA_KEYS].sort());
+  assert.deepEqual(
+    { id: m.id, title: m.title, location: m.location, price: m.price, currency: m.currency, listing_type: m.listing_type, property_type: m.property_type, bedrooms: m.bedrooms, bathrooms: m.bathrooms, score: m.score },
+    { id: "W1", title: "2 bed apartment", location: "Westmoorings", price: 9000, currency: "TTD", listing_type: "rent", property_type: "apartment", bedrooms: 2, bathrooms: 1, score: 100 },
+  );
+  assert.equal(m.reasons.length, 1);
+  assert.equal(m.sender_name, "Invented Agent Zed");
+  assert.equal(m.sender_phone, SENDER);
+  assert.equal(m.posted_at, "2026-11-19T12:00:00.000Z");
+  assert.equal(m.excerpt, "Two bed apartment in Westmoorings, 9000 a month. Call 555 0142.");
+  assert.equal(m.post_url, "https://bop.1on1realtors.com/realty/posts/W1");
+});
+
+test("BOPS_PUBLIC_URL is the link's base, a trailing slash trimmed, and the post id is URL-encoded", async () => {
+  const r = await run({ ...BRIEF, sources: ["whatsapp"] }, { supply: [supplyRow({ id: "W 2/x" })], env: { ...ENV, BOPS_PUBLIC_URL: " https://invented.example.test/ " } });
+  assert.equal(waOf(r)[0].post_url, "https://invented.example.test/realty/posts/W%202%2Fx");
+});
+
+test("ignored and parked rows, sale rows for a rent brief, and asks (not offers) are never returned", async () => {
+  const rows = [
+    supplyRow({ id: "ok" }),
+    supplyRow({ id: "ignored", status: "ignored" }),
+    supplyRow({ id: "parked", status: "parked" }),
+    supplyRow({ id: "sale", listingType: "sale", category: "listing_for_sale", price: 900000 }),
+    supplyRow({ id: "ask", listingType: "wanted" }),
+    supplyRow({ id: "no-kind", listingType: null }),
+  ];
+  const r = await run({ ...BRIEF, sources: ["whatsapp"] }, { supply: rows });
+  assert.deepEqual(waIds(r), ["ok"]);
+  assert.equal(metaOf(r).whatsapp_candidates, 1, "only the live offer is a candidate");
+});
+
+test("WhatsApp offers follow the CRM rules: area, bathrooms floor, best first, the FAIR band, and the limit cuts after the count", async () => {
+  const rows = [
+    supplyRow({ id: "near", area: "Glencoe", baths: 2 }),
+    supplyRow({ id: "same", area: "Westmoorings", baths: 2 }),
+    supplyRow({ id: "far", area: "Chaguanas", baths: 2 }),
+    supplyRow({ id: "one-bath", area: "Westmoorings", baths: 1 }),
+  ];
+  const brief = { ...BRIEF, bathrooms_min: 2, sources: ["whatsapp"] };
+  const r = await run(brief, { supply: rows });
+  assert.deepEqual(waIds(r), ["same", "near"], "best first; the one-bath offer is out by the floor, the far area by the area rule");
+  assert.deepEqual(waOf(r).map((m) => m.score), [100, 85]);
+  assert.ok(waOf(r).every((m) => m.score >= FAIR));
+  assert.equal(metaOf(r).whatsapp_candidates, 3, "the count is the offers that pass the hard rules, before the area and the limit");
+  const cut = await run({ ...brief, limit: 1 }, { supply: rows });
+  assert.deepEqual(waIds(cut), ["same"]);
+  assert.equal(metaOf(cut).whatsapp_candidates, 3);
+});
+
+test("a 'Place, Region' offer or ask scores the same as the bare place", async () => {
+  const bare = await run({ ...BRIEF, location: "Chaguanas", sources: ["whatsapp"] }, { supply: [supplyRow({ area: "Chaguanas" })] });
+  const withRegion = await run({ ...BRIEF, location: "Chaguanas, Central", sources: ["whatsapp"] }, { supply: [supplyRow({ area: "Chaguanas, Central" })] });
+  assert.equal(waOf(bare).length, 1);
+  assert.deepEqual(waOf(withRegion).map((m) => [m.id, m.score, m.location]), [["W1", waOf(bare)[0].score, "Chaguanas"]]);
+});
+
+test("the Central region rule applies to offers too: 'Central' matches the Central Trinidad places, not Fort George", async () => {
+  const rows = [supplyRow({ id: "chag", area: "Chaguanas" }), supplyRow({ id: "fort", area: "Fort George" })];
+  const r = await run({ ...BRIEF, location: "Central", sources: ["whatsapp"] }, { supply: rows, areas: REGION_AREAS });
+  assert.deepEqual(waIds(r), ["chag"]);
+});
+
+test("nothing from the group reaches the response: no group name, chat id, or internal product name, and the excerpt keeps the post's text", async () => {
+  const row = supplyRow({
+    originalText: `${GROUP_MARK} posts: two bed apartment in Westmoorings, 9000 a month. Bops and Periskope welcome. Call 555 0142.`,
+  });
+  const r = await run({ ...BRIEF, sources: ["crm", "whatsapp"] }, { listings: ALL, supply: [row] });
+  assert.equal(r.status, 200);
+  const text = JSON.stringify(r.body);
+  assert.equal(text.includes(GROUP_MARK), false, "the response has the group name");
+  assert.equal(/periskope|bops/i.test(text), false, "the response names an internal tool");
+  assert.equal(text.includes("invented-chat-0001"), false, "the response has the chat id");
+  assert.equal(/"(groups|group_name|chatId|messageIds)"/.test(text), false, "the response has a group key");
+  const excerpt = waOf(r)[0].excerpt ?? "";
+  assert.match(excerpt, /two bed apartment in Westmoorings, 9000 a month\..*Call 555 0142\./);
+});
+
+test("an empty store gives no WhatsApp matches, a zero count and no warning", async () => {
+  const r = await run({ ...BRIEF, sources: ["whatsapp"] }, {});
+  assert.equal(r.status, 200);
+  assert.deepEqual(waOf(r), []);
+  assert.equal(metaOf(r).whatsapp_candidates, 0);
+  assert.equal("warnings" in metaOf(r), false);
+});
+
+test("a WhatsApp store that can't be read is a warning, never a failed request: the CRM matches still come back", async () => {
+  const root = mkdtempSync(join(tmpdir(), "automatch-bad-store-"));
+  try {
+    mkdirSync(join(root, "supply.jsonl")); // the store reads this as a file, so the read throws
+    const r = await run({ ...BRIEF, sources: ["crm", "whatsapp"] }, { listings: ALL, root });
+    assert.equal(r.status, 200);
+    assert.deepEqual(idsOf(r), ["A", "B"]);
+    assert.deepEqual(waOf(r), []);
+    assert.equal(metaOf(r).whatsapp_candidates, 0);
+    assert.equal(warningsOf(r).length, 1);
+    assert.match(warningsOf(r)[0], /WhatsApp/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("excerptOf: whitespace collapsed, null for no text, group and internal names taken out, cut at the limit with an ellipsis", () => {
+  assert.equal(excerptOf("Two  bed\napartment.\n\n Call 555 0142. "), "Two bed apartment. Call 555 0142.");
+  assert.equal(excerptOf(null), null);
+  assert.equal(excerptOf("   \n "), null);
+  assert.equal(excerptOf(`${GROUP_MARK} Periskope BOPS`, [GROUP_MARK]), null);
+  assert.equal(excerptOf("Bops tips: 2 bed flat, Westmoorings."), "tips: 2 bed flat, Westmoorings.");
+  assert.equal(excerptOf("Two bed in Invented Co-Broke Group Zed Westmoorings", [GROUP_MARK]), "Two bed in Westmoorings");
+  assert.equal(excerptOf("Groupie post", ["Group"]), "Groupie post", "a group name is only taken out as a whole word");
+  const long = excerptOf("a".repeat(300));
+  assert.equal(long, `${"a".repeat(EXCERPT_MAX - 1)}…`);
+  assert.equal(long?.length, EXCERPT_MAX);
+  assert.equal(excerptOf("a".repeat(EXCERPT_MAX)), "a".repeat(EXCERPT_MAX), "exactly the limit is not cut");
+  const words = excerptOf("word ".repeat(100));
+  assert.ok(words !== null && words.length <= EXCERPT_MAX && words.endsWith("…"));
+});
+
+/* ---------------- sources: other agencies' listings (online) ---------------- */
+
+test("online matches come back with the contract's fields, one per listing, each location asked once", async () => {
+  const calls: Call[] = [];
+  const r = await run({ ...BRIEF, location: ["Westmoorings", "Glencoe"], sources: ["online"] }, { market: marketOf([HIT()], calls) });
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body).sort(), ["matches", "meta", "ok", "online_matches"]);
+  assert.deepEqual(r.body.matches, []);
+  assert.deepEqual(calls.map((c) => c.name), ["match_buyer", "match_buyer"]);
+  assert.deepEqual(calls.map(askedArea).sort(), ["Glencoe", "Westmoorings"]);
+  assert.equal(calls[0].args.limit, 10);
+  const got = onlineOf(r);
+  assert.equal(got.length, 1, "the same listing from both locations comes back once");
+  assert.deepEqual(Object.keys(got[0]).sort(), [...ONLINE_KEYS].sort());
+  assert.deepEqual(got[0], {
+    id: "m-1",
+    title: "Invented Market Flat",
+    location: "Westmoorings",
+    price: 9500,
+    currency: "TTD",
+    listing_type: "rent",
+    property_type: "apartment",
+    bedrooms: 2,
+    bathrooms: 1,
+    score: 91,
+    reasons: ["Two beds in Westmoorings"],
+    source_site: "Invented Agency Zed",
+    url: "https://market.example.test/listings/m-1",
+  });
+  assert.deepEqual(metaOf(r).sources, ["online"]);
+  assert.equal("whatsapp_candidates" in metaOf(r), false);
+});
+
+test("online: one per listing (its url, else its title, place and price), best score first, capped at the brief's limit", async () => {
+  const noLink = { url: undefined, title: "Invented No-Link Flat", area: "Glencoe", price: 8000 };
+  const hits = [
+    HIT({ url: "https://market.example.test/u1" }, { score: 0.7 }),
+    HIT({ url: "https://market.example.test/u1" }, { score: 0.9 }),
+    HIT(noLink, { score: 0.95 }),
+    HIT(noLink, { score: 0.5 }),
+    HIT({ url: "https://market.example.test/u3", title: "Invented Third Flat" }, { score: 0.6 }),
+  ];
+  const calls: Call[] = [];
+  const r = await run({ ...BRIEF, limit: 2, sources: ["online"] }, { market: marketOf(hits, calls) });
+  assert.deepEqual(onlineOf(r).map((m) => m.score), [95, 90]);
+  assert.deepEqual(onlineOf(r).map((m) => m.title), ["Invented No-Link Flat", "Invented Market Flat"]);
+  assert.equal(calls[0].args.limit, 2);
+});
+
+test("online: our own listings are dropped, by the market's oneonone source or our agency's name in any case", async () => {
+  const hits = [
+    { ...HIT({ url: "https://market.example.test/own-1" }), source: "oneonone" },
+    HIT({ url: "https://market.example.test/own-2", agency: "1on1 realtors" }),
+    HIT({ url: "https://market.example.test/other", agency: "Invented Agency Zed" }),
+  ];
+  const r = await run({ ...BRIEF, sources: ["online"] }, { market: marketOf(hits) });
+  assert.deepEqual(onlineOf(r).map((m) => m.url), ["https://market.example.test/other"]);
+});
+
+test("no market set up: online matches are empty with a warning, and the CRM matches still come back", async () => {
+  const r = await run({ ...BRIEF, sources: ["crm", "online"] }, { listings: ALL, market: null });
+  assert.equal(r.status, 200);
+  assert.deepEqual(idsOf(r), ["A", "B"]);
+  assert.deepEqual(onlineOf(r), []);
+  assert.match(warningsOf(r).join(" "), /isn't set up/);
+  // With no market injected and no market settings in env, the online source is off: no network is tried.
+  const noEnv = await automatchClient({ authorization: AUTH, body: JSON.stringify({ ...BRIEF, sources: ["online"] }) }, ENV, { seam: NOT_CONNECTED, areas: AREAS, knowledge: null, now: NOW, root: EMPTY_ROOT });
+  assert.equal(noEnv.status, 200);
+  assert.deepEqual(onlineOf(noEnv), []);
+  assert.match(warningsOf(noEnv).join(" "), /isn't set up/);
+});
+
+test("a market search that never answers is cut off at marketTimeoutMs: online empty with a timeout warning, the other sources still come back", async () => {
+  const r = await run({ ...BRIEF, sources: ["crm", "whatsapp", "online"] }, { listings: ALL, supply: [supplyRow()], market: NEVER, marketTimeoutMs: 20 });
+  assert.equal(r.status, 200);
+  assert.deepEqual(idsOf(r), ["A", "B"]);
+  assert.deepEqual(waIds(r), ["W1"]);
+  assert.deepEqual(onlineOf(r), []);
+  assert.match(warningsOf(r).join(" "), /timed out/);
+});
+
+test("a market search that throws is unavailable, not a failed request; one location failing leaves the others' results", async () => {
+  const r = await run({ ...BRIEF, sources: ["crm", "online"] }, { listings: ALL, market: BROKEN });
+  assert.equal(r.status, 200);
+  assert.deepEqual(idsOf(r), ["A", "B"]);
+  assert.deepEqual(onlineOf(r), []);
+  assert.match(warningsOf(r).join(" "), /unavailable/);
+  assert.equal(JSON.stringify(r.body).includes("invented market failure"), false);
+
+  const partial: ToolCaller = {
+    callTool: async (name, args) => {
+      if (askedArea({ name, args }) === "Glencoe") throw new Error("invented market failure");
+      return marketReply([HIT()]);
+    },
+  };
+  const some = await run({ ...BRIEF, location: ["Westmoorings", "Glencoe"], sources: ["online"] }, { market: partial });
+  assert.equal(onlineOf(some).length, 1);
+  assert.match(warningsOf(some).join(" "), /1 of 2/);
+});
+
+test("all three sources: the three lists are there, and meta has the sources and counts, with no warnings when none apply", async () => {
+  const r = await run({ ...BRIEF, sources: ["crm", "whatsapp", "online"] }, { listings: ALL, supply: [supplyRow()], market: marketOf() });
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body).sort(), ["matches", "meta", "ok", "online_matches", "whatsapp_matches"]);
+  assert.deepEqual(Object.keys(metaOf(r)).sort(), ["scored_at", "sources", "total_candidates", "whatsapp_candidates"]);
+  assert.deepEqual(metaOf(r).sources, ["crm", "whatsapp", "online"]);
+  assert.equal(metaOf(r).total_candidates, 3);
+  assert.equal(metaOf(r).whatsapp_candidates, 1);
+  assert.deepEqual(idsOf(r), ["A", "B"]);
+  assert.deepEqual(waIds(r), ["W1"]);
+  assert.equal(onlineOf(r).length, 1);
 });
 
 /* ---------------- the gate sets ---------------- */
