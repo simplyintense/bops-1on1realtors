@@ -143,10 +143,13 @@ export const CENTRAL_AREA = "Central locations";
 export const CENTRAL_AREAS = ["Port of Spain", "St. Clair", "Woodbrook", "Newtown", "Belmont", "St. James", "Maraval", "Cascade"];
 const CENTRAL_PHRASE = /\bcentral(?:\s+locations?)?\b/i;
 
-/** True when the parsed area is the central group, not a single named place and not the Central region. */
+/**
+ * True only for the Port of Spain group ("Central locations" / "Central location"). Bare "Central" is the Trinidad region
+ * (Chaguanas, Couva…), so it is not the group.
+ */
 export function isCentralAreaGroup(name: string | null | undefined): boolean {
   const k = (name ?? "").replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
-  return k === "central" || k === "central location" || k === "central locations";
+  return k === "central location" || k === "central locations";
 }
 
 /**

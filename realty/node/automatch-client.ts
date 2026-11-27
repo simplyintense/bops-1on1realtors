@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { CachedAreaResolver, type AreaResolver } from "../flow/areas.ts";
+import { areaKey, CachedAreaResolver, type AreaResolver } from "../flow/areas.ts";
 import { automatchPairs, FAIR, type AutomatchAsk, type AutomatchPair, type ScoreParts } from "../flow/automatch.ts";
 import type { CrmListingsState, CrmSeam } from "../flow/crm-seam.ts";
 import { fitsOurListing, type LiveRequest } from "../flow/live-match.ts";
@@ -157,6 +157,24 @@ function numberOf(v: unknown): number | null | undefined {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
 }
 
+/**
+ * Trinidad & Tobago region names a 1on1 CRM location can end with ("Chaguanas, Central"). Read as region names only: a place
+ * name before the comma is what matches, so the region is dropped.
+ */
+const REGION_SUFFIXES = new Set(
+  ["Central", "North West", "North East", "East", "South", "Tobago", "East-West Corridor", "Port of Spain", "Trinidad", "Trinidad & Tobago"].map(areaKey),
+);
+
+/** "Chaguanas, Central" is "Chaguanas"; "Woodbrook, Port of Spain, Trinidad" is "Woodbrook". A text with no place before a region is unchanged. */
+export function placeWithoutRegion(text: string): string {
+  let place = text.trim();
+  for (;;) {
+    const comma = place.lastIndexOf(",");
+    if (comma <= 0 || !REGION_SUFFIXES.has(areaKey(place.slice(comma + 1)))) return place;
+    place = place.slice(0, comma).trim();
+  }
+}
+
 /** A brief from the body, or the 400 message. Name and notes are not read. */
 function briefOf(b: Record<string, unknown>): Brief | { error: string } {
   const listingType = typeof b.listing_type === "string" ? b.listing_type.trim().toLowerCase() : "";
@@ -165,7 +183,7 @@ function briefOf(b: Record<string, unknown>): Brief | { error: string } {
   const rawLocation = b.location;
   const list = typeof rawLocation === "string" ? [rawLocation] : Array.isArray(rawLocation) ? rawLocation : null;
   if (!list || list.some((s) => typeof s !== "string")) return { error: "location must be a string or a list of strings." };
-  const locations = [...new Set((list as string[]).map((s) => s.trim()).filter(Boolean))];
+  const locations = [...new Set((list as string[]).map((s) => placeWithoutRegion(s)).filter(Boolean))];
   if (!locations.length) return { error: "location is required." };
 
   if (b.client_id != null && typeof b.client_id !== "string" && typeof b.client_id !== "number") return { error: "client_id must be a string or a number." };

@@ -1,6 +1,6 @@
 import { areasForMatch, developmentOf, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from "../extract.ts";
 import { knowledgeOf, nearbyByKnowledge, nearbyReason, type AreaKnowledgeIndex } from "./area-knowledge.ts";
-import { areaTier, refFor, type AreaRef, type AreaResolver, type ToolCaller } from "./areas.ts";
+import { areaTier, parseRegion, refFor, type AreaRef, type AreaResolver, type Region, type ToolCaller } from "./areas.ts";
 import type { SeamAgent } from "./crm-seam.ts";
 import { isUsd, moneyWithTtd, ttdValue } from "./fx.ts";
 import { moneyLabel } from "./market-search.ts";
@@ -228,9 +228,21 @@ function taughtRelation(area: string, l: Listing, v: TaughtVerdict): OurAreaRela
   return null;
 }
 
+/**
+ * A region asked for by name ("Central", "North West", "Port of Spain"…): a listing is in it when the resolver puts the listing's
+ * area in that region, or when the listing is named by the region itself. Nothing is matched by title, and no gazetteer
+ * neighbours apply, so "Central" never reaches North West or Port of Spain places.
+ */
+function regionRelation(region: Region, area: string, l: Listing, ref: AreaRef | undefined): OurAreaRelation | null {
+  if (areaTextKey(l.area ?? "") === areaTextKey(area)) return { tier: "same-area" };
+  return ref?.match?.region === region ? { tier: "same-area" } : null;
+}
+
 /** The listing's area relation to the request's area, or null when it is neither the same nor a nearby area. */
 export function ourAreaRelation(ctx: OurAreaContext, l: Listing): OurAreaRelation | null {
   const { area, knowledge } = ctx;
+  const region = parseRegion(area);
+  if (region) return regionRelation(region, area, l, ctx.refs.get(l.area));
   const taught = area && l.area ? taughtVerdict(knowledge?.taught, area, l.area) : null;
   if (taught) return taughtRelation(area, l, taught);
   // Without coordinates, Glencoe stays out of West Hills matches. With knowledge, it may be a nearby recommendation, never a very-strong alert.
