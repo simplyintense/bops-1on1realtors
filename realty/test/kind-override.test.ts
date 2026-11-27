@@ -68,21 +68,21 @@ test("a kind override moves a misfiled listing to supply, and a reparse does not
   assert.deepEqual(store.demand().map((p) => p.messageId), ["hermitage-1"], "clearing the override is reversible");
 });
 
-test("a buyer ask that says for sale can be forced onto demand and stays there after rebuild", () => {
+test("a buyer ask that says for sale reads as demand, and a staff supply override sticks after rebuild", () => {
   const root = mkdtempSync(join(tmpdir(), "kind-over-"));
   const store = new PeriskopeStore(root);
   const body = "Good Morning Any 2 bedroom Bayside Towers for sale.?";
   const post = stored(body, "bayside-1");
   post.area = "Cocorite";
-  assert.equal(post.set, "supply");
+  assert.equal(post.set, "demand", "'Any … for sale?' is a question about what is available, so it is an ask");
   store.reprojectObservation([post]);
-  store.setKindOverride({ messageId: "bayside-1", set: "demand", area: "Cocorite", by: "cli", reason: "buyer request" });
+  store.setKindOverride({ messageId: "bayside-1", set: "supply", area: "Cocorite", by: "cli", reason: "it is a listing" });
   store.reprojectObservation(store.posts().map((p) => reparsePost(p)));
-  assert.deepEqual(store.demand().map((p) => p.messageId), ["bayside-1"]);
-  assert.equal(store.supply().length, 0);
+  assert.deepEqual(store.supply().map((p) => p.messageId), ["bayside-1"]);
+  assert.equal(store.demand().length, 0);
   const counts = syncFromJsonl(root, { force: true });
-  assert.equal(counts.demand, 1);
-  assert.equal(counts.supply, 0);
+  assert.equal(counts.supply, 1);
+  assert.equal(counts.demand, 0);
 });
 
 test("an ignored empty listing ask leaves the queue, and a parked no-area ask stays in demand as low priority", () => {

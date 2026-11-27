@@ -3,9 +3,10 @@ import { dirname, join } from "node:path";
 import { areaKey, CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
 import { automatchPairs, FAIR, type AutomatchAsk, type AutomatchPair, type ScoreParts } from "../flow/automatch.ts";
 import type { CrmListingsState, CrmSeam } from "../flow/crm-seam.ts";
-import { fitsOurListing, liveBuyerArgs, OUR_AGENCY, type LiveRequest } from "../flow/live-match.ts";
+import { fitsOurListing, liveBuyerArgs, OUR_AGENCY, ourAreaContext, ourAreaRelation, type LiveRequest } from "../flow/live-match.ts";
 import { listingTypeWord } from "../flow/listing-title.ts";
 import { MarketClient, marketConfigFromEnv, priceOf } from "../flow/market-search.ts";
+import { readsAsBuyerAsk } from "../flow/periskope.ts";
 import { parseMatch } from "../flow/recommendations.ts";
 import { jsonHits, readOnlyCall, timedOut } from "../flow/requests.ts";
 import type { Listing } from "../flow/source.ts";
@@ -23,9 +24,12 @@ import { withSearchStore, type SearchRow } from "./search-store.ts";
  *   crm       our active CRM listings, scored by the existing Automatch scorer (flow/automatch.ts) with the live matching rules
  *             (flow/live-match.ts). Returned as `matches`. Not fetched when "crm" isn't asked for.
  *   whatsapp  our WhatsApp supply (offers, not asks) from the local search store, scored by the same rules. Returned as
- *             `whatsapp_matches`, with the poster's name and number and a link to the post, never a group name.
+ *             `whatsapp_matches`, with the poster's name and number and a link to the post, never a group name. A stored row
+ *             that reads as a buyer's ask is left out, whichever side it was filed under (readsAsBuyerAsk).
  *   online    other agencies' listings, from the co-broke market's read-only match_buyer, one call per location. Returned as
- *             `online_matches`. A slow or missing market never fails the others: it is a plain-English warning in meta.
+ *             `online_matches`, each kept only where our own area rules place it in that location (placedIn), so the market's
+ *             reading of a place is never the last word. A slow or missing market never fails the others: it is a plain-English
+ *             warning in meta.
  * Server to server, proving itself by Authorization: Bearer <BOPS_AUTOMATCH_TOKEN> (sameSecret, constant time). Not behind the
  * Google gate (lib/gate.ts). Read only: nothing is written or sent, and the client's name and notes are not read or sent on.
  *
@@ -127,7 +131,7 @@ export async function automatchClient(req: AutomatchClientRequest, env: Env, o: 
 
   const root = o.root ?? periskopeRoot(env);
   const asks: AutomatchAsk[] = asksOf(brief, now);
-  const scoring = crmListings !== null || wantWhatsapp ? scoringContext(o, env, root) : null;
+  const scoring = crmListings !== null || wantWhatsapp || wantOnline ? scoringContext(o, env, root) : null;
 
   let matches: ReturnType<typeof matchOf>[] = [];
   let totalCandidates = 0;
@@ -142,7 +146,8 @@ export async function automatchClient(req: AutomatchClientRequest, env: Env, o: 
   let whatsappCandidates = 0;
   if (wantWhatsapp && scoring) {
     try {
-      const rows = (o.supply ?? storedSupply(root)).filter(isLive);
+      // A stored supply row that reads as a buyer's ask is left out, whatever side it was filed under (older rows may be misfiled).
+      const rows = (o.supply ?? storedSupply(root)).filter(isLive).filter((row) => !readsAsBuyerAsk(row.originalText ?? ""));
       const pairs = rows.flatMap((row) => {
         const listing = supplyListingOf(row);
         return listing ? [{ row, listing }] : [];
@@ -161,8 +166,8 @@ export async function automatchClient(req: AutomatchClientRequest, env: Env, o: 
 
   // Other agencies' listings: each location asked in parallel, each with a deadline; a failure is a warning.
   let onlineMatches: OnlineItem[] = [];
-  if (wantOnline) {
-    const r = await onlineSearch(brief, request, marketFor(env, o), now);
+  if (wantOnline && scoring) {
+    const r = await onlineSearch(brief, request, marketFor(env, o), now, scoring);
     onlineMatches = r.items;
     warnings.push(...r.warnings);
   }
@@ -363,10 +368,10 @@ function marketFor(env: Env, o: AutomatchClientOpts): MarketSource {
 type LocationOutcome = { status: "ok"; items: OnlineItem[] } | { status: "timeout" | "unavailable" };
 
 /** Every location asked in parallel, each with its own deadline. Never throws. */
-async function onlineSearch(brief: Brief, request: LiveRequest, market: MarketSource, now: Date): Promise<{ items: OnlineItem[]; warnings: string[] }> {
+async function onlineSearch(brief: Brief, request: LiveRequest, market: MarketSource, now: Date, ctx: ScoringContext): Promise<{ items: OnlineItem[]; warnings: string[] }> {
   if (!market) return { items: [], warnings: [ONLINE_OFF_WARNING] };
   const postedAt = now.toISOString();
-  const outcomes = await Promise.all(brief.locations.map((area, i) => onlineOne(market, { ...request, area }, `automatch-${i + 1}`, postedAt, brief.limit)));
+  const outcomes = await Promise.all(brief.locations.map((area, i) => onlineOne(market, { ...request, area }, `automatch-${i + 1}`, postedAt, brief.limit, ctx)));
   const warnings: string[] = [];
   const failed = outcomes.filter((r) => r.status !== "ok");
   if (failed.length === outcomes.length) {
@@ -380,7 +385,7 @@ async function onlineSearch(brief: Brief, request: LiveRequest, market: MarketSo
 }
 
 /** One location's match_buyer call, read only, with a deadline. A failure is a status, never a throw. */
-async function onlineOne(market: { caller: ToolCaller; timeoutMs: number }, r: LiveRequest, ref: string, postedAt: string, limit: number): Promise<LocationOutcome> {
+async function onlineOne(market: { caller: ToolCaller; timeoutMs: number }, r: LiveRequest, ref: string, postedAt: string, limit: number, ctx: ScoringContext): Promise<LocationOutcome> {
   try {
     const args = { ...liveBuyerArgs(r, ref, postedAt), limit };
     const hits = jsonHits(await withDeadline(readOnlyCall(market.caller, "match_buyer", args), market.timeoutMs));
@@ -389,10 +394,39 @@ async function onlineOne(market: { caller: ToolCaller; timeoutMs: number }, r: L
       const item = onlineItemOf(h);
       return item ? [item] : [];
     });
-    return { status: "ok", items };
+    return { status: "ok", items: await placedIn(items, r.area ?? "", ctx) };
   } catch (err) {
     return { status: timedOut(err) ? "timeout" : "unavailable" };
   }
+}
+
+/**
+ * The market's items that our own area rules place in the location asked: the same tiers as our listings (ourAreaRelation). The market
+ * answers on its own reading of the place, so an item is kept only when we place it there too. A Tobago location never keeps a Trinidad
+ * item, and an item whose place we can't work out is left out.
+ */
+async function placedIn(items: OnlineItem[], area: string, ctx: ScoringContext): Promise<OnlineItem[]> {
+  if (!area || !items.length) return [];
+  const listings = items.map(onlineListingOf);
+  const actx = await ourAreaContext(area, listings, ctx.areas, ctx.knowledge);
+  return items.filter((_, i) => ourAreaRelation(actx, listings[i]) !== null);
+}
+
+/** An online item as a Listing, for the area rules only: its place and its title (the other fields are not read by the area rules). */
+function onlineListingOf(it: OnlineItem): Listing {
+  return {
+    id: it.id ?? "",
+    title: it.title ?? "",
+    listingType: it.listing_type ?? "sale",
+    area: it.location ?? "",
+    price: it.price ?? 0,
+    currency: it.currency === "USD" ? "USD" : "TTD",
+    beds: it.bedrooms ?? 0,
+    baths: it.bathrooms ?? 0,
+    agentId: 0,
+    status: "active",
+    url: "",
+  };
 }
 
 /** Rejects with a TimeoutError when `ms` passes first. The call itself is left to finish (or fail) on its own. */

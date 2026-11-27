@@ -1,6 +1,6 @@
-import { areasForMatch, developmentOf, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from "../extract.ts";
+import { areasForMatch, developmentOf, namesPlace, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from "../extract.ts";
 import { knowledgeOf, nearbyByKnowledge, nearbyReason, type AreaKnowledgeIndex } from "./area-knowledge.ts";
-import { areaTier, parseRegion, refFor, type AreaRef, type AreaResolver, type Region, type ToolCaller } from "./areas.ts";
+import { areaTier, islandNamedIn, parseRegion, refFor, type AreaRef, type AreaResolver, type Island, type Region, type ToolCaller } from "./areas.ts";
 import type { SeamAgent } from "./crm-seam.ts";
 import { isUsd, moneyWithTtd, ttdValue } from "./fx.ts";
 import { moneyLabel } from "./market-search.ts";
@@ -151,28 +151,26 @@ export function listingPriceLabel(l: { price: number | null; currency: string; t
 }
 
 const areaTextKey = (s: string) => s.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
-const mentionsName = (hay: string, name: string) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(hay);
 
 /** A listing in Glencoe is not a West Hills match until Miles confirms, even though sources put them in the same west cluster. */
 function blockedWestHillsGlencoe(requestArea: string, l: Listing): boolean {
   const d = developmentOf(requestArea);
   if (d?.name !== "West Hills") return false;
   const hay = `${l.area ?? ""} ${l.title ?? ""}`;
-  if (d.aliases.some((a) => mentionsName(hay, a)) || mentionsName(hay, d.name)) return false;
-  return WEST_HILLS_UNCONFIRMED_NEIGHBOURS.some((n) => mentionsName(hay, n));
+  if (d.aliases.some((a) => namesPlace(hay, a)) || namesPlace(hay, d.name)) return false;
+  return WEST_HILLS_UNCONFIRMED_NEIGHBOURS.some((n) => namesPlace(hay, n));
 }
 
 function gazetteerTier(requestArea: string, l: Listing): { tier: "same-area" | "neighbour" } | null {
   const { same, nearby } = areasForMatch(requestArea);
   const hay = `${l.area ?? ""} ${l.title ?? ""}`;
   const areaK = areaTextKey(l.area ?? "");
-  const hit = (name: string) => areaK === areaTextKey(name) || mentionsName(hay, name);
+  const hit = (name: string) => areaK === areaTextKey(name) || namesPlace(hay, name);
   const d = developmentOf(requestArea);
-  if (same.some(hit) || (d && d.aliases.some((a) => mentionsName(hay, a)))) return { tier: "same-area" };
+  if (same.some(hit) || (d && d.aliases.some((a) => namesPlace(hay, a)))) return { tier: "same-area" };
   if (nearby.some(hit)) return { tier: "neighbour" };
   return null;
 }
-
 
 /**
  * One of our listings against the request, on the rules that don't need the area: active, sale vs rent, the same kind of
@@ -199,8 +197,10 @@ export function fitsOurListing(r: LiveRequest, l: Listing): boolean {
 /** How one of our listings' area relates to the request's: the same area, or a neighbour (taught, by the directory, or by coordinates). */
 export type OurAreaRelation = { tier: "same-area" | "neighbour"; via?: "knowledge" | "taught"; relKm?: number; relMin?: number };
 
-/** The request's area, the areas wanted (same and nearby), and each listing area's ref. Built once per request. */
-export type OurAreaContext = { area: string; wants: AreaRef[]; refs: Map<string, AreaRef>; knowledge: AreaKnowledgeIndex | null };
+/**
+ * The request's area, its island (null when unknown), the areas wanted (same and nearby), and each listing area's ref. Built once per request.
+ */
+export type OurAreaContext = { area: string; island: Island | null; wants: AreaRef[]; refs: Map<string, AreaRef>; knowledge: AreaKnowledgeIndex | null };
 
 /** The lookups for the area rules, for the listings that already fit (fitsOurListing). One lookup per distinct area. */
 export async function ourAreaContext(area: string, listings: readonly Listing[], areas: AreaResolver, knowledge: AreaKnowledgeIndex | null = null): Promise<OurAreaContext> {
@@ -209,7 +209,13 @@ export async function ourAreaContext(area: string, listings: readonly Listing[],
   const wantsNear = await Promise.all(plan.nearby.map((name) => refFor(areas, name)));
   const refs = new Map<string, AreaRef>();
   for (const a of new Set(listings.map((l) => l.area).filter(Boolean))) refs.set(a, await refFor(areas, a));
-  return { area, wants: [...wantsSame, ...wantsNear], refs, knowledge };
+  const island = wantsSame[0]?.match?.island ?? islandNamedIn(area);
+  return { area, island, wants: [...wantsSame, ...wantsNear], refs, knowledge };
+}
+
+/** The island of a listing's area: the directory's, else the one its name spells out. */
+function islandOfListing(ctx: OurAreaContext, l: Listing): Island | null {
+  return ctx.refs.get(l.area)?.match?.island ?? islandNamedIn(l.area ?? "");
 }
 
 /** The request's development named by the listing (its area, title or an alias): the same development stays the same area. */
@@ -217,7 +223,7 @@ function developmentNamed(requestArea: string, l: Listing): boolean {
   const d = developmentOf(requestArea);
   if (!d) return false;
   const hay = `${l.area ?? ""} ${l.title ?? ""}`;
-  return areaTextKey(l.area ?? "") === areaTextKey(d.name) || mentionsName(hay, d.name) || d.aliases.some((a) => mentionsName(hay, a));
+  return areaTextKey(l.area ?? "") === areaTextKey(d.name) || namesPlace(hay, d.name) || d.aliases.some((a) => namesPlace(hay, a));
 }
 
 /** Both areas taught: the taught pair decides. A development named by the listing stays the same area, as before. */
@@ -243,6 +249,9 @@ export function ourAreaRelation(ctx: OurAreaContext, l: Listing): OurAreaRelatio
   const { area, knowledge } = ctx;
   const region = parseRegion(area);
   if (region) return regionRelation(region, area, l, ctx.refs.get(l.area));
+  // The island is checked before any name rule: a text match (or a taught or coordinate pair) never reaches across the water.
+  const listingIsland = islandOfListing(ctx, l);
+  if (ctx.island && listingIsland && ctx.island !== listingIsland) return null;
   const taught = area && l.area ? taughtVerdict(knowledge?.taught, area, l.area) : null;
   if (taught) return taughtRelation(area, l, taught);
   // Without coordinates, Glencoe stays out of West Hills matches. With knowledge, it may be a nearby recommendation, never a very-strong alert.

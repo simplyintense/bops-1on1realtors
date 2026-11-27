@@ -247,7 +247,7 @@ function areaKeyish(s: string): string {
 /** Places 1on1 lists in, by the names people write. Longest first so "Port of Spain" beats "Spain". */
 export const AREAS = [
   "Port of Spain", "Westmoorings", "West Moorings", "Maraval", "St. Ann's", "St Anns", "St. James", "St James", "Cascade", "Diego Martin", "Glencoe",
-  "Goodwood Park", "Woodbrook", "Newtown", "New Town", "St. Clair", "St Clair", "Federation Park", "Ellerslie Park", "Fairways", "Valsayn", "St. Augustine",
+  "Goodwood Gardens", "Goodwood Park", "Woodbrook", "Newtown", "New Town", "St. Clair", "St Clair", "Federation Park", "Ellerslie Park", "Fairways", "Valsayn", "St. Augustine",
   "St Augustine", "Curepe", "Tunapuna", "Arima", "Trincity", "D'Abadie", "Chaguanas", "Couva", "Point Lisas", "San Fernando",
   "Gulf View", "La Romaine", "Marabella", "Princes Town", "Point Fortin", "Carenage", "Chaguaramas", "Santa Cruz", "Petit Valley",
   "Cocorite", "Belmont", "Barataria", "San Juan", "Morvant", "El Socorro", "Piarco", "Freeport", "Claxton Bay", "Penal", "Siparia",
@@ -259,6 +259,25 @@ export const AREAS = [
 const CANON: Record<string, string> = { "west moorings": "Westmoorings", "st anns": "St. Ann's", "st clair": "St. Clair", "st james": "St. James", "st augustine": "St. Augustine", "new town": "Newtown", "mount irvine": "Mt Irvine" };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\./g, "\\.?").replace(/'/g, "['’]?");
+
+const squash = (s: string) => s.replace(/[–—]/g, "-").replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * Whether a text names `name` as a place of its own. A word match inside a longer known place does not count: "Goodwood" is not
+ * "Goodwood Gardens" (a Westmoorings development), and "West" is not "West Hills". The longer place is what the text names.
+ */
+export function namesPlace(text: string, name: string): boolean {
+  const flat = text.replace(/\s+/g, " ");
+  const key = squash(name);
+  const longer = [...AREAS, ...DEVELOPMENTS.flatMap((d) => [d.name, ...d.aliases])].map(squash).filter((p) => p.length > key.length && p.startsWith(`${key} `));
+  for (const m of flat.matchAll(new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"))) {
+    const at = m.index ?? 0;
+    const rest = flat.slice(at).toLowerCase();
+    const inLonger = longer.some((p) => rest.startsWith(p) && !/[\p{L}\p{N}]/u.test(rest.charAt(p.length)));
+    if (!inLonger) return true;
+  }
+  return false;
+}
 
 export function findAreas(text: string): string[] {
   const devs = findDevelopments(text);

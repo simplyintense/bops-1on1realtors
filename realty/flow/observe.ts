@@ -1,4 +1,4 @@
-import { AREAS, developmentOf, findAreas, findDevelopments } from "../extract.ts";
+import { AREAS, developmentOf, findAreas, findDevelopments, namesPlace } from "../extract.ts";
 import { PRICE_BAND, type LiveRequest } from "./live-match.ts";
 import { moneyLabel } from "./market-search.ts";
 import type { MatchItem } from "./recommendations.ts";
@@ -81,15 +81,13 @@ export function unknownPlaceHints(text: string): string[] {
 }
 
 const areaTextKey = (s: string) => s.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
-const mentionsName = (hay: string, name: string) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(hay);
-
-/** Same named development, or the same area — not a neighbour, and not Glencoe-for-West-Hills. */
+/** Same named development, or the same area — not a neighbour, and not Glencoe-for-West-Hills. A longer place's name is not this one (Goodwood Gardens is not Goodwood). */
 export function isVeryStrongPlace(requestArea: string, l: Pick<Listing, "area" | "title">): boolean {
   const d = developmentOf(requestArea);
   const hay = `${l.area ?? ""} ${l.title ?? ""}`;
-  if (d) return mentionsName(hay, d.name) || d.aliases.some((a) => mentionsName(hay, a));
+  if (d) return namesPlace(hay, d.name) || d.aliases.some((a) => namesPlace(hay, a));
   const areaK = areaTextKey(l.area ?? "");
-  return areaK === areaTextKey(requestArea) || mentionsName(hay, requestArea);
+  return areaK === areaTextKey(requestArea) || namesPlace(hay, requestArea);
 }
 
 /**
