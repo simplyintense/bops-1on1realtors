@@ -4,6 +4,7 @@ import { CachedAreaResolver, type AreaResolver } from "../flow/areas.ts";
 import { askOf, automatchPairs, bandOf, dedupeCounts, FAIR, foldSameSenderPairs, type AutomatchAsk, type AutomatchGroup, type Band } from "../flow/automatch.ts";
 import { CRM_UNREACHABLE_TEXT, type CrmListingsState, type CrmSeam, type SeamAgent } from "../flow/crm-seam.ts";
 import { learnFromFeedback, ourListingKey, listingFingerprint } from "../flow/agent-feedback.ts";
+import { agentAssignmentCounts, agentIdOf, applyOwnerAgentFilter, parseOwnerAgentFilter, recountBands, scopeAutomatchPairs, type AgentAssignmentCount } from "../flow/automatch-scope.ts";
 import { listingTypeWord } from "../flow/listing-title.ts";
 import { runtimeEnv, type Env } from "../flow/env.ts";
 import { aliasesOf } from "../flow/knowledge.ts";
@@ -86,6 +87,35 @@ export type AutomatchResult = {
 };
 
 export type AutomatchOpts = { env?: Env; root?: string; seam?: CrmSeam; fetcher?: typeof fetch; areas?: AreaResolver; now?: Date };
+
+/** What a signed-in staff member is shown: the matching run's totals, and the pairs they may see (scopeAutomatch). */
+export type ScopedAutomatch = Omit<AutomatchResult, "dedupe"> & {
+  /** The folding counts of the whole run. Only on an owner's unfiltered view: they describe every pair, not a scoped list. */
+  dedupe?: AutomatchResult["dedupe"];
+  /** Each assigned agent's pairs at 50 and above (Unassigned when it has any). Owners only; absent for everyone else. */
+  agentCounts?: AgentAssignmentCount[];
+};
+
+/**
+ * The pairs and stats one viewer gets from a matching run. The strong and fair counts are of the pairs shown; demand, listings
+ * and asks stay the run's totals. An owner gets every pair (or the one agent's, with ?agent=) and the breakdown of all of them;
+ * anyone else gets only the pairs on their own listings, whatever ?agent= says. Shared by every staff loader, so they can't drift.
+ */
+export function scopeAutomatch(result: AutomatchResult, o: { owner: boolean; agentId: number | null; agentFilter?: string | null }): ScopedAutomatch {
+  const filter = parseOwnerAgentFilter(o.owner, o.agentFilter);
+  const pairs = o.owner ? applyOwnerAgentFilter(result.pairs, filter) : scopeAutomatchPairs(result.pairs, { owner: false, agentId: o.agentId });
+  const { dedupe, ...totals } = result;
+  return {
+    ...totals,
+    pairs,
+    ...recountBands(pairs),
+    ...(o.owner && filter == null ? { dedupe } : {}),
+    ...(o.owner ? { agentCounts: agentAssignmentCounts(result.pairs) } : {}),
+  };
+}
+
+/** The staff loaders' options: the signed-in email (null when signed out) and the raw ?agent= (owners only; ignored otherwise). */
+export type StaffOptions = AutomatchOpts & { email: string | null; agentFilter?: string | null };
 
 /**
  * The matching itself, with no owner check (the CLI is run on the server by its operator). Reads the demand, the active
@@ -176,12 +206,14 @@ function rowOf(p: AutomatchGroup, d: SearchRow | undefined, names: Map<number, s
 }
 
 /**
- * The 1on1 CRM Automatch (app/realty/automatch), read only. A signed-in staff member gets the same pairs and stats an owner gets,
- * with owner false so the page passes the real owner flag to the lead cards. With no signed-in email (the login gate on, signed
- * out) nothing is read, not the store, not the CRM, and the caller gets { owner: false } only.
+ * The 1on1 CRM Automatch (app/realty/automatch), read only. A signed-in staff member gets the pairs they may see (scopeAutomatch):
+ * an owner every pair, anyone else only the listings they hold. With owner false the page doesn't show the breakdown. With no
+ * signed-in email (the login gate on, signed out) nothing is read, not the store, not the CRM, and the caller gets { owner: false }.
  */
-export async function staffAutomatch(o: AutomatchOpts & { email: string | null }): Promise<{ owner: false } | ({ owner: boolean } & AutomatchResult)> {
+export async function staffAutomatch(o: StaffOptions): Promise<{ owner: false } | ({ owner: boolean } & ScopedAutomatch)> {
   const env = o.env ?? runtimeEnv();
   if (!o.email && !ownerAllowed(null, env)) return { owner: false };
-  return { owner: ownerAllowed(o.email, env), ...(await loadAutomatch({ ...o, env })) };
+  const owner = ownerAllowed(o.email, env);
+  const { result, agents } = await automatchRun({ ...o, env });
+  return { owner, ...scopeAutomatch(result, { owner, agentId: agentIdOf(o.email, agents), agentFilter: o.agentFilter }) };
 }

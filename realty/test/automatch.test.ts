@@ -297,7 +297,12 @@ function fakeSeam(listings: Listing[], agents: SeamAgent[] = []) {
   return { seam, calls };
 }
 
-const DANA: SeamAgent = { id: 7, name: "Dana Holder", email: null, phone: null };
+const DANA: SeamAgent = { id: 7, name: "Dana Holder", email: AGENT, phone: null };
+const EVE: SeamAgent = { id: 8, name: "Eve Other", email: "eve@1on1.example", phone: null };
+/** Three listings with the same terms: Dana holds the first, Eve the second, and the third is unassigned (agent 0). */
+const HELD_BY_DANA = LISTING();
+const HELD_BY_EVE = LISTING({ id: "2", title: "Second flat, Westmoorings", url: "https://1on1realtors.com/property/second-flat", agentId: 8 });
+const UNASSIGNED = LISTING({ id: "3", title: "Third flat, Westmoorings", url: "https://1on1realtors.com/property/third-flat", agentId: 0 });
 
 test("automatch is read by any signed-in staff member (owner: false for an agent); signed out reads neither the store nor the CRM", async () => {
   const root = storeRoot([DEMAND_ROW()]);
@@ -307,13 +312,94 @@ test("automatch is read by any signed-in staff member (owner: false for an agent
   assert.equal(existsSync(join(root, SEARCH_DB)), false, "signed out: the search store isn't opened");
 
   const agent = await staffAutomatch({ email: AGENT, env: GATE, root, seam, areas: AREAS, now: NOW });
-  assert.ok("pairs" in agent && agent.owner === false && agent.demand === 1, "an agent gets the same read-only data, owner false");
+  assert.ok("pairs" in agent && agent.owner === false && agent.demand === 1, "an agent gets the run's demand, owner false");
   assert.equal(calls.listings, 1, "the CRM is read for a signed-in agent, as for an owner");
 
   const view = await staffAutomatch({ email: OWNER, env: GATE, root, seam, areas: AREAS, now: NOW });
   assert.ok("pairs" in view && view.owner === true);
   assert.equal(view.demand, 1);
   assert.equal(calls.listings, 2, "one CRM read for the agent, one for the owner");
+});
+
+test("an agent sees only the pairs on their own listings; an owner sees all of them, with each agent's count and the unassigned", async () => {
+  const root = storeRoot([DEMAND_ROW()]);
+  const { seam } = fakeSeam([HELD_BY_DANA, HELD_BY_EVE, UNASSIGNED], [DANA, EVE]);
+  const agent = await staffAutomatch({ email: AGENT, env: GATE, root, seam, areas: AREAS, now: NOW });
+  assert.ok("pairs" in agent);
+  assert.deepEqual(agent.pairs.map((p) => p.listing.agentId), [7], "Dana's listing only: not Eve's, not the unassigned one");
+  assert.deepEqual([agent.strong, agent.fair], [1, 0], "the agent's strong and fair are recounted from what they see");
+  assert.equal("agentCounts" in agent, false, "an agent never receives the breakdown");
+  assert.equal("dedupe" in agent, false, "nor the run's folding counts, which cover every agent's pairs");
+  assert.equal(agent.demand, 1, "demand, listings and asks stay the run's totals");
+  assert.equal(agent.listings, 3);
+
+  const owner = await staffAutomatch({ email: OWNER, env: GATE, root, seam, areas: AREAS, now: NOW });
+  assert.ok("pairs" in owner && owner.owner === true);
+  assert.deepEqual(owner.pairs.map((p) => p.listing.agentId ?? 0).sort((a, b) => a - b), [0, 7, 8]);
+  assert.deepEqual([owner.strong, owner.fair], [3, 0]);
+  assert.ok("dedupe" in owner, "the owner's unfiltered view keeps the run's folding counts");
+  assert.deepEqual(
+    owner.agentCounts?.map((c) => [c.agentId, c.name, c.total]),
+    [
+      [7, "Dana Holder", 1],
+      [8, "Eve Other", 1],
+      [null, "Unassigned", 1],
+    ],
+    "the breakdown lists every assigned agent by name, Unassigned last",
+  );
+});
+
+test("a non-owner's agent filter is ignored: asking for another agent or the unassigned gives only their own pairs", async () => {
+  const root = storeRoot([DEMAND_ROW()]);
+  const { seam } = fakeSeam([HELD_BY_DANA, HELD_BY_EVE, UNASSIGNED], [DANA, EVE]);
+  for (const agentFilter of ["8", "unassigned", "7", "0"]) {
+    const agent = await staffAutomatch({ email: AGENT, env: GATE, root, seam, areas: AREAS, now: NOW, agentFilter });
+    assert.ok("pairs" in agent);
+    assert.deepEqual(agent.pairs.map((p) => p.listing.agentId), [7], `?agent=${agentFilter} doesn't widen an agent's view`);
+    assert.equal("agentCounts" in agent, false);
+  }
+});
+
+test("an owner's agent filter narrows the pairs and the stats, but the breakdown still lists every agent", async () => {
+  const root = storeRoot([DEMAND_ROW()]);
+  const { seam } = fakeSeam([HELD_BY_DANA, HELD_BY_EVE, UNASSIGNED], [DANA, EVE]);
+  const eve = await staffAutomatch({ email: OWNER, env: GATE, root, seam, areas: AREAS, now: NOW, agentFilter: "8" });
+  assert.ok("pairs" in eve);
+  assert.deepEqual(eve.pairs.map((p) => p.listing.agentId), [8]);
+  assert.deepEqual([eve.strong, eve.fair], [1, 0]);
+  assert.equal("dedupe" in eve, false, "a filtered view doesn't carry the whole run's folding counts");
+  assert.deepEqual(eve.agentCounts?.map((c) => c.agentId), [7, 8, null], "every agent and Unassigned stay in the breakdown");
+
+  const none = await staffAutomatch({ email: OWNER, env: GATE, root, seam, areas: AREAS, now: NOW, agentFilter: "unassigned" });
+  assert.ok("pairs" in none);
+  assert.deepEqual(none.pairs.map((p) => p.listing.agentId), [null]);
+
+  const garbage = await staffAutomatch({ email: OWNER, env: GATE, root, seam, areas: AREAS, now: NOW, agentFilter: "Eve" });
+  assert.ok("pairs" in garbage);
+  assert.equal(garbage.pairs.length, 3, "a filter that isn't an id or 'unassigned' shows everything");
+});
+
+test("the agent is matched by email, whatever the case, and an unknown signed-in email sees no pairs", async () => {
+  const root = storeRoot([DEMAND_ROW()]);
+  const upper = { ...DANA, email: "AGENT@1ON1.EXAMPLE" };
+  const { seam } = fakeSeam([HELD_BY_DANA, HELD_BY_EVE, UNASSIGNED], [upper, EVE]);
+  const mixed = await staffAutomatch({ email: "Agent@1on1.example", env: GATE, root, seam, areas: AREAS, now: NOW });
+  assert.ok("pairs" in mixed);
+  assert.deepEqual(mixed.pairs.map((p) => p.listing.agentId), [7], "Dana@ matches the CRM's upper-case email");
+
+  const stranger = await staffAutomatch({ email: "stranger@1on1.example", env: GATE, root, seam, areas: AREAS, now: NOW });
+  assert.ok("pairs" in stranger);
+  assert.equal(stranger.owner, false);
+  assert.deepEqual([stranger.pairs.length, stranger.strong, stranger.fair], [0, 0, 0], "not in the CRM: no pairs, no counts");
+});
+
+test("an agent with no listings gets an empty view, not an error", async () => {
+  const root = storeRoot([DEMAND_ROW()]);
+  const { seam } = fakeSeam([HELD_BY_EVE, UNASSIGNED], [DANA, EVE]);
+  const agent = await staffAutomatch({ email: AGENT, env: GATE, root, seam, areas: AREAS, now: NOW });
+  assert.ok("pairs" in agent);
+  assert.deepEqual([agent.pairs, agent.strong, agent.fair], [[], 0, 0]);
+  assert.equal(agent.demand, 1, "the run's demand is still the run's");
 });
 
 test("an owner sees the same-area pair with the holder's name, the stored post, and the score", async () => {

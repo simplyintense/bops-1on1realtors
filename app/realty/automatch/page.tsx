@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { askBudgetLabel } from "@/realty/flow/automatch.ts";
+import { parseOwnerAgentFilter, type AgentAssignmentCount } from "@/realty/flow/automatch-scope.ts";
 import { listingPriceLabel } from "@/realty/flow/live-match.ts";
 import { dateAst } from "@/realty/node/group-posts.ts";
 import { type AutomatchRow } from "@/realty/node/automatch.ts";
 import { staffAutomatchWithLeads } from "@/realty/node/automatch-leads.ts";
-import { CARD_PAGE_SIZE, hrefWithParams, pageWindow, slicePage, type QueryParams } from "@/realty/flow/pagination.ts";
+import { CARD_PAGE_SIZE, firstParam, hrefWithParams, pageWindow, slicePage, type QueryParams } from "@/realty/flow/pagination.ts";
 import { PaginationBar } from "../pagination-bar";
 import { Notice } from "../notice";
 import { LeadCards } from "../desk/lead-cards";
@@ -27,7 +28,7 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
   const { email } = await viewer();
   const raw = await searchParams;
   const showHidden = (Array.isArray(raw.hidden) ? raw.hidden[0] : raw.hidden) === "1";
-  const view = await staffAutomatchWithLeads({ email, showHidden });
+  const view = await staffAutomatchWithLeads({ email, showHidden, agentFilter: firstParam(raw, "agent") });
   if (!("pairs" in view)) {
     return (
       <main className="mx-auto w-full max-w-6xl px-5 py-10">
@@ -45,14 +46,16 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
   const hiddenToggle = hrefWithParams("/realty/automatch", raw, { hidden: showHidden ? undefined : "1", leadsPage: undefined });
   const strongHref = hrefWithParams("/realty/automatch", raw, { band: undefined, page: undefined, leadsPage: undefined });
   const allHref = hrefWithParams("/realty/automatch", raw, { band: "all", page: undefined, leadsPage: undefined });
+  const agentChips = view.owner ? agentChipsOf(view.agentCounts ?? [], all, parseOwnerAgentFilter(true, firstParam(raw, "agent"))) : null;
 
   return (
     <main className="mx-auto w-full max-w-6xl px-5 py-10">
       <p className="rt-eyebrow">Read only</p>
       <h1 className="mt-2 text-3xl font-semibold">Automatch</h1>
       <p className="rt-muted mt-3">
-        WhatsApp buyer and renter requests matched against our active CRM listings, each pair scored 0–100. Read only: nothing here is
-        sent, and nothing is written to the CRM.
+        {view.owner
+          ? "WhatsApp buyer and renter requests matched against our active CRM listings, each pair scored 0–100. Read only: nothing here is sent, and nothing is written to the CRM."
+          : "Matches for the listings you hold: WhatsApp buyer and renter requests matched against our active CRM listings, each pair scored 0–100. Read only: nothing here is sent, and nothing is written to the CRM."}
       </p>
       <p className="rt-muted mt-4 text-sm">
         Jump to:{" "}
@@ -81,6 +84,17 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
         </Link>
       </nav>
 
+      {agentChips ? (
+        <nav aria-label="Assigned to agents" className="mt-4 flex flex-wrap gap-2">
+          <span className="rt-muted self-center text-sm">Assigned to agents:</span>
+          {agentChips.map((c) => (
+            <Link key={c.key} href={hrefWithParams("/realty/automatch", raw, { agent: c.value, page: undefined, leadsPage: undefined })} className="rt-chip" aria-pressed={c.active}>
+              {c.label} · {c.count}
+            </Link>
+          ))}
+        </nav>
+      ) : null}
+
       {view.crmText ? (
         <div className="mt-6">
           <Notice tone="warn">{view.crmText}</Notice>
@@ -92,7 +106,9 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
           Lead cards
         </h2>
         <p className="rt-muted mt-2 text-sm">
-          Every strong match (75 and above): who asked, the listing and its agent (or the office), a suggested message, and the outcome buttons.
+          {view.owner
+            ? "Every strong match (75 and above): who asked, the listing and its agent (or the office), a suggested message, and the outcome buttons."
+            : "Strong matches (75 and above) on the listings you hold: who asked, the listing, a suggested message, and the outcome buttons."}
         </p>
         <div className="mt-4">
           <LeadCards view={leadView} owner={view.owner} showHidden={showHidden} toggleHref={hiddenToggle} />
@@ -111,7 +127,15 @@ export default async function Automatch({ searchParams }: { searchParams: Promis
             <PaginationBar path="/realty/automatch" raw={raw} window={pairWindow} />
           </>
         ) : view.crmText ? null : (
-          <Notice>{all ? "No pairs at 50 and above right now." : "No pairs at 75 and above right now. Try the 50 and above view."}</Notice>
+          <Notice>
+            {view.owner
+              ? all
+                ? "No pairs at 50 and above right now."
+                : "No pairs at 75 and above right now. Try the 50 and above view."
+              : all
+                ? "No matches at 50 and above for your listings right now."
+                : "No matches at 75 and above for your listings right now. Try the 50 and above view."}
+          </Notice>
         )}
       </section>
     </main>
@@ -162,6 +186,22 @@ function PairCard({ r }: { r: AutomatchRow }) {
       <p className="rt-muted text-sm md:col-span-3">{r.reason}</p>
     </li>
   );
+}
+
+/**
+ * The owner's agent chips for the current band: All (every agent's count together), then each assigned agent and Unassigned,
+ * showing only those with a count in this band (the chip that's on stays even at 0). Counts are strong, or total when all bands.
+ */
+function agentChipsOf(counts: readonly AgentAssignmentCount[], all: boolean, filter: number | "unassigned" | null) {
+  const countOf = (c: AgentAssignmentCount) => (all ? c.total : c.strong);
+  const chips = [
+    { key: "all", label: "All", value: undefined, count: counts.reduce((n, c) => n + countOf(c), 0), active: filter == null },
+    ...counts.map((c) => {
+      const active = c.agentId == null ? filter === "unassigned" : filter === c.agentId;
+      return { key: c.agentId == null ? "unassigned" : `agent-${c.agentId}`, label: c.name, value: c.agentId == null ? "unassigned" : String(c.agentId), count: countOf(c), active };
+    }),
+  ];
+  return chips.filter((c) => c.key === "all" || c.count > 0 || c.active);
 }
 
 function Stat({ label, value }: { label: string; value: number }) {

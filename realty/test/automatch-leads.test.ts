@@ -11,7 +11,7 @@ import { applyStatus, isHidden, MATCH_STATUSES, parseStatusPost, STATUS_LABEL, t
 import type { CrmSeam, SeamAgent } from "../flow/crm-seam.ts";
 import type { Listing } from "../flow/source.ts";
 import { automatchRun } from "../node/automatch.ts";
-import { leadAccess, staffLeads } from "../node/automatch-leads.ts";
+import { leadAccess, staffAutomatchWithLeads, staffLeads } from "../node/automatch-leads.ts";
 import { setMatchFollowUp } from "../node/match-status.ts";
 import { PeriskopeStore, requestIdOf } from "../node/periskope-store.ts";
 
@@ -626,3 +626,47 @@ test("the suggested reply carries the listing link only when it is a public 1on1
   const www = leadMessage(LEAD({}, {}, { url: "https://www.1on1realtors.com/property/third-urban" }));
   assert.match(www, /: https:\/\/www\.1on1realtors\.com\/property\/third-urban\. Happy/);
 });
+
+test("the lead cards follow the pairs: an agent gets only their own cards, and an owner's agent filter narrows the cards with the list", async () => {
+  const root = storeRoot();
+  const second = LISTING({ id: "2", title: "Second flat, Westmoorings", url: "https://1on1realtors.com/property/second-flat", agentId: 8 });
+  const office = LISTING({ id: "3", title: "Third flat, Westmoorings", url: "https://1on1realtors.com/property/third-flat", agentId: 0 });
+  const seam = fakeSeam([LISTING(), second, office], [DANA_AGENT, EVE_AGENT]);
+  const base = { seam, root, areas: AREAS, now: NOW, env: GATE };
+
+  const agent = await staffAutomatchWithLeads({ ...base, email: DANA });
+  assert.ok("leads" in agent);
+  assert.deepEqual(agent.leads.cards.map((c) => c.listing.agent), ["Dana Holder"], "Dana's card only");
+  assert.deepEqual(agent.pairs.map((p) => p.listing.agentId), [7], "the pairs agree with the cards");
+  assert.equal("agentCounts" in agent, false, "no breakdown for an agent");
+
+  const owner = await staffAutomatchWithLeads({ ...base, email: OWNER });
+  assert.ok("leads" in owner && owner.owner === true);
+  assert.deepEqual(owner.leads.cards.map((c) => c.listing.agent).sort(), ["Dana Holder", "Eve Other", "Office"].sort());
+  assert.equal(owner.agentCounts?.length, 3, "the breakdown has both agents and the office");
+
+  const eve = await staffAutomatchWithLeads({ ...base, email: OWNER, agentFilter: "8" });
+  assert.ok("leads" in eve);
+  assert.deepEqual(eve.leads.cards.map((c) => c.listing.agent), ["Eve Other"], "the owner's filter moves the cards with the list");
+  assert.deepEqual(eve.pairs.map((p) => p.listing.agentId), [8]);
+  assert.deepEqual(eve.agentCounts?.map((c) => c.agentId), [7, 8, null], "the breakdown still lists everyone");
+
+  const officeOnly = await staffAutomatchWithLeads({ ...base, email: OWNER, agentFilter: "unassigned" });
+  assert.ok("leads" in officeOnly);
+  assert.deepEqual(officeOnly.leads.cards.map((c) => c.listing.agent), ["Office"]);
+
+  const bypass = await staffAutomatchWithLeads({ ...base, email: DANA, agentFilter: "8" });
+  assert.ok("leads" in bypass);
+  assert.deepEqual(bypass.leads.cards.map((c) => c.listing.agent), ["Dana Holder"], "an agent's ?agent= is ignored, cards included");
+});
+
+test("an agent with no listings gets no cards and no pairs; a signed-out viewer gets { owner: false } only", async () => {
+  const root = storeRoot();
+  const seam = fakeSeam([LISTING({ id: "2", title: "Second flat, Westmoorings", url: "https://1on1realtors.com/property/second-flat", agentId: 8 })], [DANA_AGENT, EVE_AGENT]);
+  const base = { seam, root, areas: AREAS, now: NOW, env: GATE };
+  const none = await staffAutomatchWithLeads({ ...base, email: DANA });
+  assert.ok("leads" in none);
+  assert.deepEqual([none.leads.cards, none.pairs, none.strong, none.fair], [[], [], 0, 0]);
+  assert.deepEqual(await staffAutomatchWithLeads({ ...base, email: null }), { owner: false });
+});
+
