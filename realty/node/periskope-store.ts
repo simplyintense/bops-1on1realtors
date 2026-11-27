@@ -196,6 +196,18 @@ export class PeriskopeStore {
   demand(): PostRecord[] { return this.rows<PostRecord>("demand"); }
   priceRanges(): PriceRangeRow[] { return this.rows<PriceRangeRow>("priceRanges"); }
   unknownPlaces(): UnknownPlace[] { return this.rows<UnknownPlace>("unknownPlaces"); }
+
+  /** Counts place names the matcher doesn't know yet (one row per name, the count and last seen). Names only: never text or groups. */
+  noteUnknownPlaces(names: readonly string[], at: string): void {
+    if (!names.length) return;
+    const all = this.unknownPlaces();
+    for (const name of names) {
+      const i = all.findIndex((r) => r.name.toLowerCase() === name.toLowerCase());
+      if (i >= 0) all[i] = { ...all[i], count: all[i].count + 1, lastSeenAt: at };
+      else all.push({ name, count: 1, firstSeenAt: at, lastSeenAt: at });
+    }
+    this.replace("unknownPlaces", all);
+  }
   alerts(): StrongAlert[] { return this.rows<StrongAlert>("alerts"); }
 
   /** Project a parsed post into the supply or demand set, and update price and unknown-place knowledge. */
@@ -215,13 +227,7 @@ export class PeriskopeStore {
       this.replace("priceRanges", all);
     }
     if (recordKnowledge && side && !post.area && post.originalText) {
-      const all = this.unknownPlaces();
-      for (const name of unknownPlaceHints(post.originalText)) {
-        const i = all.findIndex((r) => r.name.toLowerCase() === name.toLowerCase());
-        if (i >= 0) all[i] = { ...all[i], count: all[i].count + 1, lastSeenAt: at };
-        else all.push({ name, count: 1, firstSeenAt: at, lastSeenAt: at });
-      }
-      this.replace("unknownPlaces", all);
+      this.noteUnknownPlaces(unknownPlaceHints(post.originalText), at);
     }
   }
 

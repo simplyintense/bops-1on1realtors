@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { areaKey, CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
-import { automatchPairs, FAIR, type AutomatchAsk, type AutomatchPair, type ScoreParts } from "../flow/automatch.ts";
+import { automatchPairs, FAIR, widenSuggestions, type AutomatchAsk, type AutomatchPair, type ScoreParts } from "../flow/automatch.ts";
 import type { CrmListingsState, CrmSeam } from "../flow/crm-seam.ts";
 import { fitsOurListing, liveBuyerArgs, OUR_AGENCY, ourAreaContext, ourAreaRelation, type LiveRequest } from "../flow/live-match.ts";
 import { listingTypeWord } from "../flow/listing-title.ts";
@@ -10,13 +10,14 @@ import { readsAsBuyerAsk } from "../flow/periskope.ts";
 import { parseMatch } from "../flow/recommendations.ts";
 import { jsonHits, readOnlyCall, timedOut } from "../flow/requests.ts";
 import type { Listing } from "../flow/source.ts";
-import type { AreaKnowledgeIndex } from "../flow/area-knowledge.ts";
+import { regionOfPlace, type AreaKnowledgeIndex } from "../flow/area-knowledge.ts";
+import { knownPlaceName } from "../flow/observe.ts";
 import { sameSecret, type AgentReply, type Env } from "./agent-search.ts";
-import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
 import { areasFromEnv, AreaStore } from "./area-store.ts";
 import { crmSeamFromEnv } from "./crm-shared.ts";
 import { periskopeRoot } from "./periskope-root.ts";
-import { withSearchStore, type SearchRow } from "./search-store.ts";
+import { PeriskopeStore } from "./periskope-store.ts";
+import { matchingKnowledgeFrom, withSearchStore, type SearchRow } from "./search-store.ts";
 
 /**
  * POST /api/realty/automatch-client: the 1on1 CRM calls this when a client is added, and gets matches for the client's brief
@@ -76,7 +77,7 @@ export type AutomatchClientOpts = {
   marketTimeoutMs?: number;
 };
 
-/** A validated brief. `locations` is never empty. The price band is fitsOurListing's (priceMin and priceMax); the scorer reads budget_max, else budget_min. */
+/** A validated brief. `locations` is never empty. priceMin and priceMax are budget_min and budget_max: a range when both are given (fitsOurListing, scorePair), else a single budget. */
 type Brief = {
   clientId: string;
   propertyType: string | null;
@@ -115,6 +116,8 @@ export async function automatchClient(req: AutomatchClientRequest, env: Env, o: 
   const warnings: string[] = [];
   const now = o.now ?? new Date();
   const request = liveRequestOf(brief);
+  // The place names this request carries: the brief's, and each scored listing's area (for the unknown-places note).
+  const placeNames: string[] = [...brief.locations];
 
   // CRM: read only when asked for. A failed read is a 503 when it's the only source, else a warning and no CRM matches.
   let crmListings: Listing[] | null = null;
@@ -137,7 +140,8 @@ export async function automatchClient(req: AutomatchClientRequest, env: Env, o: 
   let totalCandidates = 0;
   if (crmListings !== null && scoring) {
     const { eligible, ranked } = await scoreAgainst(asks, crmListings, brief, request, scoring, now);
-    totalCandidates = eligible;
+    totalCandidates = eligible.length;
+    placeNames.push(...eligible.map((l) => placeWithoutRegion(l.area)));
     matches = ranked.slice(0, brief.limit).map(matchOf);
   }
 
@@ -154,7 +158,8 @@ export async function automatchClient(req: AutomatchClientRequest, env: Env, o: 
       });
       const byId = new Map(pairs.map((p) => [p.listing.id, p.row] as const));
       const { eligible, ranked } = await scoreAgainst(asks, pairs.map((p) => p.listing), brief, request, scoring, now);
-      whatsappCandidates = eligible;
+      whatsappCandidates = eligible.length;
+      placeNames.push(...eligible.map((l) => l.area));
       whatsappMatches = ranked.slice(0, brief.limit).flatMap((p) => {
         const row = byId.get(p.listing.id);
         return row ? [supplyMatchOf(p, row, publicUrlOf(env))] : [];
@@ -170,28 +175,55 @@ export async function automatchClient(req: AutomatchClientRequest, env: Env, o: 
     const r = await onlineSearch(brief, request, marketFor(env, o), now, scoring);
     onlineMatches = r.items;
     warnings.push(...r.warnings);
+    placeNames.push(...onlineMatches.map((m) => m.location).filter((n): n is string => !!n));
   }
+  if (scoring) noteUnknownPlaces(root, placeNames, scoring.knowledge, now);
 
   const body: Record<string, unknown> = { ok: true, matches };
   if (wantWhatsapp) body.whatsapp_matches = whatsappMatches;
   if (wantOnline) body.online_matches = onlineMatches;
-  body.meta = {
+  const meta: Record<string, unknown> = {
     total_candidates: totalCandidates,
     scored_at: now.toISOString(),
     sources: sources.list,
     ...(wantWhatsapp ? { whatsapp_candidates: whatsappCandidates } : {}),
     ...(warnings.length ? { warnings } : {}),
   };
+  const widen = widenSuggestions({
+    sources: sources.list,
+    locations: brief.locations,
+    budgetMax: brief.priceMax,
+    currency: brief.currency,
+    bedrooms: brief.beds,
+    scores: [...matches, ...whatsappMatches, ...onlineMatches].map((m) => m.score),
+    regionOf: (place) => regionOfPlace(scoring?.knowledge ?? null, place),
+  });
+  if (widen) meta.widen_suggestions = widen;
+  body.meta = meta;
   return { status: 200, body };
 }
 
-/** The asks, one per location: the scorer reads each as a buyer's ask in that area. */
+/**
+ * Place names the matcher doesn't know yet are counted in the unknown-places file, for Teach. Local and quick: nothing is looked up
+ * and no listing is dropped for it. Names only. A failed write never fails the request.
+ */
+function noteUnknownPlaces(root: string, names: readonly string[], knowledge: AreaKnowledgeIndex | null, now: Date): void {
+  const unknown = [...new Set(names.map((n) => n.trim()))].filter((n) => n && n.length <= 40 && !knownPlaceName(n, knowledge));
+  try {
+    new PeriskopeStore(root).noteUnknownPlaces(unknown, now.toISOString());
+  } catch {
+    // The count is a note for Teach: a full disk or a locked file must not fail the match.
+  }
+}
+
+/** The asks, one per location: the scorer reads each as a buyer's ask in that area, with the brief's budget range (or single figure). */
 function asksOf(brief: Brief, now: Date): AutomatchAsk[] {
   return brief.locations.map((area, i) => ({
     id: `${brief.clientId}#${i}`,
     area,
     beds: brief.beds,
-    budget: brief.priceMax ?? brief.priceMin,
+    budget: brief.priceMax,
+    budgetMin: brief.priceMin,
     currency: brief.currency,
     type: brief.propertyType,
     listingType: brief.listingType,
@@ -204,13 +236,13 @@ type ScoringContext = { areas: AreaResolver; knowledge: AreaKnowledgeIndex | nul
 
 function scoringContext(o: AutomatchClientOpts, env: Env, root: string): ScoringContext {
   const areas = o.areas ?? new CachedAreaResolver(areasFromEnv(new AreaStore(join(dirname(root), "areas")), env, o.fetcher));
-  const knowledge = o.knowledge !== undefined ? o.knowledge : resolveAreaKnowledge(join(dirname(root), "area-knowledge.json"));
+  const knowledge = o.knowledge !== undefined ? o.knowledge : matchingKnowledgeFrom(root);
   return { areas, knowledge };
 }
 
 /**
  * The eligible listings (fitsOurListing, the bathrooms floor) and the best pair per listing at FAIR or above, best first.
- * `eligible` is the count before the score cut, which is what the meta counts.
+ * `eligible` is before the score cut: its length is what the meta counts.
  */
 async function scoreAgainst(
   asks: AutomatchAsk[],
@@ -219,13 +251,13 @@ async function scoreAgainst(
   request: LiveRequest,
   ctx: ScoringContext,
   now: Date,
-): Promise<{ eligible: number; ranked: AutomatchPair[] }> {
+): Promise<{ eligible: Listing[]; ranked: AutomatchPair[] }> {
   const eligible = listings.filter((l) => l.status === "active" && fitsOurListing(request, l) && (brief.bathsMin == null || !(l.baths > 0 && l.baths < brief.bathsMin)));
   const pairs = await automatchPairs(asks, eligible, ctx.areas, now, ctx.knowledge);
   // Best first, so the first pair of each listing is its best score across the locations.
   const best = new Map<string, AutomatchPair>();
   for (const p of pairs) if (!best.has(p.listing.id)) best.set(p.listing.id, p);
-  return { eligible: eligible.length, ranked: [...best.values()].filter((p) => p.score >= FAIR) };
+  return { eligible, ranked: [...best.values()].filter((p) => p.score >= FAIR) };
 }
 
 /** The live matching request the eligibility rules read (the shape matchOurListings takes). fitsOurListing reads no area, so none is set. */
