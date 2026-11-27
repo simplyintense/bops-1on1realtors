@@ -1,8 +1,11 @@
-import { AREAS, developmentOf, findAreas, findDevelopments, namesPlace } from "../extract.ts";
+import { AREAS, developmentOf, findAreas, findDevelopments, isCentralAreaGroup, namesPlace } from "../extract.ts";
+import { knowledgeOf, type AreaKnowledgeIndex } from "./area-knowledge.ts";
+import { parseRegion } from "./areas.ts";
 import { PRICE_BAND, type LiveRequest } from "./live-match.ts";
 import { moneyLabel } from "./market-search.ts";
 import type { MatchItem } from "./recommendations.ts";
 import type { PostCategory } from "./periskope.ts";
+import { taughtPlaceOf } from "./taught-areas.ts";
 import type { Listing } from "./source.ts";
 
 /**
@@ -63,6 +66,11 @@ function alreadyKnown(name: string): boolean {
   const k = name.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
   if (areaLookup.has(k) || developmentOf(name)) return true;
   return false;
+}
+
+/** A place name the matcher already reads: a gazetteer area or development, a region or the Central group, a taught place (or its alias), or a knowledge place. */
+export function knownPlaceName(name: string, index: AreaKnowledgeIndex | null | undefined): boolean {
+  return alreadyKnown(name) || !!parseRegion(name) || isCentralAreaGroup(name) || !!knowledgeOf(index, name) || !!taughtPlaceOf(index?.taught, name);
 }
 
 /** Place-like names after in/at/near/around that are not in the gazetteer. Never returns message text. */

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { MemoryAreaResolver } from "../flow/areas.ts";
-import { askOf, automatchPairs, bandOf, scorePair, type AutomatchAsk } from "../flow/automatch.ts";
+import { askOf, automatchPairs, bandOf, scorePair, widenSuggestions, type AutomatchAsk } from "../flow/automatch.ts";
 import { CRM_NOT_CONNECTED_TEXT, CRM_UNREACHABLE_TEXT, liveCrmSeam, NOT_CONNECTED, type CrmSeam, type SeamAgent } from "../flow/crm-seam.ts";
 import { matchOurListings, type LiveRequest } from "../flow/live-match.ts";
 import type { Listing } from "../flow/source.ts";
@@ -355,4 +355,90 @@ test("the CLI prints the counts and the top pairs, and never a phone number or a
   assert.match(out, /CRM not connected/);
   assert.doesNotMatch(out, /868|555|@/, "no phone number or email");
   assert.doesNotMatch(out, /Test Renter/, "the sender's name isn't printed either");
+});
+
+/* ---------------- ranged budgets (budget_min to budget_max) ---------------- */
+
+/** A sale house with a budget range: the ceiling in `budget`, the floor in `budgetMin`. Invented listings only. */
+const RANGE_ASK = (over: Partial<AutomatchAsk> = {}) => ASK({ listingType: "sale", type: "house", beds: 4, budget: 6_500_000, budgetMin: 3_000_000, ...over });
+const HOUSE_AT = (price: number, over: Partial<Listing> = {}) => LISTING({ listingType: "sale", beds: 4, title: "Test house", price, ...over });
+const priceScore = (ask: Partial<AutomatchAsk>, price: number) => scorePair(RANGE_ASK(ask), HOUSE_AT(price), { areaRelation: "same", now: NOW });
+
+test("a range: anywhere from the floor to the ceiling, the ends included, is full price points", () => {
+  for (const price of [3_000_000, 3_500_000, 5_000_000, 6_500_000]) assert.equal(priceScore({}, price).parts.price, 25, `TT$${price}`);
+  assert.match(priceScore({}, 3_500_000).reason, /TT\$3\.5m fits TT\$3m–6\.5m budget/);
+});
+
+test("a range: under the floor or over the ceiling is linear to 0 at 20% past the edge, and the reason says how far", () => {
+  const under = priceScore({}, 2_700_000);
+  assert.ok(Math.abs(under.parts.price - 12.5) < 1e-9, "10% under the floor is half");
+  assert.match(under.reason, /10% under the TT\$3m–6\.5m budget/);
+  assert.equal(priceScore({}, 2_400_000).parts.price, 0, "20% under the floor is zero");
+  assert.equal(priceScore({}, 2_000_000).parts.price, 0, "past 20% under stays zero");
+
+  const over = priceScore({}, 7_000_000);
+  assert.ok(Math.abs(over.parts.price - 25 * (1 - (0.5 / 6.5) / 0.2)) < 1e-9, "about 8% over the ceiling keeps part of the points");
+  assert.match(over.reason, /8% over the TT\$3m–6\.5m budget/);
+  assert.equal(priceScore({}, 7_800_000).parts.price, 0, "20% over the ceiling is zero");
+  assert.equal(priceScore({}, 8_500_000).parts.price, 0);
+});
+
+test("a floor with no ceiling: full at or above it, 20% tolerance below, and no ceiling at all", () => {
+  const minOnly = { budget: null, budgetMin: 3_000_000 };
+  assert.equal(priceScore(minOnly, 3_000_000).parts.price, 25);
+  assert.equal(priceScore(minOnly, 20_000_000).parts.price, 25, "no ceiling");
+  assert.ok(Math.abs(priceScore(minOnly, 2_700_000).parts.price - 12.5) < 1e-9);
+  assert.match(priceScore(minOnly, 2_700_000).reason, /10% under the TT\$3m minimum budget/);
+  assert.match(priceScore(minOnly, 4_000_000).reason, /fits TT\$3m minimum budget/);
+});
+
+test("a single budget has no floor: under the figure is full, however far under (the eligibility band is the only floor)", () => {
+  const single = ASK({ listingType: "sale", budget: 6_500_000 });
+  assert.equal(scorePair(single, HOUSE_AT(1_000_000), { areaRelation: "same", now: NOW }).parts.price, 25);
+  assert.match(scorePair(single, HOUSE_AT(1_000_000), { areaRelation: "same", now: NOW }).reason, /within TT\$6\.5m budget/);
+});
+
+test("automatchPairs gives a range's listings the range: 3.5M and 5M in, 7M in with a lower price score, 2M and 8.5M out", async () => {
+  const listings = [3_500_000, 5_000_000, 2_000_000, 7_000_000, 8_500_000].map((price) => HOUSE_AT(price, { id: `p${price}` }));
+  const pairs = await automatchPairs([RANGE_ASK({ id: "ask", area: "Westmoorings" })], listings, AREAS, NOW);
+  assert.deepEqual(pairs.map((p) => p.listing.id).sort(), ["p3500000", "p5000000", "p7000000"]);
+  const seven = pairs.find((p) => p.listing.id === "p7000000");
+  assert.ok(seven && seven.parts.price > 0 && seven.parts.price < 25);
+});
+
+/* ---------------- thin results: widen suggestions ---------------- */
+
+const THIN = { sources: ["crm"], locations: ["Chaguanas"], budgetMax: 9000, currency: "TTD" as const, bedrooms: 3, scores: [82, 74], regionOf: (p: string) => (p === "Chaguanas" ? "Central" : null) };
+
+test("a thin CRM-only brief: suggestions to add WhatsApp and Online, a 15% higher budget, one bedroom fewer, and the parent region, in that order", () => {
+  const s = widenSuggestions(THIN);
+  assert.deepEqual(s?.map((x) => x.id), ["include-whatsapp", "include-online", "widen-budget", "relax-bedrooms", "expand-region-central"]);
+  const patch = (id: string) => s?.find((x) => x.id === id)?.patch;
+  assert.deepEqual(patch("include-whatsapp"), { sources: ["crm", "whatsapp"] });
+  assert.deepEqual(patch("include-online"), { sources: ["crm", "online"] });
+  assert.deepEqual(patch("widen-budget"), { budget_max: 10_350 });
+  assert.deepEqual(patch("relax-bedrooms"), { bedrooms_min: 2 });
+  assert.deepEqual(patch("expand-region-central"), { location: ["Chaguanas", "Central"] });
+});
+
+test("a strong result (three matches at 70 or more) has no suggestions; two at 70 or more and a 69 is still thin", () => {
+  assert.equal(widenSuggestions({ ...THIN, scores: [90, 80, 70] }), null);
+  assert.notEqual(widenSuggestions({ ...THIN, scores: [90, 80, 69] }), null);
+  assert.notEqual(widenSuggestions({ ...THIN, scores: [] }), null, "no matches at all is thin");
+});
+
+test("a source already asked for, no budget, a bedroom count under 2, a region the brief has, and a region or island give no suggestion", () => {
+  const ids = (o: Partial<Parameters<typeof widenSuggestions>[0]>) => widenSuggestions({ ...THIN, ...o })?.map((x) => x.id);
+  assert.deepEqual(ids({ sources: ["crm", "whatsapp", "online"], budgetMax: null, bedrooms: 1 }), ["expand-region-central"]);
+  assert.deepEqual(ids({ locations: ["Chaguanas", "Central"] }), ["include-whatsapp", "include-online", "widen-budget", "relax-bedrooms"]);
+  assert.deepEqual(ids({ locations: ["Tobago"], regionOf: () => "Tobago" }), ["include-whatsapp", "include-online", "widen-budget", "relax-bedrooms"], "a region or island is not expanded");
+  assert.deepEqual(ids({ locations: ["Central locations"], regionOf: () => "Central" }), ["include-whatsapp", "include-online", "widen-budget", "relax-bedrooms"], "the Central group is not expanded");
+});
+
+test("two places in one region give one region suggestion; a USD budget is labelled in US$; nothing names the internal tools", () => {
+  const s = widenSuggestions({ ...THIN, locations: ["Chaguanas", "Couva"], regionOf: () => "Central", budgetMax: 500_000, currency: "USD" });
+  assert.equal(s?.filter((x) => x.id.startsWith("expand-region")).length, 1);
+  assert.deepEqual(s?.find((x) => x.id === "expand-region-central")?.patch, { location: ["Chaguanas", "Couva", "Central"] });
+  assert.equal(s?.find((x) => x.id === "widen-budget")?.description, "Look up to US$575k instead of US$500k.");
+  assert.doesNotMatch(JSON.stringify(s), /periskope|bops/i);
 });

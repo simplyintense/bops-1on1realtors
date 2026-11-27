@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { haversineKm, minutesFromKm, nearbyByKnowledge, nearbyReason, neighboursByDistance, type AreaKnowledge, type AreaKnowledgeIndex } from "../flow/area-knowledge.ts";
+import { haversineKm, islandOfPlace, minutesFromKm, nearbyByKnowledge, nearbyReason, neighboursByDistance, regionOfPlace, type AreaKnowledge, type AreaKnowledgeIndex } from "../flow/area-knowledge.ts";
 import { matchOurListings, type LiveRequest } from "../flow/live-match.ts";
 import { veryStrongOurListings } from "../flow/observe.ts";
 import { ExactAreaFallback } from "../flow/areas.ts";
@@ -64,4 +64,54 @@ test("nearby matching uses knowledge distance, and Glencoe can be a recommendati
   assert.match(gl?.reason ?? "", /^Glencoe, about \d+ min from West Hills, in budget$/);
   const strong = veryStrongOurListings(RENT, listings);
   assert.deepEqual(strong.map((m) => m.area), ["West Hills"]);
+});
+
+/* Invented places. Trinidad coordinates are south of 10.95°N, Tobago's north of it. 0.05° of latitude is about 5.5 km. */
+const ISLANDS: AreaKnowledgeIndex = {
+  source: "test",
+  builtAt: "",
+  places: [
+    place("Invented Heights", 10.66, -61.52),
+    place("Invented Park", 10.71, -61.52),
+    place("Invented Bay", 11.2, -60.6),
+    place("Invented Cove", 11.25, -60.6),
+    place("Goodwood Gardens", 11.21, -60.62),
+    place("Goodwood", 11.2, -60.61),
+  ],
+};
+
+test("nearby by coordinates: two places 5–7 km apart on the same island are nearby, in Trinidad or in Tobago", () => {
+  const trinidad = nearbyByKnowledge(ISLANDS, "Invented Heights", "Invented Park");
+  assert.ok(trinidad && trinidad.km > 5 && trinidad.km < 7, `km ${trinidad?.km}`);
+  assert.equal(nearbyByKnowledge(ISLANDS, "Invented Bay", "Invented Cove")?.name, "Invented Cove");
+});
+
+test("nearby by coordinates never crosses the sea: a Trinidad place and a Tobago place 4 km apart are not nearby, whatever the caller checked", () => {
+  const taught = { places: [{ name: "Invented Cove", market: "Tobago", lat: null, lon: null, note: null }], aliases: [], relations: [] };
+  const withTaught: AreaKnowledgeIndex = { source: "test", builtAt: "", places: [place("Invented Heights", 10.66, -61.52), place("Invented Cove", 10.7, -61.52)], taught };
+  assert.equal(nearbyByKnowledge(withTaught, "Invented Heights", "Invented Cove"), null, "about 4 km, taught Tobago, Trinidad coordinates");
+  const bySide: AreaKnowledgeIndex = { source: "test", builtAt: "", places: [place("Invented Point", 10.94, -61.52), place("Invented Ridge", 10.96, -61.52)] };
+  assert.equal(nearbyByKnowledge(bySide, "Invented Point", "Invented Ridge"), null, "either side of the 10.95° line");
+});
+
+test("a Trinidad compound on Tobago coordinates is not the Tobago village next door: 'Goodwood Gardens' is Trinidad, 'Goodwood' is not", () => {
+  assert.equal(islandOfPlace(ISLANDS, "Goodwood Gardens"), "Trinidad");
+  assert.equal(islandOfPlace(ISLANDS, "Goodwood"), "Tobago");
+  assert.equal(nearbyByKnowledge(ISLANDS, "Goodwood", "Goodwood Gardens"), null);
+});
+
+test("islandOfPlace reads local data in order: taught market, compound name, a name that spells the island, parent, then coordinates", () => {
+  const taught = { places: [{ name: "Invented Heights", market: "Tobago", lat: null, lon: null, note: null }], aliases: [], relations: [] };
+  assert.equal(islandOfPlace({ ...ISLANDS, taught }, "Invented Heights"), "Tobago", "the taught market wins over coordinates");
+  assert.equal(islandOfPlace(ISLANDS, "West Tobago"), "Tobago", "the name spells it");
+  assert.equal(islandOfPlace({ source: "t", builtAt: "", places: [place("Invented Hill", 10.7, -61.5, "area", "Tobago")] }, "Invented Hill"), "Tobago", "the parent region");
+  assert.equal(islandOfPlace(null, "Invented Heights"), null, "no data, no island");
+});
+
+test("regionOfPlace: a taught market is the region, a parent region is one, and a place on Tobago is Tobago", () => {
+  const taught = { places: [{ name: "Invented Heights", market: "Central", lat: null, lon: null, note: null }], aliases: [], relations: [] };
+  assert.equal(regionOfPlace({ ...ISLANDS, taught }, "Invented Heights"), "Central");
+  assert.equal(regionOfPlace({ source: "t", builtAt: "", places: [place("Invented Hill", 10.7, -61.5, "area", "Port of Spain")] }, "Invented Hill"), "Port of Spain");
+  assert.equal(regionOfPlace(ISLANDS, "Invented Bay"), "Tobago");
+  assert.equal(regionOfPlace(ISLANDS, "Invented Heights"), null, "Trinidad coordinates alone don't name a region");
 });

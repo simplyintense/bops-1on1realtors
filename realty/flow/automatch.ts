@@ -1,5 +1,6 @@
 import type { AreaKnowledgeIndex } from "./area-knowledge.ts";
-import type { AreaResolver } from "./areas.ts";
+import { areaKey, parseRegion, type AreaResolver } from "./areas.ts";
+import { isCentralAreaGroup } from "../extract.ts";
 import { sameDemandAsk, type AskFacts } from "./ask-match.ts";
 import { isUsd, moneyWithTtd, shortMoney, ttdValue } from "./fx.ts";
 import { moneyLabel } from "./market-search.ts";
@@ -13,7 +14,8 @@ import type { Listing } from "./source.ts";
  *
  * Eligibility is the live matching rules, not a copy of them: fitsOurListing and the area tiers from live-match.ts. So every
  * pair here is one matchOurListings would also give. Money is compared in TTD at the fixed rate (fx.ts). The score is this file's:
- *   price 25    the listing at or under the budget is full; linear down to 0 at 20% over (PRICE_BAND); a missing price or budget is 0
+ *   price 25    the listing at or under the budget is full (a range: anywhere from its floor to its ceiling); linear down to 0 at 20%
+ *               past the edge (PRICE_BAND); a missing price or budget is 0
  *   area 30     same area 30, nearby 15
  *   beds 20     exact 20, one off 10, missing 0
  *   type 10     sale/rent agrees (5; eligibility makes it agree) + kind of place agrees (5; no type asked is 5)
@@ -54,8 +56,10 @@ export type AutomatchAsk = {
   id: string;
   area: string;
   beds: number | null;
-  /** The budget as one figure, in `currency`. null when the ask gives none. */
+  /** The budget in `currency`: the single figure, or the ceiling of a range. null when the ask gives none. */
   budget: number | null;
+  /** The floor of a budget range, when the ask gives one. With `budget` null it is a floor with no ceiling. */
+  budgetMin?: number | null;
   currency: "TTD" | "USD";
   /** The asked kind of place (house, apartment, land…), or null. */
   type: string | null;
@@ -93,17 +97,24 @@ export function scorePair(ask: Omit<AutomatchAsk, "id">, l: Listing, o: { areaRe
   // Both prices in TTD (fx.ts), so a USD ask and a TTD listing compare, and the other way round.
   const lp = listingTtd(l);
   const shownListing = isUsd(l.currency) ? moneyWithTtd(l.price, "USD", l.ttdEquiv) : shortMoney(l.price, "TTD");
-  const shownBudget = ask.budget ? (isUsd(cur) ? moneyWithTtd(ask.budget, "USD") : shortMoney(ask.budget, "TTD")) : "";
+  // A range has a floor (budgetMin) and a ceiling (budget); a single figure is the ceiling, and a floor alone has no ceiling.
+  const floor = ask.budgetMin ?? null;
+  const ceiling = ask.budget ?? null;
+  const shownCeiling = ceiling ? (isUsd(cur) ? moneyWithTtd(ceiling, "USD") : shortMoney(ceiling, "TTD")) : "";
+  const label = floor && ceiling ? `${shortMoney(floor, cur)}–${shortMoney(ceiling, cur).replace(/^(TT|US)\$/, "")}` : floor ? `${shortMoney(floor, cur)} minimum` : shownCeiling;
   let price: { points: number; text: string };
-  if (!ask.budget) price = { points: 0, text: "no budget given" };
+  if (!floor && !ceiling) price = { points: 0, text: "no budget given" };
   else if (!lp) price = { points: 0, text: "no price listed" };
   else {
-    const budgetTtd = ttdValue(ask.budget, cur);
-    if (lp <= budgetTtd) price = { points: WEIGHT.price, text: `${shownListing} within ${shownBudget} budget` };
-    else {
-      const over = (lp - budgetTtd) / budgetTtd;
-      price = { points: WEIGHT.price * Math.max(0, 1 - over / PRICE_BAND), text: `${shownListing}, ${Math.round(over * 100)}% over the ${shownBudget} budget` };
-    }
+    const lowTtd = floor ? ttdValue(floor, cur) : null;
+    const highTtd = ceiling ? ttdValue(ceiling, cur) : null;
+    if (lowTtd !== null && lp < lowTtd) {
+      const under = (lowTtd - lp) / lowTtd;
+      price = { points: WEIGHT.price * Math.max(0, 1 - under / PRICE_BAND), text: `${shownListing}, ${Math.round(under * 100)}% under the ${label} budget` };
+    } else if (highTtd !== null && lp > highTtd) {
+      const over = (lp - highTtd) / highTtd;
+      price = { points: WEIGHT.price * Math.max(0, 1 - over / PRICE_BAND), text: `${shownListing}, ${Math.round(over * 100)}% over the ${label} budget` };
+    } else price = { points: WEIGHT.price, text: `${shownListing} ${floor ? "fits" : "within"} ${label} budget` };
   }
 
   let area: { points: number; text: string };
@@ -159,7 +170,7 @@ export function bandCounts(pairs: readonly { score: number }[]): { strong: numbe
 
 /** The live matching request for one ask (the same shape matchOurListings takes). */
 function requestOf(a: AutomatchAsk): LiveRequest {
-  return { intent: a.listingType === "rent" ? "rent" : "buy", area: a.area, beds: a.beds, propertyType: a.type, priceMin: null, priceMax: a.budget, currency: a.currency, monthly: false };
+  return { intent: a.listingType === "rent" ? "rent" : "buy", area: a.area, beds: a.beds, propertyType: a.type, priceMin: a.budgetMin ?? null, priceMax: a.budget, currency: a.currency, monthly: false };
 }
 
 /** An ask as the duplicate rule reads it (sameDemandAsk, ask-match.ts). */
@@ -265,4 +276,48 @@ export function askOf(d: DemandRow): AutomatchAsk | null {
     ...(d.senderPhone ? { sender: d.senderPhone } : {}),
     ...(d.timesSeen != null ? { posts: d.timesSeen } : {}),
   };
+}
+
+/* ---------------- thin results: what to widen ---------------- */
+
+/** A result is strong with WIDEN_COUNT matches at WIDEN_SCORE or more (so its top is at that too); otherwise it is thin. */
+export const WIDEN_SCORE = 70;
+export const WIDEN_COUNT = 3;
+
+/** One change that would widen a brief: a stable id, staff-facing words, and the brief fields to merge on (`patch`). */
+export type WidenSuggestion = { id: string; label: string; description: string; patch: Record<string, unknown> };
+
+/**
+ * The changes that would widen a thin brief, each ready to merge onto the brief, in this order: WhatsApp Inventory, Online Search, the
+ * budget ceiling 15% higher (only when there is one), one bedroom fewer (from 2 beds up), and each region a specific place the brief names
+ * sits in. Null when the result is strong. `scores` are the returned matches' scores (null where a market gave none). Pure: `regionOf`
+ * is the caller's local lookup, and a region the brief already has is not suggested.
+ */
+export function widenSuggestions(b: {
+  sources: readonly string[];
+  locations: readonly string[];
+  budgetMax: number | null;
+  currency: "TTD" | "USD";
+  bedrooms: number | null;
+  scores: readonly (number | null)[];
+  regionOf: (place: string) => string | null;
+}): WidenSuggestion[] | null {
+  if (b.scores.filter((s) => s != null && s >= WIDEN_SCORE).length >= WIDEN_COUNT) return null;
+  const out: WidenSuggestion[] = [];
+  if (!b.sources.includes("whatsapp")) out.push({ id: "include-whatsapp", label: "Add WhatsApp Inventory", description: "Also look at the offers posted to WhatsApp.", patch: { sources: [...b.sources, "whatsapp"] } });
+  if (!b.sources.includes("online")) out.push({ id: "include-online", label: "Add Online Search", description: "Also look at other agencies' listings.", patch: { sources: [...b.sources, "online"] } });
+  if (b.budgetMax != null) {
+    const wider = Math.round(b.budgetMax * 1.15);
+    out.push({ id: "widen-budget", label: "Raise the budget by 15%", description: `Look up to ${shortMoney(wider, b.currency)} instead of ${shortMoney(b.budgetMax, b.currency)}.`, patch: { budget_max: wider } });
+  }
+  if (b.bedrooms != null && b.bedrooms >= 2) out.push({ id: "relax-bedrooms", label: "Allow one bedroom fewer", description: `Also look at homes with ${b.bedrooms - 1} bedrooms.`, patch: { bedrooms_min: b.bedrooms - 1 } });
+  const seen = new Set(b.locations.map(areaKey));
+  for (const place of b.locations) {
+    if (parseRegion(place) || isCentralAreaGroup(place) || /^(trinidad|tobago)$/i.test(place)) continue;
+    const region = b.regionOf(place);
+    if (!region || seen.has(areaKey(region))) continue;
+    seen.add(areaKey(region));
+    out.push({ id: `expand-region-${region.toLowerCase().replace(/[^a-z]+/g, "-")}`, label: `Add ${region} to the location`, description: `${place} is in ${region}: also look across ${region}.`, patch: { location: [...b.locations, region] } });
+  }
+  return out;
 }

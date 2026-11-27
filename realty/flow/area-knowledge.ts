@@ -8,7 +8,9 @@
  * until Miles confirms.
  */
 
-import type { TaughtAreas } from "./taught-areas.ts";
+import { compoundIsland } from "../extract.ts";
+import { islandNamedIn, islandOf, parseRegion, type Island, type Region } from "./areas.ts";
+import { islandOfMarket, marketOf, taughtPlaceOf, type TaughtAreas } from "./taught-areas.ts";
 
 export const KNOWLEDGE_SOURCE = "OpenStreetMap Nominatim (https://nominatim.openstreetmap.org) for coordinates and named points of interest (schools, malls and supermarkets, highways, hospitals, airports); drive times estimated at 35 km/h from great-circle distance unless an OSRM duration is stored.";
 
@@ -84,12 +86,44 @@ export function neighboursByDistance(index: AreaKnowledgeIndex, name: string, ma
   return out.slice(0, limit);
 }
 
+/** Gap between the two islands: in the area-knowledge file Trinidad tops out near 10.71°N (Diego Martin) and Tobago starts near 11.15°N (Bon Accord), so a point north of this line is Tobago. */
+const TOBAGO_NORTH_OF_LAT = 10.95;
+
+/**
+ * The island a place is on, from local data only (no network): its taught market, a compound's own name (Goodwood Gardens is
+ * Trinidad; the bare Goodwood is not a compound), a name that spells the island (West Tobago), its parent region, else its
+ * coordinates. Null when none of those says.
+ */
+export function islandOfPlace(index: AreaKnowledgeIndex | null | undefined, name: string): Island | null {
+  const k = knowledgeOf(index, name);
+  return (
+    islandOfMarket(taughtPlaceOf(index?.taught, name)?.market) ??
+    compoundIsland(name, "") ??
+    islandNamedIn(name) ??
+    islandOf(k?.parent) ??
+    (k?.coords ? (k.coords.lat >= TOBAGO_NORTH_OF_LAT ? "Tobago" : "Trinidad") : null)
+  );
+}
+
+/** The region a place sits in, from local data only: its taught market, else its parent region, else Tobago when it is on Tobago. Null when none says. */
+export function regionOfPlace(index: AreaKnowledgeIndex | null | undefined, name: string): Region | null {
+  const k = knowledgeOf(index, name);
+  return parseRegion(marketOf(taughtPlaceOf(index?.taught, name)?.market)) ?? parseRegion(k?.parent) ?? (islandOfPlace(index, name) === "Tobago" ? "Tobago" : null);
+}
+
+/**
+ * The nearest place within maxKm (crow-fly), when both places have coordinates. Only on the same island: a pair across the sea
+ * (Trinidad and Tobago are well over 8 km apart) is never a neighbour, whatever the caller checked before. Null when either island
+ * is unknown, which can't happen when both have coordinates (islandOfPlace falls back to them).
+ */
 export function nearbyByKnowledge(index: AreaKnowledgeIndex | null | undefined, requestArea: string, listingArea: string, maxKm = 8): KnowledgeNeighbour | null {
   if (!index) return null;
   const a = knowledgeOf(index, requestArea);
   const b = knowledgeOf(index, listingArea);
   if (!a?.coords || !b?.coords) return null;
   if (keyOf(a.name) === keyOf(b.name)) return null;
+  const island = islandOfPlace(index, a.name);
+  if (!island || island !== islandOfPlace(index, b.name)) return null;
   const km = Math.round(haversineKm(a.coords, b.coords) * 10) / 10;
   if (km > maxKm) return null;
   return { name: b.name, km, minutes: minutesFromKm(km) };

@@ -127,7 +127,7 @@ export const categoryOfListing = (l: Listing): Category => {
 /**
  * Our active CRM listings that fit the request, by the market's co-broke rules with no scoring: sale vs rent; same or a
  * nearby area (same-area or neighbour tier, same island; same region alone isn't nearby); price within 20% of the budget
- * either way (from 20% under the least to 20% over the most; a single figure is both) in the same currency; beds within
+ * either way (from 20% under the least to 20% over the most; a single figure is both; a least alone has no ceiling) in the same currency; beds within
  * one; and the same kind of place (land, commercial or residential). A field the listing doesn't give (no price, no beds)
  * can't be checked, so it passes, as on the market. Same area first, then nearby, then the price closest to the budget. Never throws: an area that can't be resolved only matches its own name.
  */
@@ -180,7 +180,8 @@ function gazetteerTier(requestArea: string, l: Listing): { tier: "same-area" | "
 export function fitsOurListing(r: LiveRequest, l: Listing): boolean {
   const type = r.intent === "rent" ? "rent" : "sale";
   const cat = categoryOfRequest(r.propertyType);
-  const top = r.priceMax ?? r.priceMin;
+  // A least with no most has no ceiling; a single figure is both (its band runs 20% either side of it).
+  const top = r.priceMax;
   const bottom = r.priceMin ?? r.priceMax;
   const cp = listingTtd(l);
   const hi = top !== null ? ttdValue(top, r.currency) * (1 + PRICE_BAND) : null;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -52,7 +52,7 @@ const LISTING = (over: Partial<Listing> = {}): Listing => ({
 const BRIEF = { listing_type: "rent", property_type: "apartment", location: "Westmoorings", budget_max: 9000, bedrooms_min: 2 };
 
 const seamOf = (listings: Listing[]): CrmSeam => ({ connected: true, listings: async () => ({ status: "ok", listings }), agents: async () => [] });
-const opts = (listings: Listing[]): AutomatchClientOpts => ({ seam: seamOf(listings), areas: AREAS, knowledge: null, now: NOW });
+const opts = (listings: Listing[]): AutomatchClientOpts => ({ seam: seamOf(listings), areas: AREAS, knowledge: null, now: NOW, root: EMPTY_ROOT });
 
 async function call(listings: Listing[], brief: unknown, o: { auth?: string | null; env?: Record<string, string | undefined> } = {}): Promise<AgentReply> {
   const body = typeof brief === "string" ? brief : JSON.stringify(brief);
@@ -279,7 +279,10 @@ test("the success response has the contract's field names and meta", async () =>
   assert.equal(r.status, 200);
   assert.deepEqual(Object.keys(r.body).sort(), ["matches", "meta", "ok"]);
   assert.equal(r.body.ok, true);
-  assert.deepEqual(r.body.meta, { total_candidates: 3, scored_at: NOW.toISOString(), sources: ["crm"] });
+  // Two matches at 70+ is still thin (fewer than three), so meta also carries the widen suggestions (checked in their own tests).
+  const { widen_suggestions, ...meta } = r.body.meta as Record<string, unknown>;
+  assert.deepEqual(meta, { total_candidates: 3, scored_at: NOW.toISOString(), sources: ["crm"] });
+  assert.ok(Array.isArray(widen_suggestions));
   assert.deepEqual(Object.keys(matchesOf(r)[0]).sort(), ["bathrooms", "bedrooms", "currency", "listing_type", "location", "matched_fields", "price", "property_id", "property_type", "reasons", "score", "title"]);
   const m = matchesOf(r)[0];
   assert.equal(m.property_id, "A");
@@ -614,7 +617,7 @@ test("a matching WhatsApp offer comes back with exactly the contract's fields, t
   const r = await run({ ...BRIEF, sources: ["whatsapp"] }, { supply: [supplyRow()] });
   assert.equal(r.status, 200);
   assert.deepEqual(Object.keys(r.body).sort(), ["matches", "meta", "ok", "whatsapp_matches"]);
-  assert.deepEqual(Object.keys(metaOf(r)).sort(), ["scored_at", "sources", "total_candidates", "whatsapp_candidates"]);
+  assert.deepEqual(Object.keys(metaOf(r)).sort(), ["scored_at", "sources", "total_candidates", "whatsapp_candidates", "widen_suggestions"]);
   assert.equal(metaOf(r).whatsapp_candidates, 1);
   const [m] = waOf(r);
   assert.deepEqual(Object.keys(m).sort(), [...WA_KEYS].sort());
@@ -1004,4 +1007,97 @@ test("the path is open to the Google gate (a bearer check only) and listed as se
   const line = proxy.split("\n").find((l) => l.startsWith("const TAILNET_PATHS"));
   assert.ok(line, "TAILNET_PATHS is found");
   assert.ok(line.includes('"/api/realty/automatch-client"'));
+});
+
+/* ---------------- ranged budgets, unknown places and widen suggestions (the route) ---------------- */
+
+const PRICED_HOUSE = (id: string, price: number, over: Partial<Listing> = {}) => LISTING({ id, title: `Westmoorings house ${id}`, listingType: "sale", beds: 4, price, ...over });
+const RANGE_BRIEF = { listing_type: "sale", property_type: "house", location: "Westmoorings", budget_min: 3_000_000, budget_max: 6_500_000, bedrooms_min: 4 };
+
+test("a ranged brief (budget_min to budget_max) keeps every listing in the range at full price points, and names the range; 2M and 8.5M are out", async () => {
+  const listings = [PRICED_HOUSE("in-35", 3_500_000), PRICED_HOUSE("in-5", 5_000_000), PRICED_HOUSE("low-2", 2_000_000), PRICED_HOUSE("over-7", 7_000_000), PRICED_HOUSE("over-85", 8_500_000)];
+  const r = await run(RANGE_BRIEF, { listings });
+  assert.equal(r.status, 200);
+  assert.deepEqual(idsOf(r).sort(), ["in-35", "in-5", "over-7"]);
+  const by = (id: string) => matchesOf(r).find((m) => m.property_id === id)!;
+  assert.match(by("in-35").reasons[0], /TT\$3\.5m fits TT\$3m–6\.5m budget/);
+  assert.match(by("in-5").reasons[0], /TT\$5m fits TT\$3m–6\.5m budget/);
+  assert.match(by("over-7").reasons[0], /8% over the TT\$3m–6\.5m budget/);
+  assert.ok(by("over-7").score < by("in-5").score, "over the ceiling scores lower");
+  assert.equal(by("in-35").score, by("in-5").score, "inside the range, the price is never the reason for a lower score");
+});
+
+test("a ranged brief gives the WhatsApp offers the same range: an offer at TT$3.5M fits, one at TT$2M is out", async () => {
+  const offers = [
+    supplyRow({ id: "wa-35", area: "Westmoorings", listingType: "sale", type: "house", beds: 4, price: 3_500_000, originalText: "4 bed house in Westmoorings for sale, TT$3,500,000" }),
+    supplyRow({ id: "wa-2", area: "Westmoorings", listingType: "sale", type: "house", beds: 4, price: 2_000_000, originalText: "4 bed house in Westmoorings for sale, TT$2,000,000" }),
+  ];
+  const r = await run({ ...RANGE_BRIEF, sources: ["whatsapp"] }, { listings: [], supply: offers });
+  assert.deepEqual(waIds(r), ["wa-35"]);
+  assert.match(waOf(r)[0].reasons[0], /TT\$3\.5m fits TT\$3m–6\.5m budget/);
+});
+
+test("a brief with only budget_min has no ceiling: a listing far above the minimum is still a match, and one 20% under is out", async () => {
+  const r = await run({ ...RANGE_BRIEF, budget_max: undefined }, { listings: [PRICED_HOUSE("high", 20_000_000), PRICED_HOUSE("low", 2_000_000), PRICED_HOUSE("ok", 3_200_000)] });
+  assert.deepEqual(idsOf(r).sort(), ["high", "ok"]);
+});
+
+/** The unknown-places file the route writes, read back (name and counts). */
+function unknownRowsOf(root: string): { name: string; count: number }[] {
+  const file = join(root, "unknown-places.jsonl");
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+}
+
+test("an unknown place is counted for Teach (name and counts only), a known place or a taught alias is not, and the match still comes back", async () => {
+  const root = mkdtempSync(join(tmpdir(), "automatch-places-"));
+  const knowledge = { source: "test", builtAt: "", places: [], taught: { places: [{ name: "Invented Estate", market: "Central", lat: null, lon: null, note: null }], aliases: [{ alias: "Estate Invented", canonical: "Invented Estate" }], relations: [] } };
+  const brief = { ...BRIEF, location: ["Invented Gardens", "Maraval", "Estate Invented"] };
+  const listings = [LISTING({ id: "zed", title: "Invented Gardens flat", area: "Invented Gardens", price: 9000 }), LISTING({ id: "mar", area: "Maraval", price: 9000 })];
+  const go = () => automatchClient({ authorization: AUTH, body: JSON.stringify(brief) }, ENV, { ...opts(listings), knowledge, root });
+
+  const r = await go();
+  assert.equal(r.status, 200);
+  assert.ok(idsOf(r).includes("zed"), "the same-name listing is still matched");
+  assert.deepEqual(unknownRowsOf(root).map((x) => x.name), ["Invented Gardens"], "one row for the unknown name, not Maraval or the taught alias");
+  assert.equal(unknownRowsOf(root)[0].count, 1, "the listing's area is the same name: counted once per request");
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(root, "unknown-places.jsonl"), "utf8").trim())).sort(), ["count", "firstSeenAt", "lastSeenAt", "name"]);
+
+  await go();
+  assert.equal(unknownRowsOf(root)[0].count, 2, "a second request counts it again");
+});
+
+test("a request with only known places writes nothing to the unknown-places file", async () => {
+  const root = mkdtempSync(join(tmpdir(), "automatch-known-"));
+  await automatchClient({ authorization: AUTH, body: JSON.stringify(BRIEF) }, ENV, { ...opts([A]), root });
+  assert.equal(existsSync(join(root, "unknown-places.jsonl")), false);
+});
+
+const TAUGHT_CENTRAL = { source: "test", builtAt: "", places: [], taught: { places: [{ name: "Chaguanas", market: "Central", lat: null, lon: null, note: null }], aliases: [], relations: [] } };
+const CHAGUANAS_BRIEF = { listing_type: "rent", property_type: "apartment", location: "Chaguanas", budget_max: 9000, bedrooms_min: 2 };
+
+test("a thin CRM-only brief gets widen_suggestions: WhatsApp, Online, a 15% higher budget, one bedroom fewer, and the parent region from taught data", async () => {
+  const listings = [LISTING({ id: "c1", title: "Chaguanas flat", area: "Chaguanas", price: 8500, beds: 2 })];
+  const r = await automatchClient({ authorization: AUTH, body: JSON.stringify(CHAGUANAS_BRIEF) }, ENV, { ...opts(listings), knowledge: TAUGHT_CENTRAL });
+  const widen = (r.body.meta as { widen_suggestions: { id: string; patch: Record<string, unknown> }[] }).widen_suggestions;
+  assert.deepEqual(widen.map((s) => s.id), ["include-whatsapp", "include-online", "widen-budget", "relax-bedrooms", "expand-region-central"]);
+  assert.deepEqual(widen.map((s) => s.patch), [{ sources: ["crm", "whatsapp"] }, { sources: ["crm", "online"] }, { budget_max: 10_350 }, { bedrooms_min: 1 }, { location: ["Chaguanas", "Central"] }]);
+  assert.doesNotMatch(JSON.stringify(widen), /periskope|bops/i, "no internal product names");
+});
+
+test("a widen patch merges onto the brief and widens the result: the 15% budget brings in a listing that was over the band", async () => {
+  const listings = [LISTING({ id: "far", title: "Chaguanas flat, dear", area: "Chaguanas", price: 12_000, beds: 2 })];
+  const before = await automatchClient({ authorization: AUTH, body: JSON.stringify(CHAGUANAS_BRIEF) }, ENV, { ...opts(listings), knowledge: TAUGHT_CENTRAL });
+  assert.deepEqual(idsOf(before), [], "12,000 is over the 120% band of a 9,000 budget");
+  const widen = (before.body.meta as { widen_suggestions: { id: string; patch: Record<string, unknown> }[] }).widen_suggestions;
+  const patch = widen.find((s) => s.id === "widen-budget")!.patch;
+  const after = await automatchClient({ authorization: AUTH, body: JSON.stringify({ ...CHAGUANAS_BRIEF, ...patch }) }, ENV, { ...opts(listings), knowledge: TAUGHT_CENTRAL });
+  assert.deepEqual(idsOf(after), ["far"]);
+});
+
+test("a strong result (three matches at 70 or more, top 70 or more) has no widen_suggestions key at all", async () => {
+  const r = await run(BRIEF, { listings: [LISTING({ id: "s1" }), LISTING({ id: "s2" }), LISTING({ id: "s3" })] });
+  assert.equal(r.status, 200);
+  assert.ok(matchesOf(r).every((m) => m.score >= 70));
+  assert.equal("widen_suggestions" in (r.body.meta as object), false);
 });
