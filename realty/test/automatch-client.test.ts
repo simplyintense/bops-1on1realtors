@@ -928,6 +928,26 @@ test("'Goodwood' for a Tobago brief: Goodwood Gardens, Goodwood Park and Goodwoo
   assert.deepEqual(onlineOf(online), []);
 });
 
+/* The live payload (bug #2): the directory answers each Goodwood compound with the Tobago village, and the market says "Goodwood is in Tobago". */
+const LIVE_TOBAGO_BRIEF = { listing_type: "sale", location: ["Tobago", "West Tobago", "Tobago Plantations"], currency: "TTD", budget_min: 3_000_000, budget_max: 6_500_000, bedrooms_min: 4, sources: ["crm", "whatsapp", "online"], limit: 10 };
+const DIRECTORY_SAYS_TOBAGO = new MemoryAreaResolver(ISLAND_PLACES.map((p) => (p.name.startsWith("Goodwood") ? { ...p, region: "Tobago" } : p)));
+
+test("the live Tobago payload: Goodwood Gardens, Goodwood Heights and Goodwood Park stay out of every source, even when the market and the directory say Tobago; genuine Tobago hits stay", async () => {
+  const goodwoodHit = (id: string, title: string, area: string) => HIT({ id, title, area, price: 4_000_000, beds: 4, url: `https://market.example.test/${id}` }, { reason: "Goodwood is in Tobago" });
+  const hits = [
+    goodwoodHit("gg-1", "4 bedroom House - Goodwood Gardens", "Goodwood Gardens"),
+    goodwoodHit("gh-1", "Spacious Contemporary Townhouse FOR SALE", "Goodwood Heights"),
+    goodwoodHit("gp-1", "Goodwood Park Apartment with Fantastic Views", "Goodwood Heights"),
+    HIT({ id: "sc-1", title: "Scarborough house", area: "Scarborough", price: 4_000_000, beds: 4, url: "https://market.example.test/sc-1" }, { reason: "Scarborough, Tobago" }),
+    HIT({ id: "tp-1", title: "Tobago Plantations house", area: "Tobago Plantations", price: 4_000_000, beds: 4, url: "https://market.example.test/tp-1" }),
+  ];
+  const r = await run(LIVE_TOBAGO_BRIEF, { listings: [...TRINIDAD_HOUSES, ...TOBAGO_HOUSES], market: marketOf(hits), areas: DIRECTORY_SAYS_TOBAGO });
+  assert.equal(r.status, 200);
+  assert.deepEqual(idsOf(r).sort(), ["scarborough", "west-tobago"], "CRM: no Trinidad compound");
+  assert.deepEqual(onlineOf(r).map((m) => m.url).sort(), ["https://market.example.test/sc-1", "https://market.example.test/tp-1"]);
+  assert.equal(JSON.stringify(r.body).includes("Goodwood"), false, "no Goodwood compound anywhere in the reply");
+});
+
 /** A sale house brief in Westmoorings, for the WhatsApp ask rows below. The offer row matches it; the asks read as buyers' asks. */
 const WM_BRIEF = { listing_type: "sale", property_type: "house", location: "Westmoorings", budget_max: 4_500_000, bedrooms_min: 4, sources: ["whatsapp"] };
 const askRow = (id: string, originalText: string, over: Partial<SearchRow> = {}) => supplyRow({ id, area: "Westmoorings", listingType: "sale", type: "house", beds: 4, price: 4_000_000, originalText, ...over });
