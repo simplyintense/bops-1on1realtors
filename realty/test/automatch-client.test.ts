@@ -848,6 +848,133 @@ test("all three sources: the three lists are there, and meta has the sources and
   assert.equal(onlineOf(r).length, 1);
 });
 
+/* ---------------- Tobago and Trinidad never cross (every source) ---------------- */
+
+/** Invented places on both islands. Gasparee Island, Shorelands and the Goodwood places are North West Trinidad; Scarborough is Tobago. */
+const ISLAND_PLACES: Place[] = [
+  { name: "Scarborough", region: "Tobago" },
+  { name: "West Tobago", region: "Tobago" },
+  { name: "Tobago Plantations", region: "Tobago" },
+  { name: "Goodwood", region: "Tobago" },
+  { name: "Shirvan", region: "Tobago" },
+  { name: "Westmoorings", region: "North West" },
+  { name: "Gasparee Island", region: "North West" },
+  { name: "Shorelands", region: "North West" },
+  { name: "Goodwood Park", region: "North West" },
+  { name: "Goodwood Gardens", region: "North West" },
+  { name: "Goodwood Heights", region: "North West" },
+  { name: "West Hills", region: "North West" },
+  { name: "Hermitage", region: "South" },
+];
+const ISLAND_AREAS = new MemoryAreaResolver(ISLAND_PLACES);
+
+/** The live brief's shape, with invented numbers: a Tobago-only location list (no Trinidad place). */
+const TOBAGO_BRIEF = { listing_type: "sale", property_type: "house", location: ["Tobago", "West Tobago", "Tobago Plantations"], budget_min: 3_000_000, budget_max: 6_500_000, bedrooms_min: 4 };
+
+/** One sale house of four beds at TT$4m in an area: a CRM listing, or a WhatsApp offer when given as a supply row. */
+const HOUSE = (id: string, area: string) => LISTING({ id, title: `${area} house`, area, listingType: "sale", price: 6_000_000, beds: 4, baths: 3, url: `https://1on1realtors.com/property/${id}` });
+const TOBAGO_HOUSES = [HOUSE("scarborough", "Scarborough"), HOUSE("west-tobago", "West Tobago")];
+const TRINIDAD_HOUSES = [HOUSE("gasparee", "Gasparee Island"), HOUSE("shorelands", "Shorelands"), HOUSE("westmoorings", "Westmoorings"), HOUSE("west-hills", "West Hills"), HOUSE("goodwood-gardens", "Goodwood Gardens"), HOUSE("hermitage", "Hermitage")];
+
+test("a Tobago-only brief: the CRM returns Tobago listings only, never Gasparee, Shorelands, Westmoorings, West Hills or Goodwood Gardens", async () => {
+  const r = await run(TOBAGO_BRIEF, { listings: [...TRINIDAD_HOUSES, ...TOBAGO_HOUSES], areas: ISLAND_AREAS });
+  assert.equal(r.status, 200);
+  assert.deepEqual(idsOf(r).sort(), ["scarborough", "west-tobago"]);
+  for (const m of matchesOf(r)) assert.equal(m.reasons[0].startsWith("Same area ("), true, m.reasons[0]);
+});
+
+test("a Tobago-only brief: the WhatsApp offers are Tobago ones only, and a Trinidad offer is out whatever its row says", async () => {
+  const offers = [
+    supplyRow({ id: "wa-scarborough", area: "Scarborough", beds: 4, price: 6_000_000, listingType: "sale", type: "house", originalText: "4 bed house in Scarborough for sale, TT$6,000,000" }),
+    supplyRow({ id: "wa-gasparee", area: "Gasparee Island", beds: 4, price: 6_000_000, listingType: "sale", type: "house", originalText: "4 bed house on Gasparee Island for sale, TT$6,000,000" }),
+    supplyRow({ id: "wa-shorelands", area: "Shorelands", beds: 4, price: 6_000_000, listingType: "sale", type: "house", originalText: "4 bed house in Shorelands for sale, TT$6,000,000" }),
+  ];
+  const r = await run({ ...TOBAGO_BRIEF, sources: ["whatsapp"] }, { listings: [], supply: offers, areas: ISLAND_AREAS });
+  assert.deepEqual(waIds(r), ["wa-scarborough"]);
+});
+
+test("a Tobago-only brief: the online matches are Tobago items only, whatever the market says each item's place is", async () => {
+  const hits = [
+    HIT({ id: "t-1", title: "Scarborough house", area: "Scarborough", price: 4_000_000, beds: 4, url: "https://market.example.test/t-1" }, { reason: "Scarborough, Tobago" }),
+    HIT({ id: "t-2", title: "West Tobago house", area: "West Tobago", price: 4_000_000, beds: 4, url: "https://market.example.test/t-2" }),
+    HIT({ id: "n-1", title: "Gasparee Island house", area: "Gasparee Island", price: 4_000_000, beds: 4, url: "https://market.example.test/n-1" }, { reason: "in North West" }),
+    HIT({ id: "n-2", title: "Shorelands house", area: "Shorelands", price: 4_000_000, beds: 4, url: "https://market.example.test/n-2" }, { reason: "in North West" }),
+    HIT({ id: "n-3", title: "West Hills house", area: "West Hills", price: 4_000_000, beds: 4, url: "https://market.example.test/n-3" }),
+    HIT({ id: "n-4", title: "4 bedroom House - Goodwood Gardens", area: "Goodwood Gardens", price: 4_000_000, beds: 4, url: "https://market.example.test/n-4" }, { reason: "Goodwood is in Tobago" }),
+    HIT({ id: "n-5", title: "TWO STOREY FOUR BEDROOM HOUSE, HERMITAGE", area: "Shivan Drive", price: 4_000_000, beds: 4, url: "https://market.example.test/n-5" }, { reason: "Shirvan is in Tobago" }),
+  ];
+  const r = await run({ ...TOBAGO_BRIEF, sources: ["online"] }, { market: marketOf(hits), areas: ISLAND_AREAS });
+  assert.equal(r.status, 200);
+  assert.deepEqual(onlineOf(r).map((m) => m.url).sort(), ["https://market.example.test/t-1", "https://market.example.test/t-2"]);
+});
+
+test("the online source is held to our own place rules: an item whose place we cannot work out is left out, not kept on the market's word", async () => {
+  const unknown = HIT({ id: "u-1", title: "Invented flat", area: "Invented Place Zed", price: 4_000_000, beds: 4, url: "https://market.example.test/u-1" });
+  const r = await run({ ...TOBAGO_BRIEF, sources: ["online"] }, { market: marketOf([unknown]), areas: ISLAND_AREAS });
+  assert.deepEqual(onlineOf(r), []);
+});
+
+test("'Goodwood' for a Tobago brief: Goodwood Gardens, Goodwood Park and Goodwood Heights (Westmoorings) are out, and the Tobago Goodwood is in", async () => {
+  const goodwood = { listing_type: "sale", property_type: "house", location: "Goodwood", budget_max: 6_500_000, bedrooms_min: 4 };
+  const trinidadGoodwood = [HOUSE("gg", "Goodwood Gardens"), HOUSE("gp", "Goodwood Park"), HOUSE("gh", "Goodwood Heights")];
+  const tobagoGoodwood = HOUSE("gw", "Goodwood");
+  const crm = await run(goodwood, { listings: [...trinidadGoodwood, tobagoGoodwood], areas: ISLAND_AREAS });
+  assert.deepEqual(idsOf(crm), ["gw"]);
+
+  const wa = await run({ ...goodwood, sources: ["whatsapp"] }, { listings: [], areas: ISLAND_AREAS, supply: [supplyRow({ id: "wa-gg", area: "Goodwood Gardens", listingType: "sale", type: "house", beds: 4, price: 6_000_000, originalText: "4 bed house in Goodwood Gardens for sale, TT$6,000,000" })] });
+  assert.deepEqual(waIds(wa), []);
+
+  const online = await run({ ...goodwood, sources: ["online"] }, { market: marketOf([HIT({ id: "gg-1", title: "4 bedroom House - Goodwood Gardens", area: "Goodwood Gardens", price: 4_000_000, beds: 4, url: "https://market.example.test/gg-1" }, { reason: "Goodwood is in Tobago" })]), areas: ISLAND_AREAS });
+  assert.deepEqual(onlineOf(online), []);
+});
+
+/** A sale house brief in Westmoorings, for the WhatsApp ask rows below. The offer row matches it; the asks read as buyers' asks. */
+const WM_BRIEF = { listing_type: "sale", property_type: "house", location: "Westmoorings", budget_max: 4_500_000, bedrooms_min: 4, sources: ["whatsapp"] };
+const askRow = (id: string, originalText: string, over: Partial<SearchRow> = {}) => supplyRow({ id, area: "Westmoorings", listingType: "sale", type: "house", beds: 4, price: 4_000_000, originalText, ...over });
+
+test("WhatsApp: buyer asks and inquiries are not offers, even when stored as supply; a genuine offer still comes back", async () => {
+  const asks = [
+    ["iso-1", "Any ground floor Westhills for sale?"],
+    ["iso-2", "Hi any ground floor units in west hills available for sale ?"],
+    ["iso-3", "Sale Search: West Hills for sale 3 bedroom Pls send all units Showing next week"],
+    ["iso-4", "Rent Search: 4 bed house Westmoorings"],
+    ["iso-5", "Looking for a 4 bed house in Westmoorings, budget TT$4.2m"],
+    ["iso-6", "WTB 4 bed house Westmoorings for sale"],
+    ["iso-7", "Anyone have a 4 bed house in Westmoorings for sale?"],
+    ["iso-8", "Client looking for 4 bed house Westmoorings, TT$4m"],
+    ["iso-9", "Buyer looking: 4 bedroom house, Westmoorings area"],
+    ["iso-10", "Searching for a house in Westmoorings for sale, 4 beds"],
+    ["iso-11", "Pls send all the 4 bed houses in Westmoorings for sale"],
+    ["iso-12", "Do you have a 4 bed house in Westmoorings for sale?"],
+  ] as const;
+  const rows = [...asks.map(([id, text]) => askRow(id, text)), askRow("offer", "4 bed house in Westmoorings for sale, TT$4,000,000. Call 555 0142.")];
+  const r = await run(WM_BRIEF, { supply: rows, areas: ISLAND_AREAS });
+  assert.equal(r.status, 200);
+  assert.deepEqual(waIds(r), ["offer"]);
+  assert.equal(metaOf(r).whatsapp_candidates, 1, "the asks are not even candidates");
+});
+
+test("WhatsApp: the live ask phrasings are excluded from whatsapp_matches; a plain offer with the same facts is not", async () => {
+  const live = [
+    askRow("live-1", "Any ground floor Westhills for sale?", { area: "West Hills", listingType: "sale" }),
+    askRow("live-2", "Hi any ground floor units in west hills available for sale ?", { area: "West Hills", listingType: "sale" }),
+    askRow("live-3", "Sale Search: West Hills for sale 3 bedroom Pls send all units Showing next week", { area: "West Hills", listingType: "sale" }),
+  ];
+  const hillsBrief = { ...WM_BRIEF, location: "West Hills" };
+  const r = await run(hillsBrief, { supply: [...live, askRow("offer-west-hills", "West Hills 4 bed house for sale, TT$4m", { area: "West Hills" })], areas: ISLAND_AREAS });
+  assert.deepEqual(waIds(r), ["offer-west-hills"]);
+});
+
+test("WhatsApp: with online asked for too, the asks stay out, and the excerpt is the offer's own words", async () => {
+  const r = await run({ ...WM_BRIEF, sources: ["whatsapp", "online"] }, {
+    supply: [askRow("ask", "Looking for a 4 bed house in Westmoorings for sale"), askRow("offer", "4 bed house in Westmoorings for sale, TT$6,000,000")],
+    areas: ISLAND_AREAS,
+    market: marketOf([]),
+  });
+  assert.deepEqual(waIds(r), ["offer"]);
+  assert.equal(waOf(r)[0].excerpt, "4 bed house in Westmoorings for sale, TT$6,000,000");
+});
+
 /* ---------------- the gate sets ---------------- */
 
 test("the path is open to the Google gate (a bearer check only) and listed as server-to-server in proxy.ts", () => {

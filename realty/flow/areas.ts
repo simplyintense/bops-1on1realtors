@@ -7,7 +7,9 @@
  * Regions are the six strings in REGIONS. The island is the resolver's `island` ("Tobago" or "Trinidad"); only
  * when that's absent is it read from the region (region "Tobago" is Tobago, every other region is Trinidad).
  * A Tobago area never matches a Trinidad one, even when a neighbour list says it does (areaTier checks the
- * islands before anything else).
+ * islands before anything else). An island the name spells out ("West Tobago") is the island it matches on, whatever the
+ * directory answered (refFor). A region is not a place, and a street is not asked of the directory at all. A short name's
+ * one-letter neighbour in the directory is a different place, not a typo (isNearSpelling).
  *
  * Tiers, best first: same-area, neighbour, same-region. Anything else is excluded. A neighbour hit carries the
  * weight market-mcp gave that neighbour (0 when the list has only names), and the ranking sorts by it inside
@@ -107,6 +109,41 @@ export function parseIsland(value: unknown): Island | null {
   return k === "tobago" ? "Tobago" : k === "trinidad" ? "Trinidad" : null;
 }
 
+/** The island a name spells out ("West Tobago", "Scarborough, Tobago"), or null when it names none, or both ("Trinidad and Tobago"). */
+export function islandNamedIn(text: string): Island | null {
+  const tobago = /\btobago\b/i.test(text);
+  const trinidad = /\btrinidad\b/i.test(text);
+  return tobago === trinidad ? null : tobago ? "Tobago" : "Trinidad";
+}
+
+/** A street name ("Shivan Drive", "Western Main Road"): an address, not a place, so the directory is not asked about it. */
+const STREET_END = /\s(?:drive|road|rd|street|st|avenue|ave|lane|crescent|trace|way|highway|hwy|terrace|close|boulevard|blvd)$/i;
+export const isStreetName = (text: string): boolean => STREET_END.test(text.trim());
+
+/** Letters only, lower case: the spelling a typo check compares ("St. James" and "St James" are the same letters). */
+const lettersOf = (s: string): string => s.toLowerCase().replace(/[^a-z]/g, "");
+
+/** True when two strings differ by one letter added, removed or changed. */
+function oneEditApart(a: string, b: string): boolean {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  const [short, long] = a.length < b.length ? [a, b] : [b, a];
+  return short.slice(i) === long.slice(i + 1);
+}
+
+/**
+ * True when a market answer is one letter from a short name (under 8 letters). A short name has many near-spellings that are
+ * different places ("Shivan" and "Shirvan" are one letter apart, in different islands), so that answer is refused. A long name's
+ * one-letter change is a typo, and is kept.
+ */
+const TYPO_MIN_LETTERS = 8;
+export function isNearSpelling(query: string, canonical: string): boolean {
+  const q = lettersOf(query);
+  return q.length < TYPO_MIN_LETTERS && oneEditApart(q, lettersOf(canonical));
+}
+
 export function blankLookup(query: string, over: Partial<AreaLookup> = {}): AreaLookup {
   return { query, mapped: false, canonical: null, region: null, island: null, municipality: null, neighbours: [], confidence: null, suggestions: [], source: "none", ...over };
 }
@@ -171,10 +208,22 @@ async function safeResolve(resolver: AreaResolver, text: string): Promise<AreaMa
   }
 }
 
-/** The matching side for a text, through a resolver. A resolver that throws counts as unmapped. */
+/**
+ * The matching side for a text, through a resolver. A resolver that throws counts as unmapped. An island the text names
+ * ("West Tobago") is the island it matches on, whatever the directory said, and a name the directory doesn't map is its own
+ * area in that island: the name is the better evidence.
+ */
 export async function refFor(resolver: AreaResolver, text: string): Promise<AreaRef> {
-  return { text, match: await safeResolve(resolver, text) };
+  const island = islandNamedIn(text);
+  const match = await safeResolve(resolver, text);
+  if (!island) return { text, match };
+  // The directory's answer counts only when it is the place the name spells out, not another place ("West Tobago" answered as West Hills).
+  const same = match && placeOnlyKey(match.canonical) === placeOnlyKey(text) ? match : null;
+  return { text, match: { canonical: same?.canonical ?? text.trim().replace(/\s+/g, " "), region: same?.region ?? null, island, neighbours: same?.neighbours ?? [] } };
 }
+
+/** A name without its island word: "Scarborough, Tobago" and "Scarborough" are one place; "West Tobago" is "west". */
+const placeOnlyKey = (s: string): string => areaKey(s.replace(/\b(?:tobago|trinidad)\b/gi, " ").replace(/,/g, " "));
 
 /**
  * The desk's lookups for a set of texts, once each (by areaKey). A text whose lookup throws is left out,
@@ -329,15 +378,19 @@ export function areaFromToolResult(query: string, result: unknown): AreaLookup {
   const canonical = strOf(o.area);
   const region = parseRegion(o.region);
   const level = confidenceLevel(o.confidence);
+  // A region is not a place: a place name answered with a region ("West" as "North West") is unmapped. A near-spelling is unmapped too.
+  const suspect = canonical !== null && (isNearSpelling(query, canonical) || (parseRegion(canonical) !== null && parseRegion(query) === null));
+  const suggestions = listOf(o.suggestions);
+  if (suspect && canonical && !suggestions.includes(canonical)) suggestions.unshift(canonical);
   return blankLookup(query, {
-    mapped: canonical !== null && level === "high",
+    mapped: canonical !== null && level === "high" && !suspect,
     canonical,
     region,
     island: parseIsland(o.island) ?? islandOf(region),
     municipality: strOf(o.municipality),
     neighbours: neighbourList(o.neighbours),
     confidence: canonical ? level : null,
-    suggestions: listOf(o.suggestions),
+    suggestions,
     source: "market",
   });
 }
@@ -361,6 +414,8 @@ export class MarketAreaResolver implements AreaResolver {
 
   async lookup(text: string): Promise<AreaLookup> {
     if (!areaKey(text)) return blankLookup(text);
+    // A street is not in the place directory: asking it would only find the place its name looks like.
+    if (isStreetName(text)) return blankLookup(text, { source: "market" });
     if (this.now() < this.downUntil) throw new Error("resolve_area is cooling down after a failure");
     let result: unknown;
     try {

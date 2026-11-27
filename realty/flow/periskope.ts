@@ -362,6 +362,10 @@ export function recordsDueForPurge<T>(rows: readonly T[], now: Date, days: numbe
 const DEMAND = /\b(looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|in the market|anyone (?:have|has|got)|wanted|ISO|client\s+needs?|needs?|wants? (?:a|an))\b/i;
 const ANY_UNITS = /\bany\b[\s\S]{0,80}?\bunits?\s+for\s+(?:rent|sale)\b/i;
 const STRONG_DEMAND = /\b(looking(?:\s+for)?|seeking|search(?:ing)?\s+for|in search (?:of|for)|in the market|anyone (?:have|has|got)|wanted|ISO|client\s+needs?|needs?)\b/i;
+// A buyer's ask in the words of a search: a search heading ("Sale Search:"), a wanted tag (WTB), a request to be sent units
+// ("Pls send all units"), "client/buyer looking", or a question about what is available ("Any ground floor units for sale?").
+// These are asks even though they name a listing type ("for sale"), so they win over the supply words.
+const ASK = /\b(?:(?:sale|rent|buy|buyer|client|tenant)\s+search\b|search\s*:|wtb\b|(?:pls|please)\s+send\b[^.\n]{0,60}\b(?:units?|listings?|options?|properties|houses?|apartments?|flats?|photos?|pictures?|details)\b|(?:client|buyer|tenant)\s+(?:is\s+)?looking\b|(?:any(?:one)?|do you have|have you got|got any)\b[^?\n]{0,120}\?)/i;
 // Supply: a property is on offer.
 const SUPPLY = /\b(co-?broke|50\/50|just listed|for sale|available)\b/i;
 
@@ -459,13 +463,23 @@ const hasListingFacts = (f: Facts) => !!(f.area || f.beds || f.type || f.budget)
 export function interpret(body: string, terms: readonly KnownTerm[] = []): Interpretation {
   const facts = factsOf(body, terms);
   const listed = listingSignals(body);
-  const demand = DEMAND.test(body) || ANY_UNITS.test(body);
+  const ask = ASK.test(body);
+  const demand = DEMAND.test(body) || ANY_UNITS.test(body) || ask;
   const supply = listed || SUPPLY.test(body);
-  const side = listed ? "supply" : demand && (!supply || STRONG_DEMAND.test(body) || ANY_UNITS.test(body)) ? "demand" : supply ? "supply" : null;
+  const side = listed ? "supply" : demand && (!supply || STRONG_DEMAND.test(body) || ANY_UNITS.test(body) || ask) ? "demand" : supply ? "supply" : null;
   let kind: Kind = "other";
   if (side === "demand" && (hasListingFacts(facts) || facts.intent)) kind = "buyer_request";
   if (side === "supply" && hasListingFacts(facts)) kind = "cobroke_listing";
   return { kind, facts, firm: kind === "other" ? null : firmOf(body) };
+}
+
+/**
+ * Whether a stored post reads as a buyer's ask, whichever side it was filed under (the search store's supply rows can hold
+ * older misfiled asks). The same words interpret() reads as demand; a post that reads as a listing is never an ask.
+ */
+export function readsAsBuyerAsk(text: string): boolean {
+  if (listingSignals(text)) return false;
+  return ASK.test(text) || DEMAND.test(text) || ANY_UNITS.test(text);
 }
 
 /** sale / rent from what the text said, or from the size of a price when it didn't say (sales here are large). */
