@@ -105,6 +105,8 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/mcp/stats",
   // The 1on1 CRM's client matching (realty/node/automatch-client.ts), checked by its bearer token (BOPS_AUTOMATCH_TOKEN) and nothing else.
   "/api/realty/automatch-client",
+  // The CRM's vendor-side matching (realty/node/automatch-vendor.ts), checked by the same bearer token (BOPS_AUTOMATCH_TOKEN) and nothing else.
+  "/api/realty/automatch-vendor",
   // The CRM's bad-match reports (realty/node/flag-match.ts), checked by the same bearer token (BOPS_AUTOMATCH_TOKEN) and nothing else.
   "/api/realty/learn/flag-match",
 ]);

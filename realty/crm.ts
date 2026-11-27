@@ -117,6 +117,20 @@ export class Crm {
     return { contacts, missing };
   }
 
+  /**
+   * The buyers and tenants for the vendor matching (automatch-vendor.ts): the read-only view first, else the table (as contacts()
+   * does). Only the columns CLIENT_DEMAND_COLUMNS names are read, never notes, contact details or requirement text.
+   */
+  async clientDemand(): Promise<CrmClientDemand[]> {
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await this.readAll("bops_crm_clients", CLIENT_DEMAND_COLUMNS);
+    } catch {
+      rows = await this.readAll("crm_clients", CLIENT_DEMAND_COLUMNS);
+    }
+    return rows.map(demandOf);
+  }
+
   /** One approved proposal's row. Refuses unless ONEON1_CRM_WRITES=1 and the proposal is approved and unblocked. */
   async apply(p: Proposal, env: Record<string, string | undefined> = runtimeEnv()): Promise<string> {
     if (!writesOn(env)) throw new Error("CRM writes are off (ONEON1_CRM_WRITES isn't 1)");
@@ -133,6 +147,53 @@ export class Crm {
     const [row] = (await r.json()) as { id?: unknown }[];
     return String(row?.id ?? "");
   }
+}
+
+/** A buyer or tenant on the CRM, as the vendor matching reads one. preferredLocations is the raw jsonb array (objects or strings). */
+export type CrmClientDemand = {
+  id: string;
+  agentId: number | null;
+  name: string | null;
+  status: string | null;
+  isPurchaser: boolean;
+  isVendor: boolean;
+  listingType: string | null;
+  budgetMin: number | null;
+  budgetMax: number | null;
+  budgetCurrency: string | null;
+  bedroomsMin: number | null;
+  bathroomsMin: number | null;
+  preferredLocations: unknown[];
+  propertyTypes: string[];
+  updatedAt: string | null;
+};
+
+const CLIENT_DEMAND_COLUMNS = "id,agent_id,name,status,is_purchaser,is_vendor,listing_type,budget_min,budget_max,budget_currency,bedrooms_min,bathrooms_min,preferred_locations,property_types,updated_at";
+
+/** A CRM row as a CrmClientDemand. Numbers that PostgREST sends as text are read as numbers; anything else is null. */
+function demandOf(r: Record<string, unknown>): CrmClientDemand {
+  return {
+    id: String(r.id),
+    agentId: r.agent_id == null ? null : Number(r.agent_id),
+    name: (r.name as string) ?? null,
+    status: (r.status as string) ?? null,
+    isPurchaser: r.is_purchaser === true,
+    isVendor: r.is_vendor === true,
+    listingType: (r.listing_type as string) ?? null,
+    budgetMin: numberOrNull(r.budget_min),
+    budgetMax: numberOrNull(r.budget_max),
+    budgetCurrency: (r.budget_currency as string) ?? null,
+    bedroomsMin: numberOrNull(r.bedrooms_min),
+    bathroomsMin: numberOrNull(r.bathrooms_min),
+    preferredLocations: Array.isArray(r.preferred_locations) ? r.preferred_locations : [],
+    propertyTypes: Array.isArray(r.property_types) ? r.property_types.filter((t): t is string => typeof t === "string") : [],
+    updatedAt: (r.updated_at as string) ?? null,
+  };
+}
+
+function numberOrNull(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : Number.NaN;
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Only the two tables and the columns this tool proposes; anything else in an edited proposals.json is refused. */

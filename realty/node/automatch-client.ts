@@ -17,7 +17,7 @@ import { areasFromEnv, AreaStore } from "./area-store.ts";
 import { crmSeamFromEnv } from "./crm-shared.ts";
 import { periskopeRoot } from "./periskope-root.ts";
 import { PeriskopeStore } from "./periskope-store.ts";
-import { matchingKnowledgeFrom, withSearchStore, type SearchRow } from "./search-store.ts";
+import { matchingKnowledgeFrom, withSearchStore, type Side, type SearchRow } from "./search-store.ts";
 
 /**
  * POST /api/realty/automatch-client: the 1on1 CRM calls this when a client is added, and gets matches for the client's brief
@@ -91,12 +91,19 @@ type Brief = {
   limit: number;
 };
 
-/** Auth first (503 when the token is unset, 401 for a missing or wrong bearer), then the body. */
-export async function automatchClient(req: AutomatchClientRequest, env: Env, o: AutomatchClientOpts = {}): Promise<AgentReply> {
+/** The bearer check the CRM's endpoints share: 503 when the token is unset (even with a bearer sent), 401 for a missing or wrong bearer, else null. */
+export function automatchAuthReply(authorization: string | null, env: Env): AgentReply | null {
   const want = (env.BOPS_AUTOMATCH_TOKEN ?? "").trim();
   if (!want) return NOT_SET;
-  const m = /^Bearer\s+(\S+)\s*$/i.exec(req.authorization ?? "");
+  const m = /^Bearer\s+(\S+)\s*$/i.exec(authorization ?? "");
   if (!m || !sameSecret(m[1], want)) return UNAUTHORIZED;
+  return null;
+}
+
+/** Auth first (503 when the token is unset, 401 for a missing or wrong bearer), then the body. */
+export async function automatchClient(req: AutomatchClientRequest, env: Env, o: AutomatchClientOpts = {}): Promise<AgentReply> {
+  const refused = automatchAuthReply(req.authorization, env);
+  if (refused) return refused;
 
   let raw: unknown;
   try {
@@ -151,7 +158,7 @@ export async function automatchClient(req: AutomatchClientRequest, env: Env, o: 
   if (wantWhatsapp && scoring) {
     try {
       // A stored supply row that reads as a buyer's ask is left out, whatever side it was filed under (older rows may be misfiled).
-      const rows = (o.supply ?? storedSupply(root)).filter(isLive).filter((row) => !readsAsBuyerAsk(row.originalText ?? ""));
+      const rows = (o.supply ?? storedRows(root, "supply")).filter(isLive).filter((row) => !readsAsBuyerAsk(row.originalText ?? ""));
       const pairs = rows.flatMap((row) => {
         const listing = supplyListingOf(row);
         return listing ? [{ row, listing }] : [];
@@ -232,9 +239,9 @@ function asksOf(brief: Brief, now: Date): AutomatchAsk[] {
 }
 
 /** The area resolver and the knowledge index, shared by the CRM and the WhatsApp scoring. */
-type ScoringContext = { areas: AreaResolver; knowledge: AreaKnowledgeIndex | null };
+export type ScoringContext = { areas: AreaResolver; knowledge: AreaKnowledgeIndex | null };
 
-function scoringContext(o: AutomatchClientOpts, env: Env, root: string): ScoringContext {
+export function scoringContext(o: Pick<AutomatchClientOpts, "areas" | "knowledge" | "fetcher">, env: Env, root: string): ScoringContext {
   const areas = o.areas ?? new CachedAreaResolver(areasFromEnv(new AreaStore(join(dirname(root), "areas")), env, o.fetcher));
   const knowledge = o.knowledge !== undefined ? o.knowledge : matchingKnowledgeFrom(root);
   return { areas, knowledge };
@@ -294,10 +301,10 @@ function matchOf(p: AutomatchPair) {
 
 /* ---------------- WhatsApp supply ---------------- */
 
-/** Stored supply rows, read from the search store. Nothing is created when the store has no files yet. */
-function storedSupply(root: string): SearchRow[] {
+/** The stored rows of one tab, read from the search store. Nothing is created when the store has no files yet. */
+export function storedRows(root: string, tab: Side): SearchRow[] {
   if (!existsSync(join(root, "supply.jsonl")) && !existsSync(join(root, "demand.jsonl"))) return [];
-  return withSearchStore(root, (s) => s.allRows("supply"));
+  return withSearchStore(root, (s) => s.allRows(tab));
 }
 
 /** A supply row that can still be offered: not ignored or parked (the store's hidden states, as loadAutomatch reads them). */
@@ -550,7 +557,7 @@ function sourcesOf(raw: unknown): { list: Source[] } | { error: string } {
 const NUMBER = /^\d+(\.\d+)?$/;
 
 /** A non-negative number, or null when absent or blank. A numeric string is read as its number. undefined when it isn't a number. */
-function numberOf(v: unknown): number | null | undefined {
+export function numberOf(v: unknown): number | null | undefined {
   if (v === undefined || v === null) return null;
   if (typeof v === "string") {
     const t = v.trim();
@@ -569,12 +576,15 @@ const REGION_SUFFIXES = new Set(
   ["Central", "North West", "North East", "East", "South", "Tobago", "East-West Corridor", "Port of Spain", "Trinidad", "Trinidad & Tobago"].map(areaKey),
 );
 
+/** A region or island name on its own ("Tobago", "North West", "Trinidad"), not a place. */
+export const isRegionWord = (text: string): boolean => REGION_SUFFIXES.has(areaKey(text));
+
 /** "Chaguanas, Central" is "Chaguanas"; "Woodbrook, Port of Spain, Trinidad" is "Woodbrook". A text with no place before a region is unchanged. */
 export function placeWithoutRegion(text: string): string {
   let place = text.trim();
   for (;;) {
     const comma = place.lastIndexOf(",");
-    if (comma <= 0 || !REGION_SUFFIXES.has(areaKey(place.slice(comma + 1)))) return place;
+    if (comma <= 0 || !isRegionWord(place.slice(comma + 1))) return place;
     place = place.slice(0, comma).trim();
   }
 }
