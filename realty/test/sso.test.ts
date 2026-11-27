@@ -178,7 +178,7 @@ test("a valid next for an AI Desk page lands there (the hand-off's own list, not
   }
 });
 
-test("safeSsoNext: the nine AI Desk pages, the site root and one stored post (with plain query text) pass", () => {
+test("safeSsoNext: the eight AI Desk pages, the site root and one stored post (with plain query text) pass", () => {
   for (const page of ["/", "/realty/desk", "/realty/automatch", "/realty/search", "/realty/posts", "/realty/market", "/realty/digest", "/realty/alerts", "/realty/learn"]) {
     assert.equal(safeSsoNext(page), page, page);
   }

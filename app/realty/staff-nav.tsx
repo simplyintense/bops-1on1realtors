@@ -8,7 +8,7 @@ import { navTourId, visibleStaffPages } from "./staff-pages";
 /**
  * The staff desk's top nav, for the Bops chat app at / (app/page.tsx) only: a signed-in staff member sees the desk's pages above
  * the chat. The /realty/* pages use the left sidebar instead (staff-sidebar.tsx), which reads the same list (staff-pages.ts).
- * The entries are listed only for the viewer's owner and teacher flags (read on the server). "Workspace" (/) is one of them.
+ * The entries are listed only for the viewer's owner and teacher flags (read on the server).
  */
 export function StaffNav({ owner, teacher }: { owner: boolean; teacher: boolean }) {
   const pathname = usePathname();

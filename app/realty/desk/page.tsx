@@ -19,8 +19,7 @@ import { LeadCardHashPage } from "./lead-hash-page";
  * them. Shortcuts: online search and the 1on1 CRM's agent portal (on 1on1realtors.com, in a new tab) for everyone; for owners
  * only (checked on the server, not just hidden), 1on1 CRM Automatch, Supply & Demand, All posts and the daily digest. Then "Automatch leads" (strong matches on the listings you hold; every card for an owner), then the "Top recommendations
  * for you" panel, where matches marked not a fit or closed are hidden unless "Show hidden" is on. Read only: nothing here
- * sends or writes. This is the landing page after sign-in (lib/gate.ts safeNext); the Bops chat app at / is one click away
- * in the sidebar ("Bot Workspace").
+ * sends or writes. This is the landing page after sign-in (lib/gate.ts safeNext).
  */
 
 export const dynamic = "force-dynamic";

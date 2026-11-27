@@ -1,12 +1,12 @@
 /**
  * The staff desk's pages, as plain data so a test can check labels, order and gating without rendering React. The Bops home's
  * top nav (staff-nav.tsx) and the guided tour read this list. The left sidebar's AI Desk group (sidebar-model.ts DESK_LINKS)
- * lists the same nine pages in the same order. The 1on1 CRM's pages are not here: they are the CRM's own links in the sidebar model.
+ * lists the same eight pages in the same order. The 1on1 CRM's pages are not here: they are the CRM's own links in the sidebar model.
  *
  * These pages are in the AI Desk sidebar for all signed-in staff, so every entry is open to owners, teachers and agents alike
  * ("let them see everything, for now"). The owner-only and teacher-only APIs behind them stay owner- or teacher-only (lib/gate.ts),
- * and the pages hide their mutation buttons from anyone who isn't an owner or teacher. "Bot Workspace" is the chat app at / (the
- * old home). The ownerOnly and teacherOnly flags stay on each entry so a page can be closed again in one line.
+ * and the pages hide their mutation buttons from anyone who isn't an owner or teacher. The Bot Workspace (/) is not listed: it is
+ * owner-only, reached by URL. The ownerOnly and teacherOnly flags stay on each entry so a page can be closed again in one line.
  */
 export const STAFF_PAGES: readonly StaffPageEntry[] = [
   { href: "/realty/desk", label: "Desk", ownerOnly: false, teacherOnly: false },
@@ -17,10 +17,9 @@ export const STAFF_PAGES: readonly StaffPageEntry[] = [
   { href: "/realty/digest", label: "Digest", ownerOnly: false, teacherOnly: false },
   { href: "/realty/alerts", label: "Auto-Match Alert", ownerOnly: false, teacherOnly: false },
   { href: "/realty/learn", label: "Teach", ownerOnly: false, teacherOnly: false },
-  { href: "/", label: "Bot Workspace", ownerOnly: false, teacherOnly: false },
 ];
 
-/** An entry: an internal /realty page, or the chat app at / (Bot Workspace). */
+/** An entry: an internal /realty page. */
 export type StaffPageEntry = {
   readonly href: string;
   readonly label: string;

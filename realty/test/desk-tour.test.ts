@@ -64,10 +64,11 @@ test("replay: Start tour begins at the welcome card whether or not the tour was 
   assert.equal(last.text, "That's it. You can replay this tour any time with Start tour.");
 });
 
-test("every staff member's tour follows the nine AI Desk pages, in nav order, Bot Workspace included", () => {
-  const allNine = ["/realty/desk", "/realty/search", "/realty/market", "/realty/automatch", "/realty/posts", "/realty/digest", "/realty/alerts", "/realty/learn", "/"];
+test("every staff member's tour follows the eight AI Desk pages, in nav order, and never the Bot Workspace at /", () => {
+  const allEight = ["/realty/desk", "/realty/search", "/realty/market", "/realty/automatch", "/realty/posts", "/realty/digest", "/realty/alerts", "/realty/learn"];
   for (const [name, role] of Object.entries({ agent: AGENT_ONLY, owner: OWNER_ONLY, teacher: TEACHER_ONLY, both: ROLES.ownerAndTeacher })) {
-    assert.deepEqual(pagesOf(buildTourSteps(role)), allNine, name);
+    assert.deepEqual(pagesOf(buildTourSteps(role)), allEight, name);
+    assert.ok(!buildTourSteps(role).some((s) => s.page === "/"), `${name}: no step on /`);
   }
 });
 
