@@ -190,7 +190,7 @@ const CORE = [
   "flow/engine.ts", "flow/flow.ts", "flow/hours.ts", "flow/listing-audit.ts", "flow/live-crm.ts", "flow/management.ts",
   "flow/agent-feedback.ts", "flow/areas.ts", "flow/area-learning.ts", "flow/market-search.ts", "flow/listing-contact.ts", "flow/market-desk.ts", "flow/match.ts", "flow/messages.ts", "flow/outbox.ts", "flow/report.ts", "flow/route.ts",
   "flow/source.ts", "flow/taxonomy.ts", "flow/desk.ts", "flow/env.ts", "flow/demo-day.ts", "flow/periskope.ts", "crm.ts",
-  "flow/requests.ts", "flow/recommendations.ts", "flow/knowledge.ts", "flow/market-stats.ts", "flow/live-match.ts", "flow/observe.ts", "flow/area-knowledge.ts", "flow/crm-seam.ts", "flow/match-status.ts", "flow/automatch.ts", "flow/fx.ts", "flow/ask-match.ts", "flow/taught-areas.ts", "flow/automatch-leads.ts",
+  "flow/requests.ts", "flow/recommendations.ts", "flow/knowledge.ts", "flow/market-stats.ts", "flow/live-match.ts", "flow/observe.ts", "flow/area-knowledge.ts", "flow/crm-seam.ts", "flow/match-status.ts", "flow/automatch.ts", "flow/fx.ts", "flow/ask-match.ts", "flow/taught-areas.ts", "flow/automatch-leads.ts", "flow/automatch-scope.ts",
   "flow/listing-title.ts", "flow/admin-digest.ts", "flow/automatch-alert.ts", "flow/automatch-alert-review.ts", "flow/daily-summary.ts", "flow/ast-time.ts", "flow/listing-photos.ts", "flow/pagination.ts",
   "flow/learn-view.ts", "flow/flag-match.ts",
   // Imported (for values) by the core:
