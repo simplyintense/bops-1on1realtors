@@ -1,6 +1,6 @@
-import { areasForMatch, developmentOf, namesPlace, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from "../extract.ts";
+import { areasForMatch, compoundIsland, developmentOf, namesPlace, WEST_HILLS_UNCONFIRMED_NEIGHBOURS } from "../extract.ts";
 import { knowledgeOf, nearbyByKnowledge, nearbyReason, type AreaKnowledgeIndex } from "./area-knowledge.ts";
-import { areaTier, islandNamedIn, parseRegion, refFor, type AreaRef, type AreaResolver, type Island, type Region, type ToolCaller } from "./areas.ts";
+import { areaTier, islandNamedIn, islandOf, parseRegion, refFor, type AreaRef, type AreaResolver, type Island, type Region, type ToolCaller } from "./areas.ts";
 import type { SeamAgent } from "./crm-seam.ts";
 import { isUsd, moneyWithTtd, ttdValue } from "./fx.ts";
 import { moneyLabel } from "./market-search.ts";
@@ -209,13 +209,19 @@ export async function ourAreaContext(area: string, listings: readonly Listing[],
   const wantsNear = await Promise.all(plan.nearby.map((name) => refFor(areas, name)));
   const refs = new Map<string, AreaRef>();
   for (const a of new Set(listings.map((l) => l.area).filter(Boolean))) refs.set(a, await refFor(areas, a));
-  const island = wantsSame[0]?.match?.island ?? islandNamedIn(area);
+  const brief = wantsSame[0]?.match;
+  const island = compoundIsland(area, brief?.canonical ?? "") ?? brief?.island ?? islandNamedIn(area);
   return { area, island, wants: [...wantsSame, ...wantsNear], refs, knowledge };
 }
 
-/** The island of a listing's area: the directory's, else the one its name spells out. */
+/**
+ * The island of a listing: a longer known compound its area or title names beats the directory's answer for a shorter name it starts
+ * with (the directory's "Goodwood" is the Tobago village, not Goodwood Gardens). Else the directory's island, else the one the area
+ * name spells out.
+ */
 function islandOfListing(ctx: OurAreaContext, l: Listing): Island | null {
-  return ctx.refs.get(l.area)?.match?.island ?? islandNamedIn(l.area ?? "");
+  const ref = ctx.refs.get(l.area);
+  return compoundIsland(`${l.area ?? ""} ${l.title ?? ""}`, ref?.match?.canonical ?? l.area ?? "") ?? ref?.match?.island ?? islandNamedIn(l.area ?? "");
 }
 
 /** The request's development named by the listing (its area, title or an alias): the same development stays the same area. */
@@ -235,11 +241,13 @@ function taughtRelation(area: string, l: Listing, v: TaughtVerdict): OurAreaRela
 }
 
 /**
- * A region asked for by name ("Central", "North West", "Port of Spain"…): a listing is in it when the resolver puts the listing's
- * area in that region, or when the listing is named by the region itself. Nothing is matched by title, and no gazetteer
- * neighbours apply, so "Central" never reaches North West or Port of Spain places.
+ * A region asked for by name ("Central", "North West", "Port of Spain", "Tobago"…): a listing is in it when the resolver puts the
+ * listing's area in that region, or when the listing is named by the region itself. Nothing is matched by title, and no gazetteer
+ * neighbours apply, so "Central" never reaches North West or Port of Spain places. A region is on one island, so a listing on the
+ * other island (listingIsland, see islandOfListing) is never in it, whatever the directory says the region is.
  */
-function regionRelation(region: Region, area: string, l: Listing, ref: AreaRef | undefined): OurAreaRelation | null {
+function regionRelation(region: Region, area: string, l: Listing, ref: AreaRef | undefined, listingIsland: Island | null): OurAreaRelation | null {
+  if (listingIsland && listingIsland !== islandOf(region)) return null;
   if (areaTextKey(l.area ?? "") === areaTextKey(area)) return { tier: "same-area" };
   return ref?.match?.region === region ? { tier: "same-area" } : null;
 }
@@ -247,10 +255,10 @@ function regionRelation(region: Region, area: string, l: Listing, ref: AreaRef |
 /** The listing's area relation to the request's area, or null when it is neither the same nor a nearby area. */
 export function ourAreaRelation(ctx: OurAreaContext, l: Listing): OurAreaRelation | null {
   const { area, knowledge } = ctx;
-  const region = parseRegion(area);
-  if (region) return regionRelation(region, area, l, ctx.refs.get(l.area));
-  // The island is checked before any name rule: a text match (or a taught or coordinate pair) never reaches across the water.
   const listingIsland = islandOfListing(ctx, l);
+  const region = parseRegion(area);
+  if (region) return regionRelation(region, area, l, ctx.refs.get(l.area), listingIsland);
+  // The island is checked before any name rule: a text match (or a taught or coordinate pair) never reaches across the water.
   if (ctx.island && listingIsland && ctx.island !== listingIsland) return null;
   const taught = area && l.area ? taughtVerdict(knowledge?.taught, area, l.area) : null;
   if (taught) return taughtRelation(area, l, taught);

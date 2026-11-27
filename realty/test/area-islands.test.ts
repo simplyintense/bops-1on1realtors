@@ -15,7 +15,7 @@ import {
   type ToolCaller,
 } from "../flow/areas.ts";
 import { ourAreaContext, ourAreaRelation, type OurAreaRelation } from "../flow/live-match.ts";
-import { namesPlace } from "../extract.ts";
+import { compoundIsland, namesPlace } from "../extract.ts";
 import type { Listing } from "../flow/source.ts";
 
 /**
@@ -148,6 +148,57 @@ test("'Goodwood' is not in 'Goodwood Gardens', 'Goodwood Park' or 'Goodwood Heig
   }
   assert.deepEqual(await relation("Goodwood", LISTING("gw", "Goodwood")), { tier: "same-area" }, "a Tobago Goodwood still matches a Tobago Goodwood");
   assert.deepEqual(await relation("Goodwood", LISTING("gw", "Goodwood"), new ExactAreaFallback()), { tier: "same-area" }, "and with no directory, the bare name");
+});
+
+/* The live directory: resolve_area answers the Goodwood compounds with the Tobago village "Goodwood" (the market's reason was "Goodwood is in Tobago"). */
+const LIVE_DIRECTORY = new CompositeAreaResolver({
+  market: new MarketAreaResolver(
+    fakeMarket({
+      goodwood: answer("Goodwood", "Tobago", "Tobago"),
+      "goodwood gardens": answer("Goodwood", "Tobago", "Tobago"),
+      "goodwood heights": answer("Goodwood", "Tobago", "Tobago"),
+      "goodwood park": answer("Goodwood", "Tobago", "Tobago"),
+      scarborough: answer("Scarborough", "Tobago", "Tobago"),
+      "bon accord": answer("Bon Accord", "Tobago", "Tobago"),
+    }),
+  ),
+});
+
+test("a Tobago brief, region or place, never keeps a Trinidad compound: Goodwood Gardens, Heights and Park are out even when the directory answers Tobago", async () => {
+  const compounds = [
+    LISTING("gg", "Goodwood Gardens"),
+    LISTING("gh", "Goodwood Heights"),
+    LISTING("gp", "Goodwood Park"),
+    LISTING("gt", "Goodwood Heights", { title: "Spacious Contemporary Townhouse FOR SALE" }),
+    LISTING("gx", "", { title: "4 bedroom House - Goodwood Gardens" }),
+  ];
+  for (const brief of ["Tobago", "West Tobago", "Tobago Plantations", "Goodwood"]) {
+    for (const l of compounds) {
+      assert.equal(await relation(brief, l, LIVE_DIRECTORY), null, `${brief} vs ${l.area} / ${l.title}`);
+    }
+  }
+});
+
+test("the Tobago region keeps the Tobago places the directory puts in Tobago (Scarborough, Bon Accord) and the bare Goodwood village", async () => {
+  for (const l of [LISTING("sc", "Scarborough"), LISTING("ba", "Bon Accord"), LISTING("gw", "Goodwood")]) {
+    assert.deepEqual(await relation("Tobago", l, LIVE_DIRECTORY), { tier: "same-area" }, l.area);
+  }
+  assert.deepEqual(await relation("Goodwood", LISTING("gw", "Goodwood"), LIVE_DIRECTORY), { tier: "same-area" }, "a Tobago Goodwood still matches a Tobago Goodwood brief");
+});
+
+test("a Trinidad compound brief still finds its own compound when the directory calls it Tobago", async () => {
+  assert.deepEqual(await relation("Goodwood Heights", LISTING("gh", "Goodwood Heights"), LIVE_DIRECTORY), { tier: "same-area" });
+  assert.equal(await relation("Goodwood Heights", LISTING("gw", "Goodwood"), LIVE_DIRECTORY), null, "the Tobago village is not the Heights");
+});
+
+test("compoundIsland: a longer Trinidad compound overrides a short directory name; a bare gazetteer name does not", () => {
+  assert.equal(compoundIsland("Goodwood Gardens", "Goodwood"), "Trinidad");
+  assert.equal(compoundIsland("Goodwood Heights, Westmoorings", "Goodwood"), "Trinidad");
+  assert.equal(compoundIsland("Goodwood Park Apartment with Fantastic Views", "Goodwood"), "Trinidad");
+  assert.equal(compoundIsland("4 bedroom House - Goodwood Gardens", ""), "Trinidad");
+  assert.equal(compoundIsland("Goodwood", "Goodwood"), null, "the Tobago village is left to the directory");
+  assert.equal(compoundIsland("Scarborough, Tobago", "Scarborough"), null, "a bare Tobago town is left to the directory");
+  assert.equal(compoundIsland("Bon Accord, Tobago", ""), null);
 });
 
 test("namesPlace: a bare name matches where it stands alone, and never as the start of a longer known place", () => {

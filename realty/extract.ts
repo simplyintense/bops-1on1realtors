@@ -279,6 +279,40 @@ export function namesPlace(text: string, name: string): boolean {
   return false;
 }
 
+/** The island words are not places: "Tobago" and "Trinidad" never count as a compound. */
+const COMPOUND_NAMES = [...AREAS, ...DEVELOPMENTS.flatMap((d) => [d.name, ...d.aliases])].filter((n) => !/^(tobago|trinidad)$/i.test(n));
+// "Goodwood" is the Tobago village. It is not in AREAS (the gazetteer lists the Trinidad compounds), but Gardens, Park and Heights start with it.
+const COMPOUND_PREFIXES = [...COMPOUND_NAMES, "Goodwood"];
+
+/** True when `name` is a longer known place that starts with another known place, or with the Tobago village "Goodwood". */
+function extendsKnownPlace(name: string): boolean {
+  const k = squash(name);
+  return COMPOUND_PREFIXES.some((n) => {
+    const p = squash(n);
+    return !!p && k.startsWith(`${p} `);
+  });
+}
+
+/**
+ * The island of the longest known place a text names that is `base` or a longer place starting with it. Only a more-specific
+ * compound (Goodwood Gardens / Park / Heights, which start with the Tobago village "Goodwood") overrides the directory: those
+ * compounds are in Trinidad. A bare gazetteer name (Goodwood, Scarborough) returns null so the directory, or the island the
+ * name spells out, still decides.
+ */
+export function compoundIsland(text: string, base: string): "Tobago" | "Trinidad" | null {
+  const hay = squash(text);
+  const b = squash(base);
+  let best: string | null = null;
+  for (const name of COMPOUND_NAMES) {
+    const k = squash(name);
+    if (!hay.includes(k) || (b && k !== b && !k.startsWith(`${b} `))) continue;
+    if (!namesPlace(text, name)) continue;
+    if (!best || k.length > squash(best).length) best = name;
+  }
+  if (!best || !extendsKnownPlace(best)) return null;
+  return "Trinidad";
+}
+
 export function findAreas(text: string): string[] {
   const devs = findDevelopments(text);
   const out: string[] = devs.map((d) => d.name);
