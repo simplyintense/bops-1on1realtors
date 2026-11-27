@@ -105,6 +105,8 @@ export const GATE_OPEN_PATHS = new Set([
   "/api/mcp/stats",
   // The 1on1 CRM's client matching (realty/node/automatch-client.ts), checked by its bearer token (BOPS_AUTOMATCH_TOKEN) and nothing else.
   "/api/realty/automatch-client",
+  // The CRM's bad-match reports (realty/node/flag-match.ts), checked by the same bearer token (BOPS_AUTOMATCH_TOKEN) and nothing else.
+  "/api/realty/learn/flag-match",
 ]);
 
 /** Where staff land after sign-in: the desk (the Bops chat app at / is one click away in the nav). */
@@ -172,6 +174,8 @@ export const AGENT_APIS: readonly ApiRule[] = [
   { methods: ["POST"], match: (p) => p === "/api/realty/match-status" },
   // "Not a lead" on a desk card: the route only marks what the agent may see on their own desk (realty/node/not-a-lead.ts).
   { methods: ["POST"], match: (p) => p === "/api/realty/not-a-lead" },
+  // "Test how the desk reads this" on the teach page: any signed-in staff member; nothing is saved (realty/node/learn-actions.ts previewText).
+  { methods: ["POST"], match: (p) => p === "/api/realty/learn/preview" },
   // The guided tour marks itself seen (realty/node/tour-seen.ts).
   { methods: ["POST"], match: (p) => p === "/api/realty/tour" },
   // Listing photos: an unguessable hash per photo (realty/node/listing-media.ts); the thumbs are the same photos, smaller.
@@ -182,6 +186,12 @@ export const AGENT_APIS: readonly ApiRule[] = [
 export const TEACHER_APIS: readonly ApiRule[] = [
   { methods: ["POST"], match: (p) => p === "/api/realty/learn" },
   { methods: ["POST"], match: (p) => p === "/api/realty/learn/questions" },
+  // Teach a place and its nearby pairs (realty/node/learn-actions.ts teachPlace).
+  { methods: ["POST"], match: (p) => p === "/api/realty/learn/area" },
+  // "Not a listing" on a queue item (learn-actions.ts ignoreQueueItem).
+  { methods: ["POST"], match: (p) => p === "/api/realty/learn/ignore" },
+  // Edit and delete a past answer (learn-actions.ts editTaught, removeTaught). Seeded rows are refused by the store.
+  { methods: ["PATCH", "DELETE"], match: (p) => p === "/api/realty/learn/taught" },
 ];
 
 /** Files from public/ (a logo, icons, fonts), and the favicon: they carry nothing of the team's. Never under /api/. */

@@ -9,6 +9,7 @@ import { ASK_FOLD_DAYS, sameDemandAsk, type AskFacts } from "../flow/ask-match.t
 import { USD_TO_TTD } from "../flow/fx.ts";
 import type { AreaKnowledgeIndex } from "../flow/area-knowledge.ts";
 import { withTaught, type AreaTeachFile, type TaughtAreas } from "../flow/taught-areas.ts";
+import type { FlagInput, FlaggedMatch } from "../flow/flag-match.ts";
 import { looksLikeEmptyListingAsk, reparsePost, type KindOverride, type PostRecord } from "../flow/periskope.ts";
 import { dateAst } from "./group-posts.ts";
 import { resolveAreaKnowledge } from "./area-knowledge-store.ts";
@@ -78,11 +79,13 @@ export type TeachResult = {
   promotedRecords: number;
 };
 
-/** A past answer: a taught knowledge row, newest first on the teach page. */
-export type TaughtRow = { kind: string; term: string | null; area: string | null; development: string | null; type: string | null; listingType: string | null; note: string | null; taughtBy: string | null; taughtAt: string | null };
+/** A past answer: a taught knowledge row (its id is the knowledge primary key), newest first on the teach page. */
+export type TaughtRow = { id: number; kind: string; term: string | null; area: string | null; development: string | null; type: string | null; listingType: string | null; note: string | null; taughtBy: string | null; taughtAt: string | null };
 
 export class SearchInputError extends Error {}
 export class NotInQueueError extends Error {}
+/** An id that isn't a taught knowledge row. Seeded area and gazetteer rows are not editable, so they are not taught rows either. */
+export class NotTaughtError extends Error {}
 
 export type SyncResult = {
   rebuilt: boolean;
@@ -566,6 +569,20 @@ function ensureSchema(db: DatabaseSync): void {
       PRIMARY KEY (tab, record_id, group_name)
     );
     CREATE INDEX IF NOT EXISTS record_groups_name ON record_groups (group_name);
+    CREATE TABLE IF NOT EXISTS flagged_matches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      client_id TEXT,
+      client_locations TEXT NOT NULL,
+      listing_id TEXT,
+      listing_title TEXT,
+      listing_location TEXT,
+      reason TEXT NOT NULL,
+      note TEXT,
+      reported_by TEXT,
+      flagged_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
     CREATE VIRTUAL TABLE IF NOT EXISTS search_text USING fts5(tab UNINDEXED, record_id UNINDEXED, body, tokenize = 'unicode61 remove_diacritics 2');
   `);
   // The old owner alias table is folded into knowledge once, then dropped (INSERT OR IGNORE keeps a re-run harmless).
@@ -837,9 +854,7 @@ export class SearchStore {
    */
   teach(id: string, input: TeachInput, by = "owner"): TeachResult {
     const v = validateTeach(input);
-    const row = this.db.prepare("SELECT message_ids FROM needs_explanation WHERE id = ?").get(id);
-    if (!row) throw new NotInQueueError("That item isn't in the needs-explanation queue.");
-    const messageIds = JSON.parse(String(row.message_ids)) as string[];
+    const messageIds = this.queuedMessageIds(id);
     const now = new Date().toISOString();
     const affected = v.term ? this.recordsWithText(v.term) : [];
     this.db.exec("BEGIN IMMEDIATE");
@@ -942,9 +957,10 @@ export class SearchStore {
 
   taught(limit = 100, offset = 0): TaughtRow[] {
     return this.db
-      .prepare("SELECT kind, term, area, development, type, listing_type, note, taught_by, taught_at FROM knowledge WHERE source = 'taught' ORDER BY taught_at DESC, id DESC LIMIT ? OFFSET ?")
+      .prepare("SELECT id, kind, term, area, development, type, listing_type, note, taught_by, taught_at FROM knowledge WHERE source = 'taught' ORDER BY taught_at DESC, id DESC LIMIT ? OFFSET ?")
       .all(limit, offset)
       .map((r) => ({
+        id: Number(r.id),
         kind: String(r.kind),
         term: str(r.term),
         area: str(r.area),
@@ -954,6 +970,81 @@ export class SearchStore {
         note: str(r.note),
         taughtBy: str(r.taught_by),
         taughtAt: str(r.taught_at),
+      }));
+  }
+
+  /** The message ids behind one queue item. NotInQueueError when the id isn't on the needs-explanation queue. */
+  queuedMessageIds(id: string): string[] {
+    const row = this.db.prepare("SELECT message_ids FROM needs_explanation WHERE id = ?").get(id);
+    if (!row) throw new NotInQueueError("That item isn't in the needs-explanation queue.");
+    return JSON.parse(String(row.message_ids)) as string[];
+  }
+
+  /**
+   * Edits one past answer (a taught knowledge row) in place. Only the fields in `patch` change; the rest keep their saved values,
+   * and the answer is the note. The row is checked as a new teaching would be, so it keeps one row per (kind, term). The old and the
+   * new term are then read again over the stored posts, and the tables rebuilt.
+   */
+  updateTaught(id: number, patch: Partial<TeachInput>, by: string): { id: number; saved: "alias" | "rule" | "note"; term: string | null; reparsed: number } {
+    const old = this.db.prepare("SELECT term, area, development, type, listing_type, note FROM knowledge WHERE id = ? AND source = 'taught'").get(id);
+    if (!old) throw new NotTaughtError("That answer isn't in the taught list.");
+    const keep = (k: keyof TeachInput, col: string) => (k in patch ? (patch[k] ?? null) : str(old[col]));
+    const v = validateTeach({
+      answer: patch.answer ?? String(old.note ?? ""),
+      term: keep("term", "term"),
+      area: keep("area", "area"),
+      development: keep("development", "development"),
+      type: keep("type", "type"),
+      listingType: keep("listingType", "listing_type"),
+    });
+    if (v.term && this.db.prepare("SELECT 1 FROM knowledge WHERE kind = ? AND term = ? AND id <> ?").get(v.saved, v.term, id)) {
+      throw new SearchInputError("Another answer already teaches that term.");
+    }
+    this.db
+      .prepare("UPDATE knowledge SET kind = ?, term = ?, area = ?, development = ?, type = ?, listing_type = ?, note = ?, taught_by = ?, taught_at = ? WHERE id = ?")
+      .run(v.saved, v.term, v.area, v.development, v.type, v.listingType, v.note, by, new Date().toISOString(), id);
+    const terms = [...new Set([str(old.term), v.term].filter((t): t is string => !!t))];
+    const reparsed = terms.reduce((n, t) => n + this.reparseStored(t), 0);
+    this.sync({ force: true });
+    return { id, saved: v.saved, term: v.term, reparsed };
+  }
+
+  /** Removes one past answer (a taught knowledge row). Its term is read again over the stored posts, and the tables rebuilt. */
+  deleteTaught(id: number): { id: number; term: string | null; reparsed: number } {
+    const old = this.db.prepare("SELECT term FROM knowledge WHERE id = ? AND source = 'taught'").get(id);
+    if (!old) throw new NotTaughtError("That answer isn't in the taught list.");
+    this.db.prepare("DELETE FROM knowledge WHERE id = ?").run(id);
+    const term = str(old.term);
+    const reparsed = term ? this.reparseStored(term) : 0;
+    this.sync({ force: true });
+    return { id, term, reparsed };
+  }
+
+  /** Stores one CRM bad-match report. Returns its id. The text is kept as sent (trimmed); nothing here reads it. */
+  addFlag(f: FlagInput, at = new Date().toISOString()): number {
+    const r = this.db
+      .prepare("INSERT INTO flagged_matches (source, client_id, client_locations, listing_id, listing_title, listing_location, reason, note, reported_by, flagged_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(f.source, f.clientId, JSON.stringify(f.clientLocations), f.listingId, f.listingTitle, f.listingLocation, f.reason, f.note, f.reportedBy, at);
+    return Number(r.lastInsertRowid);
+  }
+
+  /** The flags not yet resolved, newest first. */
+  openFlags(limit = 50): FlaggedMatch[] {
+    return this.db
+      .prepare("SELECT * FROM flagged_matches WHERE resolved_at IS NULL ORDER BY flagged_at DESC, id DESC LIMIT ?")
+      .all(limit)
+      .map((r) => ({
+        id: Number(r.id),
+        source: String(r.source) as FlagInput["source"],
+        clientId: str(r.client_id),
+        clientLocations: JSON.parse(String(r.client_locations)) as string[],
+        listingId: str(r.listing_id),
+        listingTitle: str(r.listing_title),
+        listingLocation: str(r.listing_location),
+        reason: String(r.reason) as FlagInput["reason"],
+        note: str(r.note),
+        reportedBy: str(r.reported_by),
+        flaggedAt: String(r.flagged_at),
       }));
   }
 

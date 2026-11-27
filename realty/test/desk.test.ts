@@ -192,6 +192,7 @@ const CORE = [
   "flow/source.ts", "flow/taxonomy.ts", "flow/desk.ts", "flow/env.ts", "flow/demo-day.ts", "flow/periskope.ts", "crm.ts",
   "flow/requests.ts", "flow/recommendations.ts", "flow/knowledge.ts", "flow/market-stats.ts", "flow/live-match.ts", "flow/observe.ts", "flow/area-knowledge.ts", "flow/crm-seam.ts", "flow/match-status.ts", "flow/automatch.ts", "flow/fx.ts", "flow/ask-match.ts", "flow/taught-areas.ts", "flow/automatch-leads.ts",
   "flow/listing-title.ts", "flow/admin-digest.ts", "flow/automatch-alert.ts", "flow/automatch-alert-review.ts", "flow/daily-summary.ts", "flow/ast-time.ts", "flow/listing-photos.ts", "flow/pagination.ts",
+  "flow/learn-view.ts", "flow/flag-match.ts",
   // Imported (for values) by the core:
   "extract.ts", "dedupe.ts", "agents.ts",
 ];
