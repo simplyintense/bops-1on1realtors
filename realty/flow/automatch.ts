@@ -17,7 +17,7 @@ import type { Listing } from "./source.ts";
  *   price 25    the listing at or under the budget is full (a range: anywhere from its floor to its ceiling); linear down to 0 at 20%
  *               past the edge (PRICE_BAND); a missing price or budget is 0
  *   area 30     same area 30, nearby 15
- *   beds 20     exact 20, one off 10, missing 0
+ *   beds 20     in the asked beds (a range: any in it) 20, one more than the most asked 10, else 0 (fewer than asked is out); missing 0
  *   type 10     sale/rent agrees (5; eligibility makes it agree) + kind of place agrees (5; no type asked is 5)
  *   recency 15  the ask's posted date (first seen, else last seen), by whole days old: 15 to 30 days, 12 to 60, 9 to 90, 6 to 120, 3 to 365, 0 after
  * The parts add up to at most 100 and the score is their rounded sum. Bands: 75+ strong, 50–74 fair, below 50 not shown.
@@ -55,7 +55,10 @@ function recencyPoints(days: number): number {
 export type AutomatchAsk = {
   id: string;
   area: string;
+  /** The least beds asked (the one figure, or the low end of a range). */
   beds: number | null;
+  /** The most beds of a range ("2 or 3 bed" is 2 to 3). Absent or null for a single figure. */
+  bedsMax?: number | null;
   /** The budget in `currency`: the single figure, or the ceiling of a range. null when the ask gives none. */
   budget: number | null;
   /** The floor of a budget range, when the ask gives one. With `budget` null it is a floor with no ceiling. */
@@ -124,9 +127,18 @@ export function scorePair(ask: Omit<AutomatchAsk, "id">, l: Listing, o: { areaRe
 
   let beds: { points: number; text: string };
   if (ask.beds == null || !l.beds) beds = { points: 0, text: "beds unknown" };
-  else if (l.beds === ask.beds) beds = { points: WEIGHT.beds, text: `${plural(l.beds, "bed")} as asked` };
-  else if (Math.abs(l.beds - ask.beds) === 1) beds = { points: WEIGHT.beds / 2, text: `${plural(l.beds, "bed")}, one from the ${ask.beds} asked` };
-  else beds = { points: 0, text: `${plural(l.beds, "bed")}, ${Math.abs(l.beds - ask.beds)} from the ${ask.beds} asked` };
+  else {
+    const least = ask.beds;
+    const most = ask.bedsMax ?? ask.beds;
+    const asked = least === most ? `${least}` : `${least}–${most}`;
+    if (l.beds >= least && l.beds <= most) {
+      beds = { points: WEIGHT.beds, text: least === most ? `${plural(l.beds, "bed")} as asked` : `${plural(l.beds, "bed")} (asked ${asked} beds)` };
+    } else {
+      // Fewer than the least asked is out (0 points); one more than the most asked is half.
+      const gap = l.beds < least ? least - l.beds : l.beds - most;
+      beds = { points: l.beds === most + 1 ? WEIGHT.beds / 2 : 0, text: `${plural(l.beds, "bed")}, ${gap === 1 ? "one" : gap} ${l.beds < least ? "fewer" : "more"} than the ${asked} asked` };
+    }
+  }
 
   const saleRent = ask.listingType === l.listingType ? WEIGHT.saleRent : 0;
   const kind = !askCategory || categoryOfListing(l) === askCategory ? WEIGHT.kind : 0;
@@ -170,12 +182,12 @@ export function bandCounts(pairs: readonly { score: number }[]): { strong: numbe
 
 /** The live matching request for one ask (the same shape matchOurListings takes). */
 export function requestOf(a: AutomatchAsk): LiveRequest {
-  return { intent: a.listingType === "rent" ? "rent" : "buy", area: a.area, beds: a.beds, propertyType: a.type, priceMin: a.budgetMin ?? null, priceMax: a.budget, currency: a.currency, monthly: false };
+  return { intent: a.listingType === "rent" ? "rent" : "buy", area: a.area, beds: a.beds, bedsMax: a.bedsMax ?? null, propertyType: a.type, priceMin: a.budgetMin ?? null, priceMax: a.budget, currency: a.currency, monthly: false };
 }
 
 /** An ask as the duplicate rule reads it (sameDemandAsk, ask-match.ts). */
 export function askFactsOf(a: AutomatchAsk): AskFacts {
-  return { area: a.area, development: null, beds: a.beds, price: a.budget, currency: a.currency, type: a.type, listingType: a.listingType };
+  return { area: a.area, development: null, beds: a.beds, bedsMax: a.bedsMax ?? null, price: a.budget, currency: a.currency, type: a.type, listingType: a.listingType };
 }
 
 /**
@@ -244,6 +256,8 @@ export type DemandRow = {
   lastSentAt: string;
   /** When the ask was first seen (ISO): the posted date recency is measured from. */
   firstSentAt?: string | null;
+  /** The most beds of a range the ask gave (beds is the least). */
+  bedsMax?: number | null;
   status?: string | null;
   senderPhone?: string | null;
   timesSeen?: number | null;
@@ -267,6 +281,7 @@ export function askOf(d: DemandRow): AutomatchAsk | null {
     id: d.id,
     area,
     beds: d.beds,
+    ...(d.bedsMax != null ? { bedsMax: d.bedsMax } : {}),
     budget: d.price,
     currency: d.currency?.toUpperCase() === "USD" ? "USD" : "TTD",
     type: d.type,

@@ -444,7 +444,7 @@ const NUM_WORD = (n: number, word: string): string => `${n} ${word}${n === 1 ? "
 
 /**
  * The plain-words reasons a listing fits the ask, from the parsed fields and the score's reason: the area (same, or nearby with the
- * drive or neighbour wording from the reason), the beds (the same, or one off), and the price against the budget in TT$ (a USD side
+ * drive or neighbour wording from the reason), the beds (the asked beds, or one more than the most asked; fewer is not a fit and is not said), and the price against the budget in TT$ (a USD side
  * uses the fixed rate, or the CRM's TT$ equivalent for a USD listing). Pure.
  */
 export function fitClauses(r: LeadInput): string[] {
@@ -461,8 +461,11 @@ export function fitClauses(r: LeadInput): string[] {
     }
   }
   if (a.beds != null && l.beds != null) {
-    if (l.beds === a.beds) out.push(`it has the ${NUM_WORD(a.beds, "bedroom")} they asked for`);
-    else if (Math.abs(l.beds - a.beds) === 1) out.push(`it has ${NUM_WORD(l.beds, "bedroom")}, one ${l.beds > a.beds ? "more" : "fewer"} than the ${a.beds} they asked for`);
+    const most = a.bedsMax ?? a.beds;
+    const asked = most === a.beds ? `${a.beds}` : `${a.beds}–${most} bedrooms`;
+    if (most === a.beds && l.beds === a.beds) out.push(`it has the ${NUM_WORD(a.beds, "bedroom")} they asked for`);
+    else if (l.beds >= a.beds && l.beds <= most) out.push(`it has ${NUM_WORD(l.beds, "bedroom")}, in the ${asked} they asked for`);
+    else if (l.beds === most + 1) out.push(`it has ${NUM_WORD(l.beds, "bedroom")}, one more than the ${asked} they asked for`);
   }
   if (a.budget != null && l.price) {
     const rent = a.listingType === "rent" ? " a month" : "";

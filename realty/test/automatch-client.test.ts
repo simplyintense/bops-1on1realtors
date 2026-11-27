@@ -186,11 +186,82 @@ test("a rent brief never returns a sale listing, and a sale brief never a rent o
   assert.deepEqual(idsOf(sale), ["D"]);
 });
 
-test("beds: exact is full, one off still matches (within one, the existing rule), further off is excluded", async () => {
-  const one = LISTING({ id: "I", title: "Westmoorings flat, three beds", beds: 3 });
-  const r = await call([one, F], BRIEF);
-  assert.deepEqual(idsOf(r), ["I"]);
-  assert.equal(matchesOf(r)[0].score, 90, "one bed off loses half the beds points");
+test("beds: exact is full, one more than asked still matches, one fewer than asked and two more are excluded", async () => {
+  const exact = LISTING({ id: "X", title: "Westmoorings flat, two beds", beds: 2 });
+  const more = LISTING({ id: "M", title: "Westmoorings flat, three beds", beds: 3 });
+  const fewer = LISTING({ id: "L", title: "Westmoorings flat, one bed", beds: 1 });
+  const r = await call([exact, more, fewer, F], BRIEF);
+  assert.deepEqual(idsOf(r).sort(), ["M", "X"]);
+  const score = (id: string) => matchesOf(r).find((m) => m.property_id === id)?.score;
+  assert.equal(score("X"), 100, "exact is full");
+  assert.equal(score("M"), 90, "one more than asked loses half the beds points");
+});
+
+test("a strict 3-bed rent at TT$11,000 does not take a 2-bed at that price; a 3-bed and a 4-bed (one more) do", async () => {
+  const brief = { listing_type: "rent", property_type: "apartment", location: "Westmoorings", budget_max: 11000, bedrooms_min: 3 };
+  const two = LISTING({ id: "two", title: "Westmoorings flat, two beds", price: 11000, beds: 2 });
+  const three = LISTING({ id: "three", title: "Westmoorings flat, three beds", price: 11000, beds: 3 });
+  const four = LISTING({ id: "four", title: "Westmoorings flat, four beds", price: 11000, beds: 4 });
+  const r = await call([two, three, four], brief);
+  assert.equal(r.status, 200);
+  assert.deepEqual(idsOf(r).sort(), ["four", "three"]);
+  assert.equal((r.body.meta as { total_candidates: number }).total_candidates, 2);
+});
+
+test("a bedroom range (2 to 3): both ends are full, one more than the top is half, one fewer than the bottom is out", async () => {
+  const brief = { ...BRIEF, bedrooms_min: 2, bedrooms_max: 3 };
+  const one = LISTING({ id: "one", title: "Westmoorings flat, one bed", beds: 1 });
+  const two = LISTING({ id: "two", title: "Westmoorings flat, two beds", beds: 2 });
+  const three = LISTING({ id: "three", title: "Westmoorings flat, three beds", beds: 3 });
+  const four = LISTING({ id: "four", title: "Westmoorings flat, four beds", beds: 4 });
+  const r = await call([one, two, three, four], brief);
+  assert.deepEqual(idsOf(r).sort(), ["four", "three", "two"]);
+  const score = (id: string) => matchesOf(r).find((m) => m.property_id === id)?.score;
+  assert.equal(score("two"), 100);
+  assert.equal(score("three"), 100);
+  assert.equal(score("four"), 90);
+  assert.match(matchesOf(r).find((m) => m.property_id === "two")?.reasons[0] ?? "", /2 beds \(asked 2–3 beds\)/);
+});
+
+test("bedrooms_max: a range needs bedrooms_min, and its top is not below its bottom", async () => {
+  const orphan = await call([A], { ...BRIEF, bedrooms_min: undefined, bedrooms_max: 3 });
+  assert.equal(orphan.status, 400);
+  assert.equal(orphan.body.error, "bedrooms_max needs bedrooms_min.");
+  const backwards = await call([A], { ...BRIEF, bedrooms_min: 3, bedrooms_max: 2 });
+  assert.equal(backwards.status, 400);
+  assert.equal(backwards.body.error, "bedrooms_min is more than bedrooms_max.");
+});
+
+test("the online source keeps the beds rule: a market 2-bed is not offered for a strict 3-bed brief, a 3-bed is", async () => {
+  const twoBed = HIT({ id: "m-2", beds: 2, url: "https://market.example.test/listings/m-2" });
+  const threeBed = HIT({ id: "m-3", beds: 3, url: "https://market.example.test/listings/m-3" });
+  const r = await run({ ...BRIEF, bedrooms_min: 3, sources: ["online"] }, { market: marketOf([twoBed, threeBed]) });
+  assert.deepEqual(onlineOf(r).map((m) => m.id), ["m-3"]);
+});
+
+test("a North East and Central brief takes a North East and a Central listing, never a Newtown (Picton Street) one", async () => {
+  const areas = new MemoryAreaResolver([...PLACES, { name: "Sangre Grande", region: "North East" as const }, { name: "Newtown", region: "North West" as const }]);
+  const brief = { listing_type: "sale", property_type: "apartment", location: ["North East", "Central"], budget_max: 1_000_000, bedrooms_min: 3 };
+  const sale = (over: Partial<Listing>) => LISTING({ listingType: "sale", price: 900_000, beds: 3, ...over });
+  const listings = [
+    sale({ id: "newtown", title: "Picton Street flat", area: "Newtown" }),
+    sale({ id: "sangre", title: "Sangre Grande flat", area: "Sangre Grande" }),
+    sale({ id: "chag", title: "Chaguanas flat", area: "Chaguanas" }),
+  ];
+  const r = await automatchClient({ authorization: AUTH, body: JSON.stringify(brief) }, ENV, { seam: seamOf(listings), areas, knowledge: null, now: NOW, root: EMPTY_ROOT });
+  assert.equal(r.status, 200);
+  assert.deepEqual(idsOf(r).sort(), ["chag", "sangre"]);
+});
+
+test("widen: a thin 3-bed brief offers one bedroom fewer, and the widened brief takes a 2-bed that the 3-bed brief left out", async () => {
+  const two = LISTING({ id: "two", title: "Westmoorings flat, two beds", beds: 2 });
+  const three = LISTING({ id: "three", title: "Westmoorings flat, three beds", beds: 3 });
+  const thin = await call([two, three], { ...BRIEF, bedrooms_min: 3 });
+  assert.deepEqual(idsOf(thin), ["three"], "the 2-bed is one fewer than the 3 asked, so it is out");
+  const widen = (thin.body.meta as { widen_suggestions?: { id: string; patch: Record<string, unknown> }[] }).widen_suggestions ?? [];
+  assert.deepEqual(widen.find((w) => w.id === "relax-bedrooms")?.patch, { bedrooms_min: 2 });
+  const widened = await call([two, three], { ...BRIEF, bedrooms_min: 2 });
+  assert.deepEqual(idsOf(widened).sort(), ["three", "two"]);
 });
 
 test("budget: listings from 80% to 120% of the budget pass; under or over that band are excluded", async () => {

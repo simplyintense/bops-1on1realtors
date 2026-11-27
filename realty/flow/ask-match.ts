@@ -23,6 +23,8 @@ export type AskFacts = {
   area: string | null;
   development: string | null;
   beds: number | null;
+  /** The most beds of a range (beds is the least), or null for a single figure. */
+  bedsMax?: number | null;
   /** The budget in `currency` (a single figure), or null. */
   price: number | null;
   currency: string | null;
@@ -76,6 +78,7 @@ export function sameDemandAsk(a: AskFacts, b: AskFacts): boolean {
     (a.listingType ?? null) === (b.listingType ?? null) &&
     samePlace(a, b) &&
     (a.beds ?? null) === (b.beds ?? null) &&
+    (a.bedsMax ?? null) === (b.bedsMax ?? null) &&
     typeSame(a.type, b.type) &&
     budgetSame(a, b)
   );

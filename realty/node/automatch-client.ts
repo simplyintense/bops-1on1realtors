@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { areaKey, CachedAreaResolver, type AreaResolver, type ToolCaller } from "../flow/areas.ts";
 import { automatchPairs, FAIR, widenSuggestions, type AutomatchAsk, type AutomatchPair, type ScoreParts } from "../flow/automatch.ts";
 import type { CrmListingsState, CrmSeam } from "../flow/crm-seam.ts";
-import { fitsOurListing, liveBuyerArgs, OUR_AGENCY, ourAreaContext, ourAreaRelation, type LiveRequest } from "../flow/live-match.ts";
+import { bedsFit, fitsOurListing, liveBuyerArgs, OUR_AGENCY, ourAreaContext, ourAreaRelation, type LiveRequest } from "../flow/live-match.ts";
 import { listingTypeWord } from "../flow/listing-title.ts";
 import { MarketClient, marketConfigFromEnv, priceOf } from "../flow/market-search.ts";
 import { readsAsBuyerAsk } from "../flow/periskope.ts";
@@ -34,7 +34,7 @@ import { matchingKnowledgeFrom, withSearchStore, type Side, type SearchRow } fro
  * Server to server, proving itself by Authorization: Bearer <BOPS_AUTOMATCH_TOKEN> (sameSecret, constant time). Not behind the
  * Google gate (lib/gate.ts). Read only: nothing is written or sent, and the client's name and notes are not read or sent on.
  *
- * Only what the scorer already scores is used: the hard rules (status, sale or rent, the price band, beds within one) are
+ * Only what the scorer already scores is used: the hard rules (status, sale or rent, the price band, the beds rule) are
  * fitsOurListing's, and the area rules are automatchPairs'. Bathrooms are not scored anywhere: bathrooms_min is a hard floor
  * applied here, before the scorer. A listing matched through several locations is returned once, with its best score.
  */
@@ -77,7 +77,10 @@ export type AutomatchClientOpts = {
   marketTimeoutMs?: number;
 };
 
-/** A validated brief. `locations` is never empty. priceMin and priceMax are budget_min and budget_max: a range when both are given (fitsOurListing, scorePair), else a single budget. */
+/**
+ * A validated brief. `locations` is never empty. priceMin and priceMax are budget_min and budget_max: a range when both are given (fitsOurListing,
+ * scorePair), else a single budget. beds and bedsMax are bedrooms_min and bedrooms_max: a range when both are given, else a single figure.
+ */
 type Brief = {
   clientId: string;
   propertyType: string | null;
@@ -87,6 +90,7 @@ type Brief = {
   priceMax: number | null;
   currency: "TTD" | "USD";
   beds: number | null;
+  bedsMax: number | null;
   bathsMin: number | null;
   limit: number;
 };
@@ -223,12 +227,13 @@ function noteUnknownPlaces(root: string, names: readonly string[], knowledge: Ar
   }
 }
 
-/** The asks, one per location: the scorer reads each as a buyer's ask in that area, with the brief's budget range (or single figure). */
+/** The asks, one per location: the scorer reads each as a buyer's ask in that area, with the brief's budget and bedroom range (or single figure). */
 function asksOf(brief: Brief, now: Date): AutomatchAsk[] {
   return brief.locations.map((area, i) => ({
     id: `${brief.clientId}#${i}`,
     area,
     beds: brief.beds,
+    bedsMax: brief.bedsMax,
     budget: brief.priceMax,
     budgetMin: brief.priceMin,
     currency: brief.currency,
@@ -269,7 +274,7 @@ async function scoreAgainst(
 
 /** The live matching request the eligibility rules read (the shape matchOurListings takes). fitsOurListing reads no area, so none is set. */
 function liveRequestOf(b: Brief): LiveRequest {
-  return { intent: b.listingType === "rent" ? "rent" : "buy", area: null, beds: b.beds, propertyType: b.propertyType, priceMin: b.priceMin, priceMax: b.priceMax, currency: b.currency, monthly: false };
+  return { intent: b.listingType === "rent" ? "rent" : "buy", area: null, beds: b.beds, bedsMax: b.bedsMax, propertyType: b.propertyType, priceMin: b.priceMin, priceMax: b.priceMax, currency: b.currency, monthly: false };
 }
 
 const MATCHED_FIELDS: readonly { part: keyof ScoreParts; field: string }[] = [
@@ -431,7 +436,7 @@ async function onlineOne(market: { caller: ToolCaller; timeoutMs: number }, r: L
     if (!hits) return { status: "unavailable" };
     const items = hits.flatMap((h) => {
       const item = onlineItemOf(h);
-      return item ? [item] : [];
+      return item && bedsFit(r, item.bedrooms ?? 0) ? [item] : [];
     });
     return { status: "ok", items: await placedIn(items, r.area ?? "", ctx) };
   } catch (err) {
@@ -609,11 +614,15 @@ function briefOf(b: Record<string, unknown>): Brief | { error: string } {
   const budgetMin = numberOf(b.budget_min);
   const budgetMax = numberOf(b.budget_max);
   const beds = numberOf(b.bedrooms_min);
+  const bedsMax = numberOf(b.bedrooms_max);
   const bathsMin = numberOf(b.bathrooms_min);
   const limit = numberOf(b.limit);
   if (budgetMin === undefined) return { error: "budget_min must be a number." };
   if (budgetMax === undefined) return { error: "budget_max must be a number." };
   if (beds === undefined) return { error: "bedrooms_min must be a number." };
+  if (bedsMax === undefined) return { error: "bedrooms_max must be a number." };
+  if (bedsMax !== null && beds === null) return { error: "bedrooms_max needs bedrooms_min." };
+  if (beds !== null && bedsMax !== null && beds > bedsMax) return { error: "bedrooms_min is more than bedrooms_max." };
   if (bathsMin === undefined) return { error: "bathrooms_min must be a number." };
   if (limit === undefined || (limit !== null && (!Number.isInteger(limit) || limit < 1))) return { error: "limit must be a whole number, 1 or more." };
   if (budgetMin !== null && budgetMax !== null && budgetMin > budgetMax) return { error: "budget_min is more than budget_max." };
@@ -627,6 +636,7 @@ function briefOf(b: Record<string, unknown>): Brief | { error: string } {
     priceMax: budgetMax,
     currency: typeof b.currency === "string" && b.currency.trim().toUpperCase() === "USD" ? "USD" : "TTD",
     beds,
+    bedsMax,
     bathsMin,
     limit: Math.min(limit ?? AUTOMATCH_DEFAULT_LIMIT, AUTOMATCH_MAX_LIMIT),
   };

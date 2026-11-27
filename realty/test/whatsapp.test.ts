@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { findActions, dueFrom } from "../actions.ts";
 import { CrmIndex, phoneKey } from "../dedupe.ts";
-import { findBudget, findAreas, findInterest, findNames, findPhones, looksLikeLead, normalizePhone } from "../extract.ts";
+import { findBudget, findAreas, findInterest, findNames, findPhones, leadFacts, looksLikeLead, normalizePhone } from "../extract.ts";
+import { factsOf } from "../flow/periskope.ts";
 import { readExport } from "../wa-reader.ts";
 import { detectOrder, parseChat } from "../whatsapp.ts";
 import { chatTextFromZip, writeZip } from "../zip.ts";
@@ -73,11 +74,11 @@ test("budgets: ranges, millions, monthly rent, currency", () => {
 test("areas, kind of property and names", () => {
   assert.deepEqual(findAreas("Westmoorings or Diego Martin, maybe West Moorings"), ["Westmoorings", "Diego Martin"]);
   assert.deepEqual(findAreas("in central locations"), ["Central locations"]);
-  assert.deepEqual(findAreas("a one bedroom in central"), ["Central locations"]);
+  assert.deepEqual(findAreas("a one bedroom in central"), ["Central"], "bare central is the Central region");
   assert.deepEqual(findAreas("central Woodbrook"), ["Woodbrook"], "a named central area wins over the group");
   assert.ok(findAreas("St James or Newtown").includes("St. James"));
   assert.ok(findAreas("St James or Newtown").includes("Newtown"));
-  assert.deepEqual(findInterest("a 3 bed townhouse to buy"), { intent: "buy", types: ["townhouse"], bedrooms: 3 });
+  assert.deepEqual(findInterest("a 3 bed townhouse to buy"), { intent: "buy", types: ["townhouse"], bedrooms: 3, bedroomsMax: null });
   assert.deepEqual(findInterest("two bedroom apartment for rent").intent, "rent");
   assert.deepEqual(findAreas("Any La Fontaine units for rent"), ["La Fontaine"]);
   assert.equal(findAreas("Westhills 3 bed")[0], "West Hills");
@@ -155,4 +156,44 @@ test("reads a .zip export (iPhone's _chat.txt)", () => {
   const r = readExport("WhatsApp Chat - 1on1 Leads.zip", zip, { crm, agents, defaultAgentId: 9 });
   assert.equal(r.chat, "1on1 Leads");
   assert.equal(r.proposals.filter((p) => p.kind === "lead").length, 3);
+});
+
+test("a Trinidad region named in a brief is a region: North east to central is North East and Central, never the Port of Spain group", () => {
+  const brief = "commercial building for sale to op3n a supermarket. North east to central. Budget $7 M";
+  assert.deepEqual(findAreas(brief), ["North East", "Central"]);
+  assert.deepEqual(leadFacts(brief).areas, ["North East", "Central"]);
+  assert.deepEqual(findAreas("North-east to central"), ["North East", "Central"]);
+  assert.deepEqual(findAreas("North East to Central"), ["North East", "Central"]);
+  assert.deepEqual(findAreas("Northeast"), ["North East"]);
+  assert.deepEqual(findAreas("North west"), ["North West"]);
+  assert.deepEqual(findAreas("Sangre Grande, North East"), ["Sangre Grande", "North East"]);
+  assert.deepEqual(findAreas("central Trinidad"), ["Central"]);
+  assert.deepEqual(findAreas("in central locations"), ["Central locations"]);
+  assert.deepEqual(findAreas("central port of spain"), ["Central locations"]);
+  assert.deepEqual(findAreas("central Woodbrook"), ["Woodbrook"], "a named place wins over the bare region");
+  assert.deepEqual(findAreas("Trinidad"), ["Trinidad"], "the island alone is still read");
+});
+
+test("a bedroom range reads as a range, not its top figure: 2 or 3, 2-3, 2 to 3, 2/3, and the words", () => {
+  const range = (text: string) => {
+    const i = findInterest(text);
+    return [i.bedrooms, i.bedroomsMax];
+  };
+  assert.deepEqual(range("2 or 3 bedroom apartment or townhouse West only Budget US$1800"), [2, 3]);
+  assert.deepEqual(range("2-3 bed house to rent"), [2, 3]);
+  assert.deepEqual(range("2–3 bedroom flat"), [2, 3]);
+  assert.deepEqual(range("2 to 3 br townhouse"), [2, 3]);
+  assert.deepEqual(range("2/3 bd"), [2, 3]);
+  assert.deepEqual(range("two or three bedroom"), [2, 3]);
+  assert.deepEqual(range("two to three bed"), [2, 3]);
+  assert.deepEqual(range("3 or 2 bed"), [2, 3], "the least first");
+  assert.deepEqual(range("a 3 bed townhouse to buy"), [3, null], "a single figure has no top");
+  assert.deepEqual(range("one bedroom in central"), [1, null]);
+  assert.deepEqual(range("a townhouse to buy"), [null, null]);
+});
+
+test("intake keeps the range: a 2 or 3 bed ask is 2 to 3 beds on arrival, not 3", () => {
+  const f = factsOf("Looking for a 2 or 3 bedroom apartment or townhouse in Maraval to rent, budget 9000");
+  assert.equal(f.beds, 2);
+  assert.equal(f.bedsMax, 3);
 });

@@ -80,13 +80,38 @@ test("area: same area 30, nearby 15, not checked 0", () => {
   assert.equal(scoreOf({}, {}, null).parts.area, 0);
 });
 
-test("beds: exact 20, one off 10, two off or unknown 0", () => {
+test("beds: exact 20, one more than asked 10, fewer than asked or two more 0, unknown 0", () => {
   assert.equal(scoreOf({ beds: 2 }, { beds: 2 }).parts.beds, 20);
   assert.equal(scoreOf({ beds: 2 }, { beds: 3 }).parts.beds, 10);
-  assert.equal(scoreOf({ beds: 2 }, { beds: 1 }).parts.beds, 10);
+  assert.equal(scoreOf({ beds: 2 }, { beds: 1 }).parts.beds, 0, "one fewer than asked is out");
   assert.equal(scoreOf({ beds: 2 }, { beds: 4 }).parts.beds, 0);
   assert.equal(scoreOf({ beds: 2 }, { beds: 0 }).parts.beds, 0, "the listing gives no beds");
   assert.equal(scoreOf({ beds: null }, { beds: 2 }).parts.beds, 0, "the ask gives no beds");
+});
+
+test("a bedroom range (2 to 3): either end and anything between is full; one more than the top is 10; fewer than the bottom is 0", () => {
+  const range = { beds: 2, bedsMax: 3 };
+  assert.equal(scoreOf(range, { beds: 2 }).parts.beds, 20);
+  assert.equal(scoreOf(range, { beds: 3 }).parts.beds, 20);
+  assert.equal(scoreOf(range, { beds: 4 }).parts.beds, 10);
+  assert.equal(scoreOf(range, { beds: 1 }).parts.beds, 0);
+  assert.equal(scoreOf(range, { beds: 5 }).parts.beds, 0);
+  const inside = scoreOf(range, { beds: 2 }).reason;
+  assert.match(inside, /2 beds \(asked 2–3 beds\)/);
+  assert.doesNotMatch(inside, /fewer|one from|one more/, "a 2 inside 2 to 3 is not one fewer");
+  assert.match(scoreOf(range, { beds: 4 }).reason, /4 beds, one more than the 2–3 asked/);
+});
+
+test("the beds rule in pairs: a strict 3-bed ask is not paired with a 2-bed at its price; 3 and one more (4) are, a range takes 2 to 3", async () => {
+  const at = (beds: number) => LISTING({ id: `b${beds}`, title: `${beds} bed apartment, Westmoorings`, listingType: "rent", price: 11000, beds });
+  const listings = [at(1), at(2), at(3), at(4), at(5)];
+  const strict = await automatchPairs([ASK({ listingType: "rent", type: "apartment", budget: 11000, beds: 3 })], listings, AREAS, NOW);
+  assert.deepEqual(strict.map((p) => p.listing.id).sort(), ["b3", "b4"]);
+  assert.equal(strict.find((p) => p.listing.id === "b4")?.parts.beds, 10, "one more than asked is half the beds points");
+  const range = await automatchPairs([ASK({ listingType: "rent", type: "apartment", budget: 11000, beds: 2, bedsMax: 3 })], listings, AREAS, NOW);
+  assert.deepEqual(range.map((p) => p.listing.id).sort(), ["b2", "b3", "b4"]);
+  assert.equal(range.find((p) => p.listing.id === "b2")?.parts.beds, 20);
+  assert.equal(range.find((p) => p.listing.id === "b3")?.parts.beds, 20);
 });
 
 test("type and sale or rent: 5 each; no type asked gives the kind-of-place 5; a different kind gives 0", () => {

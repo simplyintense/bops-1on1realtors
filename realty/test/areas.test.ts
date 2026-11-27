@@ -112,13 +112,15 @@ const toolResult = (json: unknown) => ({ content: [{ type: "text", text: "A spok
 
 // ── Regions and islands ───────────────────────────────────────────────────────────────────────────
 
-test("the six regions are exact strings; Tobago is Tobago, every other region is Trinidad", () => {
-  assert.deepEqual([...REGIONS], ["Port of Spain", "North West", "East–West Corridor", "Central", "South", "Tobago"]);
+test("the seven regions are exact strings; Tobago is Tobago, every other region is Trinidad", () => {
+  assert.deepEqual([...REGIONS], ["Port of Spain", "North West", "North East", "East–West Corridor", "Central", "South", "Tobago"]);
   assert.equal(islandOf("Tobago"), "Tobago");
   assert.equal(islandOf("North West"), "Trinidad");
+  assert.equal(islandOf("North East"), "Trinidad");
+  assert.equal(parseRegion("north  east"), "North East", "a region named in any case or spacing");
   assert.equal(islandOf("East–West Corridor"), "Trinidad");
   assert.equal(islandOf(null), null, "no region, no island");
-  assert.equal(islandOf("Atlantis"), null, "a region that isn't one of the six isn't claimed for either island");
+  assert.equal(islandOf("Atlantis"), null, "a region that isn't one of the seven isn't claimed for either island");
   assert.equal(parseRegion("  tobago "), "Tobago", "region names are read in any case");
 });
 

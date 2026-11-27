@@ -44,7 +44,12 @@ function merge(a: LeadFacts, b: LeadFacts): LeadFacts {
     emails: u(a.emails, b.emails),
     budget: a.budget ?? b.budget,
     areas: u(a.areas, b.areas),
-    interest: { intent: a.interest.intent ?? b.interest.intent, types: u(a.interest.types, b.interest.types), bedrooms: a.interest.bedrooms ?? b.interest.bedrooms },
+    interest: {
+      intent: a.interest.intent ?? b.interest.intent,
+      types: u(a.interest.types, b.interest.types),
+      bedrooms: a.interest.bedrooms ?? b.interest.bedrooms,
+      bedroomsMax: a.interest.bedrooms !== null ? a.interest.bedroomsMax : b.interest.bedroomsMax,
+    },
   };
 }
 
@@ -53,7 +58,7 @@ const money = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(2)}M` : n >= 1e3 
 export function describe(f: LeadFacts): string {
   const parts: string[] = [];
   const i = f.interest;
-  const what = [i.bedrooms ? `${i.bedrooms}-bed` : "", i.types.join("/") || "property", i.intent === "rent" ? "to rent" : i.intent === "buy" ? "to buy" : ""].filter(Boolean).join(" ");
+  const what = [i.bedrooms ? `${i.bedrooms}${i.bedroomsMax ? `–${i.bedroomsMax}` : ""}-bed` : "", i.types.join("/") || "property", i.intent === "rent" ? "to rent" : i.intent === "buy" ? "to buy" : ""].filter(Boolean).join(" ");
   parts.push(what);
   if (f.areas.length) parts.push(`in ${f.areas.join(", ")}`);
   if (f.budget) parts.push(`budget ${f.budget.currency} ${f.budget.min ? `${money(f.budget.min)}–` : ""}${money(f.budget.max)}${f.budget.period ? "/month" : ""}`);
