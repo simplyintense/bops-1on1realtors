@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { MemoryAreaResolver } from "../flow/areas.ts";
+import { MemoryAreaResolver, type Place } from "../flow/areas.ts";
 import { FAIR } from "../flow/automatch.ts";
 import { NOT_CONNECTED, type CrmSeam } from "../flow/crm-seam.ts";
 import type { Listing } from "../flow/source.ts";
-import { automatchClient, type AutomatchClientOpts } from "../node/automatch-client.ts";
+import { areasForMatch, isCentralAreaGroup } from "../extract.ts";
+import { automatchClient, placeWithoutRegion, type AutomatchClientOpts } from "../node/automatch-client.ts";
 import type { AgentReply } from "../node/agent-search.ts";
 import { GATE_OPEN_PATHS } from "../../lib/gate.ts";
 
@@ -320,6 +321,121 @@ test("a CRM that is not connected or can't be read is a 503 with a generic messa
 test("with no CRM settings and no seam given, the default seam is not connected: 503", async () => {
   const r = await automatchClient({ authorization: AUTH, body: JSON.stringify(BRIEF) }, ENV, {});
   assert.equal(r.status, 503);
+});
+
+/* ---------------- regions and "Place, Region" locations ---------------- */
+
+// Invented places with invented neighbour lists. The regions are the ones the market's directory gives.
+const REGION_PLACES: Place[] = [
+  { name: "Chaguanas", region: "Central", neighbours: ["Riverview Park", "Brentwood Palms"] },
+  { name: "Riverview Park", region: "Central", neighbours: ["Chaguanas"] },
+  { name: "Brentwood Palms", region: "Central", neighbours: ["Chaguanas"] },
+  { name: "Cunupia", region: "Central" },
+  { name: "Couva", region: "Central" },
+  { name: "Freeport", region: "Central" },
+  { name: "Fort George", region: "North West", neighbours: ["Woodbrook", "Port of Spain"] },
+  { name: "Westmoorings", region: "North West" },
+  { name: "Port of Spain", region: "Port of Spain" },
+  { name: "St. James", region: "Port of Spain", neighbours: ["Port of Spain"] },
+  { name: "Cascade", region: "Port of Spain" },
+  { name: "Woodbrook", region: "Port of Spain" },
+  { name: "Tunapuna", region: "East–West Corridor" },
+  { name: "San Fernando", region: "South" },
+  { name: "Scarborough", region: "Tobago" },
+];
+const REGION_AREAS = new MemoryAreaResolver(REGION_PLACES);
+
+const AREA_LISTING = (id: string, area: string, over: Partial<Listing> = {}): Listing =>
+  LISTING({ id, title: `${area} 2-bed apartment`, area, ...over });
+const REGION_LISTINGS = {
+  chaguanas: AREA_LISTING("chaguanas", "Chaguanas"),
+  riverview: AREA_LISTING("riverview", "Riverview Park"),
+  brentwood: AREA_LISTING("brentwood", "Brentwood Palms"),
+  cunupia: AREA_LISTING("cunupia", "Cunupia"),
+  couva: AREA_LISTING("couva", "Couva"),
+  freeport: AREA_LISTING("freeport", "Freeport"),
+  fortGeorge: AREA_LISTING("fort-george", "Fort George"),
+  // A North West listing whose title says "Central": the word in the title never makes it a Central listing.
+  fortGeorgeCentralTitle: AREA_LISTING("fort-george-central", "Fort George", { title: "Central View 2-bed apartment" }),
+  stJames: AREA_LISTING("st-james", "St. James"),
+  cascade: AREA_LISTING("cascade", "Cascade"),
+  woodbrook: AREA_LISTING("woodbrook", "Woodbrook"),
+  portOfSpain: AREA_LISTING("port-of-spain", "Port of Spain"),
+  westmoorings: AREA_LISTING("westmoorings", "Westmoorings"),
+  tunapuna: AREA_LISTING("tunapuna", "Tunapuna"),
+  sanFernando: AREA_LISTING("san-fernando", "San Fernando"),
+  scarborough: AREA_LISTING("scarborough", "Scarborough"),
+};
+const EVERY_REGION_LISTING = Object.values(REGION_LISTINGS);
+
+/** The rent brief from BRIEF, with the location given, against the region fixtures. */
+async function regionMatches(location: string | string[], listings: Listing[] = EVERY_REGION_LISTING): Promise<Match[]> {
+  const r = await automatchClient({ authorization: AUTH, body: JSON.stringify({ ...BRIEF, location }) }, ENV, { seam: seamOf(listings), areas: REGION_AREAS, knowledge: null, now: NOW });
+  assert.equal(r.status, 200);
+  return matchesOf(r);
+}
+const idsSorted = (ms: Match[]) => ms.map((m) => m.property_id).sort();
+
+test("'Central' matches the Central Trinidad listings (Chaguanas, Cunupia, Couva, Freeport, and the places in Central) and not Port of Spain or North West", async () => {
+  const got = await regionMatches("Central");
+  assert.deepEqual(idsSorted(got), ["brentwood", "chaguanas", "couva", "cunupia", "freeport", "riverview"]);
+  for (const m of got) assert.equal(m.reasons[0].startsWith("Same area (Central)"), true, `${m.property_id}: ${m.reasons[0]}`);
+});
+
+test("'Central' does not match Fort George, St James, Cascade or Woodbrook, even with a neighbour list that names them", async () => {
+  const ids = idsSorted(await regionMatches("Central"));
+  for (const id of ["fort-george", "fort-george-central", "st-james", "cascade", "woodbrook", "port-of-spain", "westmoorings"]) {
+    assert.equal(ids.includes(id), false, `${id} is not a Central listing`);
+  }
+});
+
+test("'Central locations' still matches the Port of Spain group, and not the Central Trinidad places", async () => {
+  const ids = idsSorted(await regionMatches("Central locations"));
+  for (const id of ["st-james", "cascade", "woodbrook", "port-of-spain"]) assert.equal(ids.includes(id), true, `${id} is in the group`);
+  for (const id of ["chaguanas", "cunupia", "couva", "freeport", "riverview", "brentwood", "tunapuna", "san-fernando"]) {
+    assert.equal(ids.includes(id), false, `${id} is not in the group`);
+  }
+});
+
+test("bare region names match their own region's listings cleanly", async () => {
+  const cases: [string, string[]][] = [
+    ["North West", ["fort-george", "fort-george-central", "westmoorings"]],
+    ["Port of Spain", ["cascade", "port-of-spain", "st-james", "woodbrook"]],
+    ["East-West Corridor", ["tunapuna"]],
+    ["South", ["san-fernando"]],
+    ["Tobago", ["scarborough"]],
+  ];
+  for (const [location, want] of cases) {
+    assert.deepEqual(idsSorted(await regionMatches(location)), [...want].sort(), location);
+  }
+});
+
+test("a 'Place, Region' location scores the same as the place alone: 'Chaguanas, Central' is 'Chaguanas'", async () => {
+  const alone = await regionMatches("Chaguanas");
+  const withRegion = await regionMatches("Chaguanas, Central");
+  assert.deepEqual(withRegion, alone);
+  // The place's own listing and its neighbours, the same as before the region was added.
+  assert.deepEqual(idsSorted(alone), ["brentwood", "chaguanas", "riverview"]);
+});
+
+test("the region suffix is dropped only after a place name, and only for known Trinidad & Tobago regions", () => {
+  assert.equal(placeWithoutRegion("Chaguanas, Central"), "Chaguanas");
+  assert.equal(placeWithoutRegion("  chaguanas ,  central  "), "chaguanas");
+  assert.equal(placeWithoutRegion("Woodbrook, Port of Spain, Trinidad & Tobago"), "Woodbrook");
+  assert.equal(placeWithoutRegion("Tunapuna, East–West Corridor"), "Tunapuna");
+  assert.equal(placeWithoutRegion("Scarborough, Tobago"), "Scarborough");
+  assert.equal(placeWithoutRegion("Central"), "Central", "a region on its own has no place before it");
+  assert.equal(placeWithoutRegion("Central locations"), "Central locations");
+  assert.equal(placeWithoutRegion("La Fontaine, Westmoorings"), "La Fontaine, Westmoorings", "a place is not a region");
+});
+
+test("the Central group is only 'Central location(s)': bare 'Central' is the region, not the group", () => {
+  assert.equal(isCentralAreaGroup("Central"), false);
+  assert.equal(isCentralAreaGroup("central"), false);
+  assert.equal(isCentralAreaGroup("Central locations"), true);
+  assert.equal(isCentralAreaGroup("central  location"), true);
+  assert.equal(areasForMatch("Central").same.includes("Cascade"), false, "bare Central expands to no places");
+  assert.equal(areasForMatch("Central locations").same.includes("Cascade"), true);
 });
 
 /* ---------------- the gate sets ---------------- */
