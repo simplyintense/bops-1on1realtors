@@ -169,7 +169,7 @@ export function bandCounts(pairs: readonly { score: number }[]): { strong: numbe
 }
 
 /** The live matching request for one ask (the same shape matchOurListings takes). */
-function requestOf(a: AutomatchAsk): LiveRequest {
+export function requestOf(a: AutomatchAsk): LiveRequest {
   return { intent: a.listingType === "rent" ? "rent" : "buy", area: a.area, beds: a.beds, propertyType: a.type, priceMin: a.budgetMin ?? null, priceMax: a.budget, currency: a.currency, monthly: false };
 }
 

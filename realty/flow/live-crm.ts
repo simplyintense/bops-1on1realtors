@@ -1,4 +1,4 @@
-import { Crm, crmEnv } from "../crm.ts";
+import { Crm, crmEnv, type CrmClientDemand } from "../crm.ts";
 import type { Currency, Inquiry, ListingType } from "./engine.ts";
 import type { CrmSource, FlowAgent, Listing } from "./source.ts";
 import { channelFromSource, propertyKindFromCrm } from "./taxonomy.ts";
@@ -84,6 +84,11 @@ export class LiveCrmSource implements CrmSource {
   constructor(crm: Crm, opts: { now?: () => number } = {}) {
     this.crm = crm;
     this.now = opts.now ?? Date.now;
+  }
+
+  /** The buyers and tenants for the vendor matching, read only (Crm.clientDemand). Read per call, not cached. */
+  clientDemand(): Promise<CrmClientDemand[]> {
+    return this.crm.clientDemand();
   }
 
   async agents(): Promise<FlowAgent[]> {
