@@ -97,7 +97,7 @@ test("fail closed: a CRM that refuses sign-in is 'not connected' with no agents,
   assert.deepEqual(await broken.agents(), []);
 });
 
-test("our listings match by the co-broke rules: rent vs sale, same or nearby area, price within 20%, beds within one, kind of place", async () => {
+test("our listings match by the co-broke rules: rent vs sale, same or nearby area, price within 20%, beds (no fewer than asked, at most one more), kind of place", async () => {
   const listings = [
     listing({ id: "same", price: 8500 }),
     listing({ id: "near", area: "Glencoe", price: 10_500, beds: 3 }),
@@ -254,6 +254,25 @@ test("a Central locations request matches our listings in any of the eight centr
   const got = await matchOurListings(req, listings, areas);
   // Same-area first, then closest to the TT$1M budget: Woodbrook at 995k, then POS at 900k. San Fernando is out.
   assert.deepEqual(got.map((m) => m.title), ["Woodbrook 2-bed apartment", "POS 1-bed apartment"]);
+});
+
+test("a North East brief and a Central brief take their own regions, and never a Newtown or Picton Street listing", async () => {
+  const areas = new MemoryAreaResolver([
+    { name: "Sangre Grande", region: "North East", neighbours: [] },
+    { name: "Chaguanas", region: "Central", neighbours: [] },
+    { name: "Newtown", region: "North West", neighbours: [] },
+  ]);
+  const sale = (over: Partial<Listing>) => listing({ listingType: "sale", price: 900_000, beds: 3, ...over });
+  const listings = [
+    sale({ id: "newtown", title: "Picton Street flat", area: "Newtown" }),
+    sale({ id: "sangre", title: "Sangre Grande flat", area: "Sangre Grande" }),
+    sale({ id: "chag", title: "Chaguanas flat", area: "Chaguanas" }),
+  ];
+  const brief = (area: string): LiveRequest => ({ intent: "buy", area, beds: 3, propertyType: "apartment", priceMin: null, priceMax: 1_000_000, currency: "TTD", monthly: false });
+  assert.deepEqual((await matchOurListings(brief("North East"), listings, areas)).map((m) => m.title), ["Sangre Grande flat"]);
+  assert.deepEqual((await matchOurListings(brief("Central"), listings, areas)).map((m) => m.title), ["Chaguanas flat"]);
+  // Newtown is in the Port of Spain group ("Central locations"), but not in the Central region: the two are different asks.
+  assert.deepEqual((await matchOurListings(brief("Central locations"), listings, areas)).map((m) => m.title), ["Picton Street flat"]);
 });
 
 test("named developments match the parent and listed neighbours, and a West Hills request does not include Glencoe", async () => {

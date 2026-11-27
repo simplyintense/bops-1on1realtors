@@ -425,13 +425,15 @@ test("the suggested reply names no type or area the contact did not say: 'a 3 be
   assert.doesNotMatch(several.message.split(". I have ")[0], /in Maraval/);
 });
 
-test("the pure fit line: area (same or nearby), beds (same or one off), the TT$ budget gap (under, over, USD, rent), and the strong opening", () => {
+test("the pure fit line: area (same or nearby), beds (asked, in a range, or one more than the most), the TT$ budget gap (under, over, USD, rent), and the strong opening", () => {
   const under = "This is a strong fit: it's in Maraval, the area they asked for; it has the 3 bedrooms they asked for; it's TT$600k under their budget.";
   assert.equal(matchFitText(ROW()), under);
   assert.equal(matchFitText(ROW({}, {}, { price: 4_500_000 })), "This is a strong fit: it's in Maraval, the area they asked for; it has the 3 bedrooms they asked for; it's TT$200k over their budget.");
   assert.equal(matchFitText(ROW({}, { currency: "USD", budget: 650_000 })), "This is a strong fit: it's in Maraval, the area they asked for; it has the 3 bedrooms they asked for; it's TT$707k under their budget.", "a USD ask compares in TT$ at the fixed rate");
   assert.equal(matchFitText(ROW({}, {}, { beds: 4 })), "This is a strong fit: it's in Maraval, the area they asked for; it has 4 bedrooms, one more than the 3 they asked for; it's TT$600k under their budget.");
-  assert.equal(matchFitText(ROW({}, {}, { beds: 2 })), "This is a strong fit: it's in Maraval, the area they asked for; it has 2 bedrooms, one fewer than the 3 they asked for; it's TT$600k under their budget.");
+  assert.equal(matchFitText(ROW({}, {}, { beds: 2 })), "This is a strong fit: it's in Maraval, the area they asked for; it's TT$600k under their budget.", "one fewer than asked is below the rule, so no bed line is said");
+  assert.equal(matchFitText(ROW({}, { beds: 2, bedsMax: 3 }, { beds: 2 })), "This is a strong fit: it's in Maraval, the area they asked for; it has 2 bedrooms, in the 2–3 bedrooms they asked for; it's TT$600k under their budget.");
+  assert.equal(matchFitText(ROW({}, { beds: 2, bedsMax: 3 }, { beds: 4 })), "This is a strong fit: it's in Maraval, the area they asked for; it has 4 bedrooms, one more than the 2–3 bedrooms they asked for; it's TT$600k under their budget.");
   assert.equal(matchFitText(ROW({}, {}, { beds: 5 })), "This is a strong fit: it's in Maraval, the area they asked for; it's TT$600k under their budget.", "two off is not said");
   assert.equal(matchFitText(ROW({ reason: "Nearby (Glencoe, ~9 min drive), 3 bed" }, { area: "Maraval" }, { area: "Glencoe" })), "This is a strong fit: it's nearby in Glencoe, ~9 min drive from the area they asked for; it has the 3 bedrooms they asked for; it's TT$600k under their budget.");
   assert.equal(matchFitText(ROW({ reason: "Neighbour of Maraval, 3 bed" }, { area: "Maraval" }, { area: "Cascade" })).includes("next to the area they asked for"), true);

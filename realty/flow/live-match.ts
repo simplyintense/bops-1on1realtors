@@ -17,9 +17,9 @@ import { jsonHits, readOnlyCall, timedOut } from "./requests.ts";
  * listings with the market's match_buyer tool, and the top few are stored with the market's short reason line.
  *
  * The co-broke rules are the market's (tt-market-search src/match/score.ts): same island, same or neighbouring
- * area, price within 20% of the budget, beds within one, sale vs rent, compatible type. 1on1 scoring is not
- * decided yet, so nothing is scored here: scores and grades are dropped (parseMatch), only the listing and the
- * reason are kept. Our own CRM listings (crm-seam.ts) are matched here with the same rules, by matchOurListings, and
+ * area, price within 20% of the budget, beds (no fewer than asked, at most one more than the most), sale vs rent,
+ * compatible type. 1on1 scoring is not decided yet, so nothing is scored here: scores and grades are dropped
+ * (parseMatch), only the listing and the reason are kept. Our own CRM listings (crm-seam.ts) are matched here with the same rules, by matchOurListings, and
  * kept apart as `ours`, each with the CRM agent holding it.
  *
  * Read only: match_buyer is on the desk's read-only list (DESK_TOOLS). Nothing is sent to anyone.
@@ -36,7 +36,10 @@ const MARKET_TYPES: Record<string, string> = { house: "house", townhouse: "townh
 export type LiveRequest = {
   intent: "buy" | "rent" | null;
   area: string | null;
+  /** The least bedrooms asked (the one figure, or the low end of a range). */
   beds: number | null;
+  /** The most of a range ("2 or 3 bed" is 2 to 3). Absent or null for a single figure. */
+  bedsMax?: number | null;
   propertyType: string | null;
   priceMin: number | null;
   priceMax: number | null;
@@ -127,9 +130,10 @@ export const categoryOfListing = (l: Listing): Category => {
 /**
  * Our active CRM listings that fit the request, by the market's co-broke rules with no scoring: sale vs rent; same or a
  * nearby area (same-area or neighbour tier, same island; same region alone isn't nearby); price within 20% of the budget
- * either way (from 20% under the least to 20% over the most; a single figure is both; a least alone has no ceiling) in the same currency; beds within
- * one; and the same kind of place (land, commercial or residential). A field the listing doesn't give (no price, no beds)
- * can't be checked, so it passes, as on the market. Same area first, then nearby, then the price closest to the budget. Never throws: an area that can't be resolved only matches its own name.
+ * either way (from 20% under the least to 20% over the most; a single figure is both; a least alone has no ceiling) in
+ * the same currency; the beds rule (bedsFit); and the same kind of place (land, commercial or residential). A field the
+ * listing doesn't give (no price, no beds) can't be checked, so it passes, as on the market. Same area first, then
+ * nearby, then the price closest to the budget. Never throws: an area that can't be resolved only matches its own name.
  */
 const gap = (price: number, budget: number) => (price ? Math.abs(price - budget) : Infinity);
 /** The request's budget in TTD (its top figure, or its only one), 0 when it gives none. */
@@ -173,8 +177,18 @@ function gazetteerTier(requestArea: string, l: Listing): { tier: "same-area" | "
 }
 
 /**
+ * The beds rule, for a listing that gives its beds (0 or missing gives none, so it passes). A listing with fewer bedrooms than the
+ * least asked is out. One bedroom more than the most asked is still in (the scorer gives it half the bed points). A single figure is
+ * both its least and its most. A request with no beds asked checks nothing.
+ */
+export function bedsFit(r: Pick<LiveRequest, "beds" | "bedsMax">, beds: number): boolean {
+  if (r.beds === null || !beds) return true;
+  return beds >= r.beds && beds <= (r.bedsMax ?? r.beds) + 1;
+}
+
+/**
  * One of our listings against the request, on the rules that don't need the area: active, sale vs rent, the same kind of
- * place, price within PRICE_BAND of the budget in the same currency, beds within one. A field the listing doesn't give
+ * place, price within PRICE_BAND of the budget in the same currency, and bedsFit. A field the listing doesn't give
  * (no price, no beds) can't be checked, so it passes. Shared by matchOurListings and automatch.ts.
  */
 export function fitsOurListing(r: LiveRequest, l: Listing): boolean {
@@ -191,7 +205,7 @@ export function fitsOurListing(r: LiveRequest, l: Listing): boolean {
     l.listingType === type &&
     (!cat || categoryOfListing(l) === cat) &&
     (!cp || ((hi === null || cp <= hi) && (lo === null || cp >= lo))) &&
-    (r.beds === null || !l.beds || Math.abs(l.beds - r.beds) <= 1)
+    bedsFit(r, l.beds)
   );
 }
 
@@ -335,6 +349,7 @@ export function liveRequestOf(f: Facts): LiveRequest {
     intent: type === "rent" ? "rent" : type === "sale" ? "buy" : null,
     area: f.area,
     beds: f.beds,
+    bedsMax: f.bedsMax ?? null,
     propertyType: f.type,
     priceMin: f.budget?.min ?? null,
     priceMax: f.budget?.max ?? null,
@@ -374,7 +389,8 @@ export async function matchOnArrival(r: LiveRequest, ref: string, postedAt: stri
 
 /** The request in staff terms, e.g. "rent · 2 bed apartment · Westmoorings · up to TT$9,000 a month". */
 export function requestLabel(r: LiveRequest): string {
-  const what = [r.beds !== null ? `${r.beds} bed` : null, r.propertyType].filter(Boolean).join(" ");
+  const beds = r.beds === null ? null : r.bedsMax != null && r.bedsMax !== r.beds ? `${r.beds}–${r.bedsMax} bed` : `${r.beds} bed`;
+  const what = [beds, r.propertyType].filter(Boolean).join(" ");
   const money = (n: number) => moneyLabel(n, r.currency) ?? String(n);
   const budget =
     r.priceMax !== null

@@ -42,7 +42,10 @@ export type Kind = "buyer_request" | "cobroke_listing" | "other";
 
 export type Facts = {
   area: string | null;
+  /** The least beds named (the one figure, or the low end of a range). */
   beds: number | null;
+  /** The most beds of a range ("2 or 3 bed" is 2 and 3). null for a single figure. */
+  bedsMax?: number | null;
   baths: number | null;
   /** The first kind of place named (townhouse, house, land...). */
   type: string | null;
@@ -133,6 +136,8 @@ export type PostRecord = {
   price: number | null;
   currency: string | null;
   beds: number | null;
+  /** The most beds of a range (beds is the least); absent or null for a single figure. */
+  bedsMax?: number | null;
   baths: number | null;
   type: string | null;
   listingType: "sale" | "rent" | "shortlet" | null;
@@ -400,6 +405,7 @@ export function factsOf(body: string, terms: readonly KnownTerm[] = []): Facts {
   return {
     area: place.area ?? place.development,
     beds: interest.bedrooms,
+    bedsMax: interest.bedroomsMax,
     baths: bathsOf(body),
     type: place.type,
     budget: budget ? { min: budget.min, max: budget.max, currency: budget.currency, monthly: budget.period === "month" } : null,
@@ -647,6 +653,7 @@ export function postRecordOf(args: { message: ParsedMessage; phone: string; inte
     price: f.budget?.max ?? null,
     currency: f.budget?.currency ?? null,
     beds: f.beds,
+    bedsMax: f.bedsMax ?? null,
     baths: f.baths,
     type: f.type,
     listingType,

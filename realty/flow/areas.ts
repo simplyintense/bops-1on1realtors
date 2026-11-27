@@ -4,7 +4,7 @@
  * resolve_area); this file holds no gazetteer of its own. Staff aliases are local (AliasTable) and go to
  * market-ingest, not here.
  *
- * Regions are the six strings in REGIONS. The island is the resolver's `island` ("Tobago" or "Trinidad"); only
+ * Regions are the seven strings in REGIONS. The island is the resolver's `island` ("Tobago" or "Trinidad"); only
  * when that's absent is it read from the region (region "Tobago" is Tobago, every other region is Trinidad).
  * A Tobago area never matches a Trinidad one, even when a neighbour list says it does (areaTier checks the
  * islands before anything else). An island the name spells out ("West Tobago") is the island it matches on, whatever the
@@ -33,7 +33,7 @@
  *                 an unrecognised name: { area: null, unresolved: true, suggestions }
  */
 
-export const REGIONS = ["Port of Spain", "North West", "East–West Corridor", "Central", "South", "Tobago"] as const;
+export const REGIONS = ["Port of Spain", "North West", "North East", "East–West Corridor", "Central", "South", "Tobago"] as const;
 export type Region = (typeof REGIONS)[number];
 export type Island = "Trinidad" | "Tobago";
 
@@ -89,14 +89,14 @@ export function areaKey(text: string): string {
   return text.replace(/[–—]/g, "-").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-/** The exact region string for a name (any case), or null if it isn't one of the six. */
+/** The exact region string for a name (any case), or null if it isn't one of the seven. */
 export function parseRegion(value: unknown): Region | null {
   if (typeof value !== "string") return null;
   const k = areaKey(value);
   return REGIONS.find((r) => areaKey(r) === k) ?? null;
 }
 
-/** "Tobago" for the Tobago region, "Trinidad" for the other five, null when there's no known region. */
+/** "Tobago" for the Tobago region, "Trinidad" for the other six, null when there's no known region. */
 export function islandOf(region: string | null | undefined): Island | null {
   const r = parseRegion(region);
   if (!r) return null;

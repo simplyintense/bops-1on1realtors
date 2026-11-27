@@ -9,7 +9,10 @@ export type Budget = { min: number | null; max: number; currency: "TTD" | "USD";
 export type Interest = {
   intent: "buy" | "rent" | null;
   types: string[];
+  /** The bedrooms asked for: the one figure, or the least of a range ("2 or 3 bed" is 2). */
   bedrooms: number | null;
+  /** The most of a range ("2 or 3 bed" is 3). null for a single figure. */
+  bedroomsMax: number | null;
 };
 
 export type LeadFacts = {
@@ -136,12 +139,18 @@ export function findBudget(text: string): Budget | null {
 /* ---------------- Areas ---------------- */
 
 /**
- * The Port of Spain / west-of-the-savannah group people mean by "central" or "central locations".
- * The stored name is "Central locations", not "Central", which is already a Trinidad region (Chaguanas, Couva…).
+ * The Port of Spain / west-of-the-savannah group people mean by "central locations" (or "central port of spain").
+ * The stored name is "Central locations". Bare "central" is the Trinidad region "Central" (Chaguanas, Couva…).
  */
 export const CENTRAL_AREA = "Central locations";
 export const CENTRAL_AREAS = ["Port of Spain", "St. Clair", "Woodbrook", "Newtown", "Belmont", "St. James", "Maraval", "Cascade"];
-const CENTRAL_PHRASE = /\bcentral(?:\s+locations?)?\b/i;
+const CENTRAL_GROUP_PHRASE = /\bcentral\s+(?:locations?|port\s+of\s+spain)\b/gi;
+const CENTRAL_REGION_PHRASE = /\bcentral\b/i;
+/** Trinidad regions named as regions in a brief. Read before the places, so "north east" never reads as a place word. */
+const NORTH_REGION_PHRASES: [RegExp, string][] = [
+  [/\bnorth[\s-]*east\b/gi, "North East"],
+  [/\bnorth[\s-]*west\b/gi, "North West"],
+];
 
 /**
  * True only for the Port of Spain group ("Central locations" / "Central location"). Bare "Central" is the Trinidad region
@@ -313,12 +322,26 @@ export function compoundIsland(text: string, base: string): "Tobago" | "Trinidad
   return "Trinidad";
 }
 
+/**
+ * The areas a text names. Places (developments, then the gazetteer) come first. Trinidad regions named as regions ("North East",
+ * "North West") and the Port of Spain group ("central locations") are read before the places. A bare "central" is the Central region
+ * only when no place is named, so "central Woodbrook" is Woodbrook. "Trinidad" is kept only when nothing else is named.
+ */
 export function findAreas(text: string): string[] {
   const devs = findDevelopments(text);
   const out: string[] = devs.map((d) => d.name);
   let rest = text;
   for (const d of devs) {
     for (const alias of d.aliases) rest = rest.replace(new RegExp(`\\b${esc(alias)}\\b`, "gi"), " ");
+  }
+  const group = rest.search(CENTRAL_GROUP_PHRASE) >= 0;
+  rest = rest.replace(CENTRAL_GROUP_PHRASE, " ");
+  const regions: string[] = [];
+  for (const [re, name] of NORTH_REGION_PHRASES) {
+    if (rest.search(re) >= 0) {
+      regions.push(name);
+      rest = rest.replace(re, " ");
+    }
   }
   for (const a of AREAS) {
     const re = new RegExp(`\\b${esc(a)}\\b`, "i");
@@ -328,10 +351,11 @@ export function findAreas(text: string): string[] {
       rest = rest.replace(new RegExp(`\\b${esc(a)}\\b`, "gi"), " ");
     }
   }
-  const named = out.filter((a) => a !== "Trinidad" || (out.length === 1 && !CENTRAL_PHRASE.test(text)));
-  // "central" / "central locations" is the group only when no more specific place was named.
-  if (CENTRAL_PHRASE.test(text) && named.length === 0) return [CENTRAL_AREA];
-  return named;
+  const places = out.filter((a) => a !== "Trinidad");
+  if (places.length) return [...places, ...regions];
+  const central = group ? [CENTRAL_AREA] : CENTRAL_REGION_PHRASE.test(rest) ? ["Central"] : [];
+  const found = [...regions, ...central];
+  return found.length ? found : out;
 }
 
 /* ---------------- What kind of place ---------------- */
@@ -346,15 +370,22 @@ const TYPES: [string, RegExp][] = [
 ];
 
 const NUMBERS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+const bedCount = (s: string): number => NUMBERS[s.toLowerCase()] ?? Number(s);
+/** One bedroom figure, or a range of two: "3 bed", "2 or 3 bedroom", "2-3 bed", "2 to 3 br", "2/3 bd", "two or three bedroom". */
+const BEDS_RE = new RegExp(String.raw`\b(\d{1,2}|one|two|three|four|five|six)(?:\s?(?:-|–|\/|or|to)\s?(\d{1,2}|one|two|three|four|five|six))?\s?(?:-|\s)?(?:bed(?:room)?s?|br|bd)\b`, "i");
 
 export function findInterest(text: string): Interest {
   const rent = /\b(rent|rental|renting|lease|leasing|to let)\b/i.test(text);
   const buy = /\b(buy|buying|purchase|purchasing|for sale|mortgage)\b/i.test(text);
   const types = TYPES.filter(([t, re]) => re.test(t === "house" ? text.replace(/\btown\s?houses?\b/gi, " ") : text)).map(([t]) => t);
   if (findDevelopments(text).length && types.length === 0) types.unshift("apartment");
-  const b = /\b(\d|one|two|three|four|five|six)\s?(?:-|\s)?(?:bed(?:room)?s?|br|bd)\b/i.exec(text);
-  const bedrooms = b ? (NUMBERS[b[1].toLowerCase()] ?? Number(b[1])) : null;
-  return { intent: rent && !buy ? "rent" : buy && !rent ? "buy" : rent && buy ? (text.search(/rent|lease/i) < text.search(/buy|purchas|sale/i) ? "rent" : "buy") : null, types, bedrooms };
+  const b = BEDS_RE.exec(text);
+  const first = b ? bedCount(b[1]) : null;
+  const second = b?.[2] ? bedCount(b[2]) : null;
+  const range = first !== null && second !== null ? [Math.min(first, second), Math.max(first, second)] : null;
+  const bedrooms = range ? range[0] : first;
+  const bedroomsMax = range ? range[1] : null;
+  return { intent: rent && !buy ? "rent" : buy && !rent ? "buy" : rent && buy ? (text.search(/rent|lease/i) < text.search(/buy|purchas|sale/i) ? "rent" : "buy") : null, types, bedrooms, bedroomsMax };
 }
 
 /* ---------------- Names ---------------- */

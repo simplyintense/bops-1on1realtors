@@ -53,7 +53,7 @@ const sample = (id: string) => SAMPLE_MESSAGES.find((m) => m.id === id)!;
 test("the samples parse the way agents write them: Westmoorings rent, Diego Martin buy, Chaguanas townhouse, a listing and chatter", () => {
   for (const m of SAMPLE_MESSAGES) assert.equal(interpret(m.body).kind, m.expect, m.id);
   const r = liveRequestOf(interpret(sample("sample-westmoorings-rent").body).facts);
-  assert.deepEqual(r, { intent: "rent", area: "Westmoorings", beds: 2, propertyType: "apartment", priceMin: null, priceMax: 9000, currency: "TTD", monthly: true });
+  assert.deepEqual(r, { intent: "rent", area: "Westmoorings", beds: 2, bedsMax: null, propertyType: "apartment", priceMin: null, priceMax: 9000, currency: "TTD", monthly: true });
   assert.equal(requestLabel(r), "rent · 2 bed apartment · Westmoorings · up to TT$9,000 a month");
   const d = liveRequestOf(interpret(sample("sample-diego-martin-buy").body).facts);
   assert.equal(d.intent, "buy");

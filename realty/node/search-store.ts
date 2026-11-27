@@ -120,6 +120,8 @@ export type SearchRow = {
   price: number | null;
   currency: string | null;
   beds: number | null;
+  /** The most beds of a range (beds is the least); null for a single figure. */
+  bedsMax?: number | null;
   baths: number | null;
   type: string | null;
   listingType: string | null;
@@ -218,6 +220,8 @@ type Item = {
   price: number | null;
   currency: string | null;
   beds: number | null;
+  /** The most beds of a range (beds is the least); null for a single figure. */
+  bedsMax: number | null;
   baths: number | null;
   type: string | null;
   listingType: string | null;
@@ -241,7 +245,7 @@ type Rec = Omit<Item, "messageId" | "groupName" | "promoted" | "sentAt"> & {
 
 const RECORD_COLS = [
   "id", "kind", "sender_phone", "sender_name", "firm", "category", "chat_id", "first_sent_at", "last_sent_at", "times_seen",
-  "group_names", "message_ids", "area", "development", "price", "currency", "beds", "baths", "type", "listing_type", "intent",
+  "group_names", "message_ids", "area", "development", "price", "currency", "beds", "beds_max", "baths", "type", "listing_type", "intent",
   "property_class", "notes", "original_text",
 ] as const;
 
@@ -286,6 +290,7 @@ function toItem(raw: SourceRow, side: Side, terms: readonly KnownTerm[], over?: 
     price,
     currency: str(raw.currency),
     beds,
+    bedsMax: num(raw.bedsMax),
     baths: num(raw.baths),
     type: fields.type,
     listingType: fields.listingType,
@@ -305,6 +310,7 @@ const askFactsOf = (x: Item | Rec): AskFacts => ({
   area: x.area,
   development: x.development,
   beds: x.beds,
+  bedsMax: x.bedsMax,
   price: x.price,
   currency: x.currency,
   type: x.type,
@@ -365,6 +371,7 @@ function dedupe(items: Item[]): Rec[] {
           price: it.price,
           currency: it.currency,
           beds: it.beds,
+          bedsMax: it.bedsMax,
           baths: it.baths,
           type: it.type,
           listingType: it.listingType,
@@ -402,6 +409,7 @@ function dedupe(items: Item[]): Rec[] {
       price: it.price,
       currency: it.currency,
       beds: it.beds,
+      bedsMax: it.bedsMax,
       baths: it.baths,
       type: it.type,
       listingType: it.listingType,
@@ -591,11 +599,11 @@ function ensureSchema(db: DatabaseSync): void {
       SELECT 'alias', term, area, development, type, 'taught', updated_at, NULL FROM aliases;
       DROP TABLE aliases;`);
   }
-  const EXPLAIN_COLS = ["explanation TEXT", "explained_at TEXT", "status TEXT", "priority TEXT"];
-  db.exec(recordTableSql("supply", EXPLAIN_COLS) + ";\n" + recordTableSql("demand", EXPLAIN_COLS) + ";\n" + recordTableSql("needs_explanation", EXPLAIN_COLS) + ";");
+  const EXTRA_COLS = ["explanation TEXT", "explained_at TEXT", "status TEXT", "priority TEXT", "beds_max INTEGER"];
+  db.exec(recordTableSql("supply", EXTRA_COLS) + ";\n" + recordTableSql("demand", EXTRA_COLS) + ";\n" + recordTableSql("needs_explanation", EXTRA_COLS) + ";");
   for (const t of ["supply", "demand", "needs_explanation"]) {
     const cols = new Set((db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name));
-    for (const c of EXPLAIN_COLS) {
+    for (const c of EXTRA_COLS) {
       const name = c.split(" ")[0];
       if (!cols.has(name)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`);
     }
@@ -796,7 +804,7 @@ export class SearchStore {
         const note = r.messageIds.map((m) => carried.get(m)).find((x) => x !== undefined);
         const values: (string | number | null)[] = [
           r.id, r.side, r.senderPhone, r.senderName, r.firm, r.category, r.chatId, r.firstSentAt, r.lastSentAt, r.timesSeen,
-          JSON.stringify(r.groups), JSON.stringify(r.messageIds), r.area, r.development, r.price, r.currency, r.beds, r.baths,
+          JSON.stringify(r.groups), JSON.stringify(r.messageIds), r.area, r.development, r.price, r.currency, r.beds, r.bedsMax, r.baths,
           r.type, r.listingType, r.intent, r.propertyClass, r.notes, r.originalText,
         ];
         const cols: string[] = [...RECORD_COLS, "explanation", "explained_at", "status", "priority"];
@@ -1151,6 +1159,7 @@ function toSearchRow(r: Record<string, unknown>, tab: Tab): SearchRow {
     price: n(r.price),
     currency: s(r.currency),
     beds: n(r.beds),
+    bedsMax: n(r.beds_max),
     baths: n(r.baths),
     type: s(r.type),
     listingType: s(r.listing_type),

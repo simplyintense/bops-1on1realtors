@@ -36,6 +36,8 @@ export type LeadInput = {
     postId: string | null;
     area: string;
     beds: number | null;
+    /** The most beds of a range (beds is the least), when the ask gives one. */
+    bedsMax?: number | null;
     budget: number | null;
     currency: string;
     type: string | null;
