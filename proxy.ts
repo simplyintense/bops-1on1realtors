@@ -36,8 +36,8 @@ import { DEMO_PAGE, demoRoute, GATE_COOKIE, GATE_OPEN_PATHS, gateConfig, gateVer
  */
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-// /api/realty/agent-search (+ /snapshot), /api/mcp/stats and /api/realty/automatch-client: the staff MCP's, the CRM report's and the CRM's client matching server-to-server calls, checked by their bearer tokens (BOPS_MCP_TOKEN, BOPS_AUTOMATCH_TOKEN).
-const TAILNET_PATHS = new Set(["/api/apps/call", "/api/phone/agentphone", "/api/phone/openai", "/api/channels/slack/events", "/api/realty/agent-search", "/api/realty/agent-search/snapshot", "/api/mcp/stats", "/api/realty/automatch-client"]);
+// /api/realty/agent-search (+ /snapshot), /api/mcp/stats, /api/realty/automatch-client and /api/realty/learn/flag-match: the staff MCP's, the CRM report's and the CRM's client matching and bad-match reports server-to-server calls, checked by their bearer tokens (BOPS_MCP_TOKEN, BOPS_AUTOMATCH_TOKEN).
+const TAILNET_PATHS = new Set(["/api/apps/call", "/api/phone/agentphone", "/api/phone/openai", "/api/channels/slack/events", "/api/realty/agent-search", "/api/realty/agent-search/snapshot", "/api/mcp/stats", "/api/realty/automatch-client", "/api/realty/learn/flag-match"]);
 /** Handed over by Bops Cloud's tunnel (lib/server/cloud-tunnel.ts), which proves itself with its own token. */
 const TUNNEL_PATHS = new Set(["/api/cloud/event"]);
 const READS = new Set(["GET", "HEAD"]);

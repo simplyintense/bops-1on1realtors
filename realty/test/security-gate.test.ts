@@ -186,6 +186,9 @@ test("teachers reach the teach page (as every staff member does) and its POST AP
   assert.equal(await decide("/realty/learn", "GET", `bops_gate=${teacher}`), "pass");
   assert.equal(await decide("/api/realty/learn", "POST", `bops_gate=${teacher}`), "pass");
   assert.equal(await decide("/api/realty/learn/questions", "POST", `bops_gate=${teacher}`), "pass");
+  for (const [path, method] of [["/api/realty/learn/area", "POST"], ["/api/realty/learn/ignore", "POST"], ["/api/realty/learn/taught", "PATCH"], ["/api/realty/learn/taught", "DELETE"]] as const) {
+    assert.equal(await decide(path, method, `bops_gate=${teacher}`), "pass", `${method} ${path}`);
+  }
   assert.equal(await decide("/api/vault", "GET", `bops_gate=${teacher}`), "forbidden");
   for (const api of OWNER_ONLY_APIS) assert.equal(await decide(api, "POST", `bops_gate=${teacher}`), "forbidden", api);
 });
@@ -195,6 +198,10 @@ test("an agent can't teach: the teach APIs are teacher-only, while the teach pag
   assert.equal(await decide("/realty/learn", "GET", `bops_gate=${agent}`), "pass");
   assert.equal(await decide("/api/realty/learn", "POST", `bops_gate=${agent}`), "forbidden");
   assert.equal(await decide("/api/realty/learn/questions", "POST", `bops_gate=${agent}`), "forbidden");
+  for (const [path, method] of [["/api/realty/learn/area", "POST"], ["/api/realty/learn/ignore", "POST"], ["/api/realty/learn/taught", "PATCH"], ["/api/realty/learn/taught", "DELETE"]] as const) {
+    assert.equal(await decide(path, method, `bops_gate=${agent}`), "forbidden", `${method} ${path}`);
+  }
+  assert.equal(await decide("/api/realty/learn/preview", "POST", `bops_gate=${agent}`), "pass", "any staff member may read a sample");
 });
 
 test("agentMayReach: the desk is open and the root matches exactly, so the '/' trap can't open the site", () => {
@@ -215,6 +222,13 @@ test("agentMayReach: the desk is open and the root matches exactly, so the '/' t
   assert.equal(agentMayReach("/realty/learn", "POST"), false, "a page takes no POST");
   assert.equal(agentMayReach("/api/realty/learn", "POST"), false, "the teach API needs a teacher");
   assert.equal(agentMayReach("/api/realty/learn", "POST", { teacher: true }), true, "...and a teacher may POST it");
+  assert.equal(agentMayReach("/api/realty/learn/preview", "POST"), true, "the preview is for any staff member");
+  assert.equal(agentMayReach("/api/realty/learn/preview", "GET"), false, "the preview takes POST only");
+  assert.equal(agentMayReach("/api/realty/learn/area", "POST"), false, "teaching a place needs a teacher");
+  assert.equal(agentMayReach("/api/realty/learn/area", "POST", { teacher: true }), true);
+  assert.equal(agentMayReach("/api/realty/learn/taught", "PATCH"), false, "editing a past answer needs a teacher");
+  assert.equal(agentMayReach("/api/realty/learn/taught", "PATCH", { teacher: true }), true);
+  assert.equal(agentMayReach("/api/realty/learn/taught", "GET", { teacher: true }), false, "the taught list is not an API");
   assert.equal(agentMayReach("/api/state", "GET"), true, "the Bot Workspace's state, redacted for staff");
   assert.equal(agentMayReach("/api/state", "HEAD"), true);
   assert.equal(agentMayReach("/api/state", "POST"), false, "the state is read only");
